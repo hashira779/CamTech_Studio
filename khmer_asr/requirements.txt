@@ -1,0 +1,23 @@
+# Khmer Singing Lyrics Pipeline — Python Requirements
+# ─────────────────────────────────────────────────────
+# IMPORTANT: Install PyTorch (CPU-only) BEFORE running pip install -r requirements.txt
+# See install.bat for the correct order on Windows.
+#
+# Python version: 3.9+ recommended (3.11 tested on Ryzen 4000)
+
+# ── Core ASR ──────────────────────────────────────────
+faster-whisper>=1.2.1          # CTranslate2-based Whisper — fast CPU inference
+
+# ── Vocal Separation ──────────────────────────────────
+# Note: demucs needs torch — install CPU torch first (see install.bat)
+demucs>=4.0.0
+
+# ── Audio I/O ─────────────────────────────────────────
+soundfile>=0.12.0              # Read/write WAV files
+numpy>=1.24.0                  # Array processing
+
+# ── FFmpeg (bundled binary — no system install needed) ─
+imageio-ffmpeg>=0.4.9
+
+# ── Evaluation (Phase 13) ─────────────────────────────
+jiwer>=3.0.0                   # WER / CER calculation

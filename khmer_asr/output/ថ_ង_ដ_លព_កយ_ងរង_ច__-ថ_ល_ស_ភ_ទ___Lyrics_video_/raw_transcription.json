@@ -1,0 +1,1415 @@
+{
+  "model": "tiny",
+  "device": "cpu",
+  "language_hint": "km",
+  "detected_language": "km",
+  "detected_language_probability": 1,
+  "audio_path": "D:\\Project\\VIDA\\khmer_asr\\output\\ថ_ង_ដ_លព_កយ_ងរង_ច__-ថ_ល_ស_ភ_ទ___Lyrics_video_\\_converted_16k.wav",
+  "duration_seconds": 185.47,
+  "segments": [
+    {
+      "id": 1,
+      "start": 18.38,
+      "end": 22.26,
+      "text": "I don't know, I don't know, I don't know, I don't know",
+      "words": [
+        {
+          "word": " I",
+          "start": 18.38,
+          "end": 18.78,
+          "probability": 0.0658
+        },
+        {
+          "word": " don't",
+          "start": 18.78,
+          "end": 19.08,
+          "probability": 0.5568
+        },
+        {
+          "word": " know,",
+          "start": 19.08,
+          "end": 20.66,
+          "probability": 0.3412
+        },
+        {
+          "word": " I",
+          "start": 21.1,
+          "end": 21.1,
+          "probability": 0.2445
+        },
+        {
+          "word": " don't",
+          "start": 21.1,
+          "end": 21.24,
+          "probability": 0.8211
+        },
+        {
+          "word": " know,",
+          "start": 21.24,
+          "end": 21.44,
+          "probability": 0.5801
+        },
+        {
+          "word": " I",
+          "start": 21.44,
+          "end": 21.44,
+          "probability": 0.4126
+        },
+        {
+          "word": " don't",
+          "start": 21.44,
+          "end": 21.44,
+          "probability": 0.8808
+        },
+        {
+          "word": " know,",
+          "start": 21.44,
+          "end": 21.56,
+          "probability": 0.7656
+        },
+        {
+          "word": " I",
+          "start": 22.06,
+          "end": 22.06,
+          "probability": 0.5956
+        },
+        {
+          "word": " don't",
+          "start": 22.06,
+          "end": 22.12,
+          "probability": 0.9144
+        },
+        {
+          "word": " know",
+          "start": 22.12,
+          "end": 22.26,
+          "probability": 0.8839
+        }
+      ],
+      "avg_logprob": -0.4828,
+      "no_speech_prob": 0.8886,
+      "compression_ratio": 7.6667
+    },
+    {
+      "id": 2,
+      "start": 22.26,
+      "end": 24.28,
+      "text": "I don't know, I don't know, I don't know",
+      "words": [
+        {
+          "word": " I",
+          "start": 22.26,
+          "end": 22.8,
+          "probability": 0.0579
+        },
+        {
+          "word": " don't",
+          "start": 22.8,
+          "end": 22.8,
+          "probability": 0.9182
+        },
+        {
+          "word": " know,",
+          "start": 22.8,
+          "end": 22.8,
+          "probability": 0.8966
+        },
+        {
+          "word": " I",
+          "start": 23.72,
+          "end": 23.72,
+          "probability": 0.8159
+        },
+        {
+          "word": " don't",
+          "start": 23.72,
+          "end": 23.84,
+          "probability": 0.9559
+        },
+        {
+          "word": " know,",
+          "start": 23.84,
+          "end": 23.84,
+          "probability": 0.9378
+        },
+        {
+          "word": " I",
+          "start": 24.0,
+          "end": 24.24,
+          "probability": 0.8066
+        },
+        {
+          "word": " don't",
+          "start": 24.24,
+          "end": 24.28,
+          "probability": 0.9578
+        },
+        {
+          "word": " know",
+          "start": 24.28,
+          "end": 24.28,
+          "probability": 0.9485
+        }
+      ],
+      "avg_logprob": -0.4828,
+      "no_speech_prob": 0.8886,
+      "compression_ratio": 7.6667
+    },
+    {
+      "id": 3,
+      "start": 24.28,
+      "end": 28.08,
+      "text": "I don't know, I don't know, I don't know",
+      "words": [
+        {
+          "word": " I",
+          "start": 24.28,
+          "end": 24.38,
+          "probability": 0.1385
+        },
+        {
+          "word": " don't",
+          "start": 24.38,
+          "end": 24.38,
+          "probability": 0.9254
+        },
+        {
+          "word": " know,",
+          "start": 24.38,
+          "end": 24.52,
+          "probability": 0.9379
+        },
+        {
+          "word": " I",
+          "start": 27.9,
+          "end": 27.9,
+          "probability": 0.8824
+        },
+        {
+          "word": " don't",
+          "start": 27.9,
+          "end": 27.9,
+          "probability": 0.9645
+        },
+        {
+          "word": " know,",
+          "start": 27.9,
+          "end": 27.9,
+          "probability": 0.9554
+        },
+        {
+          "word": " I",
+          "start": 27.9,
+          "end": 28.08,
+          "probability": 0.864
+        },
+        {
+          "word": " don't",
+          "start": 28.08,
+          "end": 28.08,
+          "probability": 0.9607
+        },
+        {
+          "word": " know",
+          "start": 28.08,
+          "end": 28.08,
+          "probability": 0.9492
+        }
+      ],
+      "avg_logprob": -0.4828,
+      "no_speech_prob": 0.8886,
+      "compression_ratio": 7.6667
+    },
+    {
+      "id": 4,
+      "start": 28.08,
+      "end": 29.06,
+      "text": "I don't know, I don't know",
+      "words": [
+        {
+          "word": " I",
+          "start": 28.08,
+          "end": 28.08,
+          "probability": 0.1341
+        },
+        {
+          "word": " don't",
+          "start": 28.08,
+          "end": 29.06,
+          "probability": 0.9259
+        },
+        {
+          "word": " know,",
+          "start": 29.06,
+          "end": 29.06,
+          "probability": 0.9428
+        },
+        {
+          "word": " I",
+          "start": 29.06,
+          "end": 29.06,
+          "probability": 0.8812
+        },
+        {
+          "word": " don't",
+          "start": 29.06,
+          "end": 29.06,
+          "probability": 0.9626
+        },
+        {
+          "word": " know",
+          "start": 29.06,
+          "end": 29.06,
+          "probability": 0.9509
+        }
+      ],
+      "avg_logprob": -0.4828,
+      "no_speech_prob": 0.8886,
+      "compression_ratio": 7.6667
+    },
+    {
+      "id": 5,
+      "start": 29.06,
+      "end": 32.06,
+      "text": "I don't know, I don't know",
+      "words": [
+        {
+          "word": " I",
+          "start": 29.06,
+          "end": 29.06,
+          "probability": 0.1313
+        },
+        {
+          "word": " don't",
+          "start": 29.06,
+          "end": 29.16,
+          "probability": 0.9326
+        },
+        {
+          "word": " know,",
+          "start": 29.16,
+          "end": 29.16,
+          "probability": 0.9408
+        },
+        {
+          "word": " I",
+          "start": 31.7,
+          "end": 31.74,
+          "probability": 0.8874
+        },
+        {
+          "word": " don't",
+          "start": 31.74,
+          "end": 32.06,
+          "probability": 0.9723
+        },
+        {
+          "word": " know",
+          "start": 32.06,
+          "end": 32.06,
+          "probability": 0.9519
+        }
+      ],
+      "avg_logprob": -0.4828,
+      "no_speech_prob": 0.8886,
+      "compression_ratio": 7.6667
+    },
+    {
+      "id": 6,
+      "start": 32.06,
+      "end": 35.75,
+      "text": "I don't know, I don't know",
+      "words": [
+        {
+          "word": " I",
+          "start": 32.06,
+          "end": 33.22,
+          "probability": 0.2133
+        },
+        {
+          "word": " don't",
+          "start": 33.35,
+          "end": 34.25,
+          "probability": 0.9406
+        },
+        {
+          "word": " know,",
+          "start": 34.25,
+          "end": 34.25,
+          "probability": 0.9393
+        },
+        {
+          "word": " I",
+          "start": 34.59,
+          "end": 34.59,
+          "probability": 0.8779
+        },
+        {
+          "word": " don't",
+          "start": 34.59,
+          "end": 35.75,
+          "probability": 0.9611
+        },
+        {
+          "word": " know",
+          "start": 35.75,
+          "end": 35.75,
+          "probability": 0.9387
+        }
+      ],
+      "avg_logprob": -0.4828,
+      "no_speech_prob": 0.8886,
+      "compression_ratio": 7.6667
+    },
+    {
+      "id": 7,
+      "start": 35.75,
+      "end": 47.19,
+      "text": "I don't know",
+      "words": [
+        {
+          "word": " I",
+          "start": 35.75,
+          "end": 36.53,
+          "probability": 0.1994
+        },
+        {
+          "word": " don't",
+          "start": 36.53,
+          "end": 47.19,
+          "probability": 0.9401
+        },
+        {
+          "word": " know",
+          "start": 47.19,
+          "end": 47.19,
+          "probability": 0.9446
+        }
+      ],
+      "avg_logprob": -0.4828,
+      "no_speech_prob": 0.8886,
+      "compression_ratio": 7.6667
+    },
+    {
+      "id": 8,
+      "start": 47.19,
+      "end": 48.91,
+      "text": "I'm alone, goodbye, goodbye",
+      "words": [
+        {
+          "word": " I'm",
+          "start": 47.19,
+          "end": 47.37,
+          "probability": 0.1395
+        },
+        {
+          "word": " alone,",
+          "start": 47.37,
+          "end": 47.53,
+          "probability": 0.0328
+        },
+        {
+          "word": " goodbye,",
+          "start": 47.71,
+          "end": 47.97,
+          "probability": 0.4938
+        },
+        {
+          "word": " goodbye",
+          "start": 48.07,
+          "end": 48.91,
+          "probability": 0.1006
+        }
+      ],
+      "avg_logprob": -0.3194,
+      "no_speech_prob": 0.9168,
+      "compression_ratio": 7.3889
+    },
+    {
+      "id": 9,
+      "start": 49.52,
+      "end": 51.34,
+      "text": "I'm alone, I'm alone, goodbye",
+      "words": [
+        {
+          "word": " I'm",
+          "start": 49.52,
+          "end": 50.12,
+          "probability": 0.3494
+        },
+        {
+          "word": " alone,",
+          "start": 50.12,
+          "end": 50.26,
+          "probability": 0.8391
+        },
+        {
+          "word": " I'm",
+          "start": 50.9,
+          "end": 51.16,
+          "probability": 0.4531
+        },
+        {
+          "word": " alone,",
+          "start": 51.16,
+          "end": 51.16,
+          "probability": 0.8414
+        },
+        {
+          "word": " goodbye",
+          "start": 51.16,
+          "end": 51.34,
+          "probability": 0.0887
+        }
+      ],
+      "avg_logprob": -0.3194,
+      "no_speech_prob": 0.9168,
+      "compression_ratio": 7.3889
+    },
+    {
+      "id": 10,
+      "start": 51.34,
+      "end": 54.3,
+      "text": "I'm alone, goodbye",
+      "words": [
+        {
+          "word": " I'm",
+          "start": 51.34,
+          "end": 51.62,
+          "probability": 0.6349
+        },
+        {
+          "word": " alone,",
+          "start": 51.62,
+          "end": 51.88,
+          "probability": 0.9374
+        },
+        {
+          "word": " goodbye",
+          "start": 53.72,
+          "end": 54.3,
+          "probability": 0.735
+        }
+      ],
+      "avg_logprob": -0.3194,
+      "no_speech_prob": 0.9168,
+      "compression_ratio": 7.3889
+    },
+    {
+      "id": 11,
+      "start": 57.06,
+      "end": 58.8,
+      "text": "I'm alone, goodbye",
+      "words": [
+        {
+          "word": " I'm",
+          "start": 57.06,
+          "end": 58.22,
+          "probability": 0.7356
+        },
+        {
+          "word": " alone,",
+          "start": 58.22,
+          "end": 58.22,
+          "probability": 0.956
+        },
+        {
+          "word": " goodbye",
+          "start": 58.8,
+          "end": 58.8,
+          "probability": 0.8806
+        }
+      ],
+      "avg_logprob": -0.3194,
+      "no_speech_prob": 0.9168,
+      "compression_ratio": 7.3889
+    },
+    {
+      "id": 12,
+      "start": 60.02,
+      "end": 62.5,
+      "text": "I'm alone, goodbye",
+      "words": [
+        {
+          "word": " I'm",
+          "start": 60.02,
+          "end": 61.18,
+          "probability": 0.8066
+        },
+        {
+          "word": " alone,",
+          "start": 61.18,
+          "end": 61.18,
+          "probability": 0.9644
+        },
+        {
+          "word": " goodbye",
+          "start": 62.5,
+          "end": 62.5,
+          "probability": 0.8883
+        }
+      ],
+      "avg_logprob": -0.3194,
+      "no_speech_prob": 0.9168,
+      "compression_ratio": 7.3889
+    },
+    {
+      "id": 13,
+      "start": 62.5,
+      "end": 64.72,
+      "text": "I'm alone, goodbye",
+      "words": [
+        {
+          "word": " I'm",
+          "start": 62.5,
+          "end": 62.72,
+          "probability": 0.8672
+        },
+        {
+          "word": " alone,",
+          "start": 62.72,
+          "end": 62.78,
+          "probability": 0.9797
+        },
+        {
+          "word": " goodbye",
+          "start": 64.72,
+          "end": 64.72,
+          "probability": 0.9129
+        }
+      ],
+      "avg_logprob": -0.3194,
+      "no_speech_prob": 0.9168,
+      "compression_ratio": 7.3889
+    },
+    {
+      "id": 14,
+      "start": 64.72,
+      "end": 65.08,
+      "text": "I'm alone, goodbye",
+      "words": [
+        {
+          "word": " I'm",
+          "start": 64.72,
+          "end": 64.72,
+          "probability": 0.8957
+        },
+        {
+          "word": " alone,",
+          "start": 64.72,
+          "end": 65.08,
+          "probability": 0.9872
+        },
+        {
+          "word": " goodbye",
+          "start": 65.08,
+          "end": 65.08,
+          "probability": 0.9251
+        }
+      ],
+      "avg_logprob": -0.3194,
+      "no_speech_prob": 0.9168,
+      "compression_ratio": 7.3889
+    },
+    {
+      "id": 15,
+      "start": 65.08,
+      "end": 68.28,
+      "text": "I'm alone, goodbye",
+      "words": [
+        {
+          "word": " I'm",
+          "start": 65.08,
+          "end": 65.44,
+          "probability": 0.8959
+        },
+        {
+          "word": " alone,",
+          "start": 65.44,
+          "end": 66.82,
+          "probability": 0.9835
+        },
+        {
+          "word": " goodbye",
+          "start": 68.28,
+          "end": 68.28,
+          "probability": 0.9284
+        }
+      ],
+      "avg_logprob": -0.3194,
+      "no_speech_prob": 0.9168,
+      "compression_ratio": 7.3889
+    },
+    {
+      "id": 16,
+      "start": 68.28,
+      "end": 69.46,
+      "text": "I'm alone, goodbye",
+      "words": [
+        {
+          "word": " I'm",
+          "start": 68.28,
+          "end": 68.28,
+          "probability": 0.8805
+        },
+        {
+          "word": " alone,",
+          "start": 68.28,
+          "end": 69.04,
+          "probability": 0.9881
+        },
+        {
+          "word": " goodbye",
+          "start": 69.04,
+          "end": 69.46,
+          "probability": 0.9304
+        }
+      ],
+      "avg_logprob": -0.3194,
+      "no_speech_prob": 0.9168,
+      "compression_ratio": 7.3889
+    },
+    {
+      "id": 17,
+      "start": 69.46,
+      "end": 72.34,
+      "text": "I'm alone, goodbye",
+      "words": [
+        {
+          "word": " I'm",
+          "start": 69.46,
+          "end": 70.74,
+          "probability": 0.892
+        },
+        {
+          "word": " alone,",
+          "start": 70.74,
+          "end": 70.84,
+          "probability": 0.9843
+        },
+        {
+          "word": " goodbye",
+          "start": 72.34,
+          "end": 72.34,
+          "probability": 0.9501
+        }
+      ],
+      "avg_logprob": -0.3194,
+      "no_speech_prob": 0.9168,
+      "compression_ratio": 7.3889
+    },
+    {
+      "id": 18,
+      "start": 72.34,
+      "end": 72.92,
+      "text": "I'm alone, goodbye",
+      "words": [
+        {
+          "word": " I'm",
+          "start": 72.34,
+          "end": 72.92,
+          "probability": 0.9066
+        },
+        {
+          "word": " alone,",
+          "start": 72.92,
+          "end": 72.92,
+          "probability": 0.9844
+        },
+        {
+          "word": " goodbye",
+          "start": 72.92,
+          "end": 72.92,
+          "probability": 0.969
+        }
+      ],
+      "avg_logprob": -0.3194,
+      "no_speech_prob": 0.9168,
+      "compression_ratio": 7.3889
+    },
+    {
+      "id": 19,
+      "start": 72.92,
+      "end": 76.22,
+      "text": "I'm alone, goodbye",
+      "words": [
+        {
+          "word": " I'm",
+          "start": 72.92,
+          "end": 74.34,
+          "probability": 0.9105
+        },
+        {
+          "word": " alone,",
+          "start": 74.34,
+          "end": 74.86,
+          "probability": 0.9842
+        },
+        {
+          "word": " goodbye",
+          "start": 76.22,
+          "end": 76.22,
+          "probability": 0.9706
+        }
+      ],
+      "avg_logprob": -0.3194,
+      "no_speech_prob": 0.9168,
+      "compression_ratio": 7.3889
+    },
+    {
+      "id": 20,
+      "start": 76.22,
+      "end": 84.23,
+      "text": "Chantum ritsham ah yang kachi kejipro puntae mongtum mongtutru",
+      "words": [
+        {
+          "word": " Chantum",
+          "start": 76.22,
+          "end": 76.96,
+          "probability": 0.4735
+        },
+        {
+          "word": " ritsham",
+          "start": 76.96,
+          "end": 77.7,
+          "probability": 0.2766
+        },
+        {
+          "word": " ah",
+          "start": 77.7,
+          "end": 78.02,
+          "probability": 0.0871
+        },
+        {
+          "word": " yang",
+          "start": 78.02,
+          "end": 78.3,
+          "probability": 0.2682
+        },
+        {
+          "word": " kachi",
+          "start": 78.3,
+          "end": 78.78,
+          "probability": 0.3146
+        },
+        {
+          "word": " kejipro",
+          "start": 80.25,
+          "end": 81.47,
+          "probability": 0.3225
+        },
+        {
+          "word": " puntae",
+          "start": 81.47,
+          "end": 82.25,
+          "probability": 0.2818
+        },
+        {
+          "word": " mongtum",
+          "start": 82.25,
+          "end": 82.91,
+          "probability": 0.5065
+        },
+        {
+          "word": " mongtutru",
+          "start": 82.91,
+          "end": 84.23,
+          "probability": 0.3579
+        }
+      ],
+      "avg_logprob": -1.0849,
+      "no_speech_prob": 0.8317,
+      "compression_ratio": 1.5939
+    },
+    {
+      "id": 21,
+      "start": 84.23,
+      "end": 88.29,
+      "text": "Sum shwam beh dungui ni pongta bante",
+      "words": [
+        {
+          "word": " Sum",
+          "start": 84.23,
+          "end": 84.87,
+          "probability": 0.0332
+        },
+        {
+          "word": " shwam",
+          "start": 84.87,
+          "end": 85.29,
+          "probability": 0.3457
+        },
+        {
+          "word": " beh",
+          "start": 85.29,
+          "end": 85.75,
+          "probability": 0.424
+        },
+        {
+          "word": " dungui",
+          "start": 85.75,
+          "end": 86.35,
+          "probability": 0.3905
+        },
+        {
+          "word": " ni",
+          "start": 86.35,
+          "end": 86.69,
+          "probability": 0.8369
+        },
+        {
+          "word": " pongta",
+          "start": 86.69,
+          "end": 87.35,
+          "probability": 0.7518
+        },
+        {
+          "word": " bante",
+          "start": 87.35,
+          "end": 88.29,
+          "probability": 0.4021
+        }
+      ],
+      "avg_logprob": -1.0849,
+      "no_speech_prob": 0.8317,
+      "compression_ratio": 1.5939
+    },
+    {
+      "id": 22,
+      "start": 88.29,
+      "end": 96.72,
+      "text": "Yung min ni saiban krabk bahe knung nien jiswam bai bantrat nung tuai grubbe",
+      "words": [
+        {
+          "word": " Yung",
+          "start": 88.29,
+          "end": 89.11,
+          "probability": 0.2415
+        },
+        {
+          "word": " min",
+          "start": 89.11,
+          "end": 89.51,
+          "probability": 0.8465
+        },
+        {
+          "word": " ni",
+          "start": 89.51,
+          "end": 89.85,
+          "probability": 0.2942
+        },
+        {
+          "word": " saiban",
+          "start": 89.85,
+          "end": 90.47,
+          "probability": 0.4304
+        },
+        {
+          "word": " krabk",
+          "start": 90.47,
+          "end": 90.95,
+          "probability": 0.2529
+        },
+        {
+          "word": " bahe",
+          "start": 91.94,
+          "end": 92.48,
+          "probability": 0.1333
+        },
+        {
+          "word": " knung",
+          "start": 92.48,
+          "end": 92.88,
+          "probability": 0.5811
+        },
+        {
+          "word": " nien",
+          "start": 92.88,
+          "end": 93.26,
+          "probability": 0.3003
+        },
+        {
+          "word": " jiswam",
+          "start": 93.26,
+          "end": 94.0,
+          "probability": 0.4448
+        },
+        {
+          "word": " bai",
+          "start": 94.0,
+          "end": 94.36,
+          "probability": 0.4068
+        },
+        {
+          "word": " bantrat",
+          "start": 94.36,
+          "end": 94.94,
+          "probability": 0.6333
+        },
+        {
+          "word": " nung",
+          "start": 94.94,
+          "end": 95.32,
+          "probability": 0.4918
+        },
+        {
+          "word": " tuai",
+          "start": 95.32,
+          "end": 95.68,
+          "probability": 0.3249
+        },
+        {
+          "word": " grubbe",
+          "start": 95.68,
+          "end": 96.72,
+          "probability": 0.2166
+        }
+      ],
+      "avg_logprob": -1.0849,
+      "no_speech_prob": 0.8317,
+      "compression_ratio": 1.5939
+    },
+    {
+      "id": 23,
+      "start": 116.27,
+      "end": 124.05,
+      "text": "Aklung dung te kan song tan pik min kai ning pa kan song ah ya rom kong hang prai zeng",
+      "words": [
+        {
+          "word": " Aklung",
+          "start": 116.27,
+          "end": 116.95,
+          "probability": 0.4214
+        },
+        {
+          "word": " dung",
+          "start": 116.95,
+          "end": 117.35,
+          "probability": 0.7866
+        },
+        {
+          "word": " te",
+          "start": 117.35,
+          "end": 117.65,
+          "probability": 0.3852
+        },
+        {
+          "word": " kan",
+          "start": 117.65,
+          "end": 117.99,
+          "probability": 0.5632
+        },
+        {
+          "word": " song",
+          "start": 117.99,
+          "end": 118.35,
+          "probability": 0.2876
+        },
+        {
+          "word": " tan",
+          "start": 118.35,
+          "end": 118.61,
+          "probability": 0.1441
+        },
+        {
+          "word": " pik",
+          "start": 118.61,
+          "end": 119.03,
+          "probability": 0.2303
+        },
+        {
+          "word": " min",
+          "start": 119.03,
+          "end": 119.39,
+          "probability": 0.0508
+        },
+        {
+          "word": " kai",
+          "start": 119.39,
+          "end": 119.77,
+          "probability": 0.4141
+        },
+        {
+          "word": " ning",
+          "start": 119.77,
+          "end": 120.09,
+          "probability": 0.3719
+        },
+        {
+          "word": " pa",
+          "start": 120.09,
+          "end": 120.37,
+          "probability": 0.6564
+        },
+        {
+          "word": " kan",
+          "start": 120.37,
+          "end": 120.75,
+          "probability": 0.9527
+        },
+        {
+          "word": " song",
+          "start": 120.75,
+          "end": 121.11,
+          "probability": 0.8632
+        },
+        {
+          "word": " ah",
+          "start": 121.11,
+          "end": 121.47,
+          "probability": 0.7384
+        },
+        {
+          "word": " ya",
+          "start": 121.47,
+          "end": 121.79,
+          "probability": 0.3179
+        },
+        {
+          "word": " rom",
+          "start": 121.79,
+          "end": 122.15,
+          "probability": 0.7656
+        },
+        {
+          "word": " kong",
+          "start": 122.15,
+          "end": 122.47,
+          "probability": 0.3874
+        },
+        {
+          "word": " hang",
+          "start": 122.47,
+          "end": 122.81,
+          "probability": 0.5353
+        },
+        {
+          "word": " prai",
+          "start": 122.81,
+          "end": 123.17,
+          "probability": 0.5684
+        },
+        {
+          "word": " zeng",
+          "start": 123.17,
+          "end": 124.05,
+          "probability": 0.289
+        }
+      ],
+      "avg_logprob": -1.0849,
+      "no_speech_prob": 0.8317,
+      "compression_ratio": 1.5939
+    },
+    {
+      "id": 24,
+      "start": 124.05,
+      "end": 128.25,
+      "text": "Mung hon keng chung a khyong chung mung klun aik",
+      "words": [
+        {
+          "word": " Mung",
+          "start": 124.05,
+          "end": 124.61,
+          "probability": 0.2191
+        },
+        {
+          "word": " hon",
+          "start": 124.61,
+          "end": 124.89,
+          "probability": 0.1482
+        },
+        {
+          "word": " keng",
+          "start": 124.89,
+          "end": 125.27,
+          "probability": 0.268
+        },
+        {
+          "word": " chung",
+          "start": 125.27,
+          "end": 125.67,
+          "probability": 0.4373
+        },
+        {
+          "word": " a",
+          "start": 125.67,
+          "end": 125.97,
+          "probability": 0.0691
+        },
+        {
+          "word": " khyong",
+          "start": 125.97,
+          "end": 126.27,
+          "probability": 0.2913
+        },
+        {
+          "word": " chung",
+          "start": 126.27,
+          "end": 126.69,
+          "probability": 0.8198
+        },
+        {
+          "word": " mung",
+          "start": 126.69,
+          "end": 127.01,
+          "probability": 0.702
+        },
+        {
+          "word": " klun",
+          "start": 127.01,
+          "end": 127.41,
+          "probability": 0.3865
+        },
+        {
+          "word": " aik",
+          "start": 127.41,
+          "end": 128.25,
+          "probability": 0.2598
+        }
+      ],
+      "avg_logprob": -0.9931,
+      "no_speech_prob": 0.2388,
+      "compression_ratio": 1.4766
+    },
+    {
+      "id": 25,
+      "start": 128.57,
+      "end": 131.21,
+      "text": "Bleig ho srohan keng sonik",
+      "words": [
+        {
+          "word": " Bleig",
+          "start": 128.57,
+          "end": 129.17,
+          "probability": 0.0801
+        },
+        {
+          "word": " ho",
+          "start": 129.17,
+          "end": 129.43,
+          "probability": 0.3325
+        },
+        {
+          "word": " srohan",
+          "start": 129.43,
+          "end": 130.11,
+          "probability": 0.4831
+        },
+        {
+          "word": " keng",
+          "start": 130.11,
+          "end": 130.53,
+          "probability": 0.5545
+        },
+        {
+          "word": " sonik",
+          "start": 130.53,
+          "end": 131.21,
+          "probability": 0.3836
+        }
+      ],
+      "avg_logprob": -0.9931,
+      "no_speech_prob": 0.2388,
+      "compression_ratio": 1.4766
+    },
+    {
+      "id": 26,
+      "start": 139.02,
+      "end": 144.5,
+      "text": "Pong pra trang nang sroy",
+      "words": [
+        {
+          "word": " Pong",
+          "start": 139.02,
+          "end": 139.52,
+          "probability": 0.4337
+        },
+        {
+          "word": " pra",
+          "start": 139.52,
+          "end": 139.88,
+          "probability": 0.3562
+        },
+        {
+          "word": " trang",
+          "start": 139.88,
+          "end": 140.18,
+          "probability": 0.4174
+        },
+        {
+          "word": " nang",
+          "start": 143.76,
+          "end": 144.04,
+          "probability": 0.353
+        },
+        {
+          "word": " sroy",
+          "start": 144.04,
+          "end": 144.5,
+          "probability": 0.3227
+        }
+      ],
+      "avg_logprob": -0.9931,
+      "no_speech_prob": 0.2388,
+      "compression_ratio": 1.4766
+    },
+    {
+      "id": 27,
+      "start": 144.5,
+      "end": 152.39,
+      "text": "Tai nel lo lo bambai",
+      "words": [
+        {
+          "word": " Tai",
+          "start": 144.5,
+          "end": 145.1,
+          "probability": 0.0227
+        },
+        {
+          "word": " nel",
+          "start": 145.1,
+          "end": 145.52,
+          "probability": 0.4174
+        },
+        {
+          "word": " lo",
+          "start": 145.52,
+          "end": 146.04,
+          "probability": 0.0724
+        },
+        {
+          "word": " lo",
+          "start": 151.77,
+          "end": 151.85,
+          "probability": 0.189
+        },
+        {
+          "word": " bambai",
+          "start": 151.85,
+          "end": 152.39,
+          "probability": 0.5536
+        }
+      ],
+      "avg_logprob": -0.9931,
+      "no_speech_prob": 0.2388,
+      "compression_ratio": 1.4766
+    },
+    {
+      "id": 28,
+      "start": 152.39,
+      "end": 154.85,
+      "text": "Dung hui ni pong ta bante",
+      "words": [
+        {
+          "word": " Dung",
+          "start": 152.39,
+          "end": 152.77,
+          "probability": 0.464
+        },
+        {
+          "word": " hui",
+          "start": 152.77,
+          "end": 153.17,
+          "probability": 0.3104
+        },
+        {
+          "word": " ni",
+          "start": 153.17,
+          "end": 153.43,
+          "probability": 0.5707
+        },
+        {
+          "word": " pong",
+          "start": 153.43,
+          "end": 153.81,
+          "probability": 0.8477
+        },
+        {
+          "word": " ta",
+          "start": 153.81,
+          "end": 154.15,
+          "probability": 0.7789
+        },
+        {
+          "word": " bante",
+          "start": 154.15,
+          "end": 154.85,
+          "probability": 0.6169
+        }
+      ],
+      "avg_logprob": -0.9931,
+      "no_speech_prob": 0.2388,
+      "compression_ratio": 1.4766
+    },
+    {
+      "id": 29,
+      "start": 155.72,
+      "end": 158.08,
+      "text": "Misai bang krap kpang",
+      "words": [
+        {
+          "word": " Misai",
+          "start": 155.72,
+          "end": 156.94,
+          "probability": 0.4575
+        },
+        {
+          "word": " bang",
+          "start": 156.94,
+          "end": 157.28,
+          "probability": 0.5055
+        },
+        {
+          "word": " krap",
+          "start": 157.28,
+          "end": 157.56,
+          "probability": 0.4174
+        },
+        {
+          "word": " kpang",
+          "start": 157.56,
+          "end": 158.08,
+          "probability": 0.2688
+        }
+      ],
+      "avg_logprob": -0.9931,
+      "no_speech_prob": 0.2388,
+      "compression_ratio": 1.4766
+    },
+    {
+      "id": 30,
+      "start": 159.74,
+      "end": 161.56,
+      "text": "Jiswa may bant nang",
+      "words": [
+        {
+          "word": " Jiswa",
+          "start": 159.74,
+          "end": 160.74,
+          "probability": 0.255
+        },
+        {
+          "word": " may",
+          "start": 160.74,
+          "end": 161.12,
+          "probability": 0.1948
+        },
+        {
+          "word": " bant",
+          "start": 161.12,
+          "end": 161.44,
+          "probability": 0.6086
+        },
+        {
+          "word": " nang",
+          "start": 161.44,
+          "end": 161.56,
+          "probability": 0.4301
+        }
+      ],
+      "avg_logprob": -0.9931,
+      "no_speech_prob": 0.2388,
+      "compression_ratio": 1.4766
+    }
+  ]
+}

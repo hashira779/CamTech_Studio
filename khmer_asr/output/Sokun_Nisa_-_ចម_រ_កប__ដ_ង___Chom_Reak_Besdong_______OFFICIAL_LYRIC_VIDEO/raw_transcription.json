@@ -1,0 +1,205 @@
+{
+  "model": "tiny",
+  "device": "cpu",
+  "language_hint": "km",
+  "detected_language": "km",
+  "detected_language_probability": 1,
+  "audio_path": "D:\\Project\\VIDA\\khmer_asr\\output\\Sokun_Nisa_-_ចម_រ_កប__ដ_ង___Chom_Reak_Besdong_______OFFICIAL_LYRIC_VIDEO\\_converted_16k.wav",
+  "duration_seconds": 224.07,
+  "segments": [
+    {
+      "id": 1,
+      "start": 30.99,
+      "end": 32.17,
+      "text": "I don't know why",
+      "words": [
+        {
+          "word": " I",
+          "start": 30.99,
+          "end": 31.17,
+          "probability": 0.0568
+        },
+        {
+          "word": " don't",
+          "start": 31.17,
+          "end": 31.17,
+          "probability": 0.5368
+        },
+        {
+          "word": " know",
+          "start": 31.17,
+          "end": 31.75,
+          "probability": 0.3277
+        },
+        {
+          "word": " why",
+          "start": 31.75,
+          "end": 32.17,
+          "probability": 0.5529
+        }
+      ],
+      "avg_logprob": -0.9761,
+      "no_speech_prob": 0.7611,
+      "compression_ratio": 2.0
+    },
+    {
+      "id": 2,
+      "start": 36.56,
+      "end": 39.5,
+      "text": "I don't want to be a fool",
+      "words": [
+        {
+          "word": " I",
+          "start": 36.56,
+          "end": 36.84,
+          "probability": 0.1587
+        },
+        {
+          "word": " don't",
+          "start": 36.84,
+          "end": 37.72,
+          "probability": 0.5286
+        },
+        {
+          "word": " want",
+          "start": 37.72,
+          "end": 37.82,
+          "probability": 0.2523
+        },
+        {
+          "word": " to",
+          "start": 38.2,
+          "end": 39.3,
+          "probability": 0.6135
+        },
+        {
+          "word": " be",
+          "start": 39.3,
+          "end": 39.5,
+          "probability": 0.1459
+        },
+        {
+          "word": " a",
+          "start": 39.5,
+          "end": 39.5,
+          "probability": 0.0836
+        },
+        {
+          "word": " fool",
+          "start": 39.5,
+          "end": 39.5,
+          "probability": 0.0586
+        }
+      ],
+      "avg_logprob": -0.9761,
+      "no_speech_prob": 0.7611,
+      "compression_ratio": 2.0
+    },
+    {
+      "id": 3,
+      "start": 39.5,
+      "end": 41.42,
+      "text": "I don't want to be a fool",
+      "words": [
+        {
+          "word": " I",
+          "start": 39.5,
+          "end": 39.76,
+          "probability": 0.1317
+        },
+        {
+          "word": " don't",
+          "start": 39.76,
+          "end": 40.18,
+          "probability": 0.6022
+        },
+        {
+          "word": " want",
+          "start": 40.18,
+          "end": 40.3,
+          "probability": 0.4893
+        },
+        {
+          "word": " to",
+          "start": 40.3,
+          "end": 40.62,
+          "probability": 0.8749
+        },
+        {
+          "word": " be",
+          "start": 40.62,
+          "end": 40.68,
+          "probability": 0.4688
+        },
+        {
+          "word": " a",
+          "start": 40.68,
+          "end": 40.68,
+          "probability": 0.6066
+        },
+        {
+          "word": " fool",
+          "start": 40.68,
+          "end": 41.42,
+          "probability": 0.9198
+        }
+      ],
+      "avg_logprob": -0.9761,
+      "no_speech_prob": 0.7611,
+      "compression_ratio": 2.0
+    },
+    {
+      "id": 4,
+      "start": 42.94,
+      "end": 45.72,
+      "text": "I don't want to be a fool",
+      "words": [
+        {
+          "word": " I",
+          "start": 42.94,
+          "end": 43.56,
+          "probability": 0.2046
+        },
+        {
+          "word": " don't",
+          "start": 44.42,
+          "end": 44.5,
+          "probability": 0.8655
+        },
+        {
+          "word": " want",
+          "start": 44.5,
+          "end": 44.96,
+          "probability": 0.8843
+        },
+        {
+          "word": " to",
+          "start": 44.96,
+          "end": 44.96,
+          "probability": 0.9466
+        },
+        {
+          "word": " be",
+          "start": 44.96,
+          "end": 45.08,
+          "probability": 0.7423
+        },
+        {
+          "word": " a",
+          "start": 45.08,
+          "end": 45.38,
+          "probability": 0.7174
+        },
+        {
+          "word": " fool",
+          "start": 45.38,
+          "end": 45.72,
+          "probability": 0.9634
+        }
+      ],
+      "avg_logprob": -0.9761,
+      "no_speech_prob": 0.7611,
+      "compression_ratio": 2.0
+    }
+  ]
+}

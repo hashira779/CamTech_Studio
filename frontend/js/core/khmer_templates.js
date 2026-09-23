@@ -1,0 +1,553 @@
+/**
+ * 20 Authentic Khmer Music Video Templates for YouTube
+ * Specifically designed for classic golden era, acoustic ballads,
+ * Angkor heritage, traditional wedding, and modern Khmer music creators.
+ */
+
+export const KHMER_TEMPLATES = [
+  // ── Category 1: 📻 1960s Golden Era & Vintage ──
+  {
+    id: "vinyl_60s",
+    category: "📻 Golden Era 1960s",
+    title_km: "១. យុគមាស ឆ្នាំ៦០ (ស៊ីន ស៊ីសាមុត)",
+    title_en: "Golden Era 1960s Vinyl",
+    badge: "CLASSIC GOLD",
+    theme: "trap_circle",
+    palette: "vintage_vinyl",
+    lyricStyle: "typewriter",
+    barCount: 48,
+    bassBoost: 1.15,
+    particlesLevel: 2,
+    desc: "Warm analog vinyl aesthetic with sepia amber tone, nostalgic dust motes, and retro typewriter lyrics.",
+    bestFor: "Sinn Sisamouth, Ros Sereysothea, Pen Ran, 60s Cambodian Rock & Slow Ballads",
+    gradient: "linear-gradient(135deg, #451a03, #78350f, #b45309)"
+  },
+  {
+    id: "candlelight",
+    category: "📻 Golden Era 1960s",
+    title_km: "២. ពន្លឺទៀន រំលឹកអនុស្សាវរីយ៍",
+    title_en: "Candlelight Nostalgia",
+    badge: "ROMANTIC NOSTALGIA",
+    theme: "ocean_wave",
+    palette: "candlelight",
+    lyricStyle: "glow",
+    barCount: 64,
+    bassBoost: 1.2,
+    particlesLevel: 3,
+    desc: "Warm flickering golden candlelight aura with soft wave ripples and glowing golden lyrics.",
+    bestFor: "Acoustic covers, sentimental oldies, late-night heartbreak ballads",
+    gradient: "linear-gradient(135deg, #7c2d12, #c2410c, #ea580c)"
+  },
+  {
+    id: "pp_cafe",
+    category: "📻 Golden Era 1960s",
+    title_km: "៣. កាហ្វេតន្ត្រី អតីតកាល",
+    title_en: "Phnom Penh Vintage Cafe",
+    badge: "CHILL CAFE",
+    theme: "spectrum",
+    palette: "vintage_vinyl",
+    lyricStyle: "pop",
+    barCount: 56,
+    bassBoost: 1.1,
+    particlesLevel: 1,
+    desc: "Warm cafe wooden ambience with cozy Edison amber lighting and minimalist modern pop subtitles.",
+    bestFor: "Coffee shop acoustic, indie Khmer covers, relaxed lofi jazz vibes",
+    gradient: "linear-gradient(135deg, #292524, #57534e, #78716c)"
+  },
+  {
+    id: "battambang",
+    category: "📻 Golden Era 1960s",
+    title_km: "៤. ដីក្រហម បាត់ដំបង",
+    title_en: "Battambang Red Earth Sunset",
+    badge: "PROVINCIAL NOSTALGIA",
+    theme: "ocean_wave",
+    palette: "sunset",
+    lyricStyle: "cinematic",
+    barCount: 64,
+    bassBoost: 1.25,
+    particlesLevel: 2,
+    desc: "Terracotta red soil hues blending into warm dusk amber with poetic cinematic golden subtitles.",
+    bestFor: "Battambang homeland songs, nostalgic countryside ballads, classic slow rumba",
+    gradient: "linear-gradient(135deg, #7f1d1d, #b91c1c, #d97706)"
+  },
+
+  // ── Category 2: 👑 Angkor & Sacred Heritage ──
+  {
+    id: "angkor_sunset",
+    category: "👑 Angkor & Heritage",
+    title_km: "៥. ថ្ងៃលិចប្រាសាទអង្គរវត្ត",
+    title_en: "Angkor Wat Sacred Sunset",
+    badge: "⭐ MOST POPULAR",
+    theme: "trap_circle",
+    palette: "angkor",
+    lyricStyle: "karaoke",
+    barCount: 64,
+    bassBoost: 1.35,
+    particlesLevel: 4,
+    desc: "Majestic imperial gold & sunset saffron with concentric pulsing halo and brilliant sweep karaoke glow.",
+    bestFor: "Angkor tribute songs, epic Khmer cultural anthems, traditional-modern fusion",
+    gradient: "linear-gradient(135deg, #78350f, #b45309, #f59e0b)"
+  },
+  {
+    id: "royal_palace",
+    category: "👑 Angkor & Heritage",
+    title_km: "៦. សោភ័ណភាព ព្រះបរមរាជវាំង",
+    title_en: "Royal Palace Golden Majesty",
+    badge: "ROYAL ELEGANCE",
+    theme: "neon_bars",
+    palette: "royal_palace",
+    lyricStyle: "cinematic",
+    barCount: 64,
+    bassBoost: 1.2,
+    particlesLevel: 3,
+    desc: "Imperial palace gold and bronze architecture with high-precision glowing columns.",
+    bestFor: "Preap Sovath classics, royal anthems, formal celebratory Khmer songs",
+    gradient: "linear-gradient(135deg, #713f12, #a16207, #eab308)"
+  },
+  {
+    id: "preah_khan",
+    category: "👑 Angkor & Heritage",
+    title_km: "៧. ពន្លឺព្រះច័ន្ទ ប្រាសាទព្រះខ័ន",
+    title_en: "Preah Khan Temple Moonlight",
+    badge: "MYSTIC STONE",
+    theme: "ocean_wave",
+    palette: "tonle_sap",
+    lyricStyle: "fade",
+    barCount: 72,
+    bassBoost: 1.25,
+    particlesLevel: 2,
+    desc: "Mystical moonlight shining through ancient mossy temple towers with floating stone dust motes.",
+    bestFor: "Poetic deep acoustic, historical ballads, peaceful ambient instrumentals",
+    gradient: "linear-gradient(135deg, #0c4a6e, #0284c7, #38bdf8)"
+  },
+  {
+    id: "chapei",
+    category: "👑 Angkor & Heritage",
+    title_km: "៨. សំនៀងចាប៉ីដងវែង បុរាណ",
+    title_en: "Chapei Dong Veng Heritage",
+    badge: "UNESCO HERITAGE",
+    theme: "spectrum",
+    palette: "chapei_wood",
+    lyricStyle: "highlight",
+    barCount: 56,
+    bassBoost: 1.15,
+    particlesLevel: 2,
+    desc: "Rich teak wood tones and antique brass reflecting the resonating strings of Master Kong Nay.",
+    bestFor: "Chapei storytelling, acoustic plucking, traditional folk poetry, educational songs",
+    gradient: "linear-gradient(135deg, #451a03, #9a3412, #d97706)"
+  },
+  {
+    id: "pleng_kar",
+    category: "👑 Angkor & Heritage",
+    title_km: "៩. ភ្លេងការបុរាណ មង្គលការខ្មែរ",
+    title_en: "Traditional Pleng Kar Wedding",
+    badge: "AUSPICIOUS JOY",
+    theme: "trap_circle",
+    palette: "pleng_kar",
+    lyricStyle: "karaoke",
+    barCount: 64,
+    bassBoost: 1.3,
+    particlesLevel: 4,
+    desc: "Auspicious wedding crimson and royal gold with festive ceremony radiance.",
+    bestFor: "Khmer wedding songs, Pleng Kar traditional tracks, couple love anthems",
+    gradient: "linear-gradient(135deg, #881337, #be123c, #f43f5e)"
+  },
+
+  // ── Category 3: 🌧️ Romantic & Melancholic Waters ──
+  {
+    id: "rainy_night",
+    category: "🌧️ Romantic & Melancholic",
+    title_km: "១០. រាត្រីភ្លៀងធ្លាក់ មនោសញ្ចេតនា",
+    title_en: "Rainy Night Melancholy",
+    badge: "VIRAL SAD VIBE",
+    theme: "ocean_wave",
+    palette: "rainy_night",
+    lyricStyle: "karaoke",
+    barCount: 80,
+    bassBoost: 1.4,
+    particlesLevel: 5,
+    desc: "Midnight navy and electric rain drops with deep audio water waves — #1 aesthetic for sad songs on YouTube.",
+    bestFor: "Rainy heartbreak songs, sad emotional ballads, slow r&b chill tracks",
+    gradient: "linear-gradient(135deg, #0f172a, #1e3a5f, #0284c7)"
+  },
+  {
+    id: "tonle_sap",
+    category: "🌧️ Romantic & Melancholic",
+    title_km: "១១. រលកបឹងទន្លេសាប ពេលរាត្រី",
+    title_en: "Tonle Sap Moonlit Waves",
+    badge: "RIVER TWILIGHT",
+    theme: "ocean_wave",
+    palette: "tonle_sap",
+    lyricStyle: "fade",
+    barCount: 72,
+    bassBoost: 1.25,
+    particlesLevel: 3,
+    desc: "Silvery moonlight reflecting over the gentle currents of Tonle Sap lake.",
+    bestFor: "River folk ballads, fisherman songs, serene evening acoustic",
+    gradient: "linear-gradient(135deg, #075985, #0284c7, #38bdf8)"
+  },
+  {
+    id: "lotus_pond",
+    category: "🌧️ Romantic & Melancholic",
+    title_km: "១២. ស្រះឈូកបុរាណ ក្រអូបពិដោរ",
+    title_en: "Sacred Lotus Blossom Pond",
+    badge: "ZEN SERENITY",
+    theme: "trap_circle",
+    palette: "lotus_pond",
+    lyricStyle: "glow",
+    barCount: 64,
+    bassBoost: 1.2,
+    particlesLevel: 3,
+    desc: "Soft lotus pink petals floating on calm jade water with gentle zen aura pulses.",
+    bestFor: "Romantic duets, sweet Khmer love songs, meditative Buddhist melodies",
+    gradient: "linear-gradient(135deg, #831843, #be185d, #ec4899)"
+  },
+  {
+    id: "bokor_fog",
+    category: "🌧️ Romantic & Melancholic",
+    title_km: "១៣. អ័ព្ទត្រជាក់ ភ្នំបូកគោ",
+    title_en: "Bokor Mountain Cold Mist",
+    badge: "CINEMATIC MOOD",
+    theme: "spectrum",
+    palette: "monochrome",
+    lyricStyle: "cinematic",
+    barCount: 64,
+    bassBoost: 1.35,
+    particlesLevel: 4,
+    desc: "Eerie charcoal mist and rolling mountain fog with silver cinematic subtitles.",
+    bestFor: "Dramatic ballads, deep bass intros, philosophical and dramatic tracks",
+    gradient: "linear-gradient(135deg, #18181b, #27272a, #3f3f46)"
+  },
+  {
+    id: "acoustic_live",
+    category: "🌧️ Romantic & Melancholic",
+    title_km: "១៤. អាគូស្ទិក ស្ទូឌីយោ អារម្មណ៍ស្ងប់",
+    title_en: "Khmer Acoustic Studio Session",
+    badge: "STUDIO CLEAN",
+    theme: "neon_bars",
+    palette: "vintage_vinyl",
+    lyricStyle: "typewriter",
+    barCount: 48,
+    bassBoost: 1.15,
+    particlesLevel: 1,
+    desc: "Minimalist dark mahogany studio backdrop with crystal-clear responsive equalizer bars.",
+    bestFor: "Solo guitar covers, fingerstyle Khmer classics, raw intimate vocals",
+    gradient: "linear-gradient(135deg, #1c1917, #44403c, #78716c)"
+  },
+
+  // ── Category 4: 🍃 Nature, Countryside & Flowers ──
+  {
+    id: "romduol",
+    category: "🍃 Nature & Homeland",
+    title_km: "១៥. ផ្ការំដួល ផ្កាជាតិខ្មែរ",
+    title_en: "Romduol National Flower",
+    badge: "NATIONAL EMBLEM",
+    theme: "ocean_wave",
+    palette: "romduol",
+    lyricStyle: "glow",
+    barCount: 64,
+    bassBoost: 1.2,
+    particlesLevel: 3,
+    desc: "Delicate ivory cream petals with golden yellow glow and floating nature pollen.",
+    bestFor: "Pka Romduol songs, maiden love ballads, gentle traditional singing",
+    gradient: "linear-gradient(135deg, #713f12, #ca8a04, #fef08a)"
+  },
+  {
+    id: "bamboo_breeze",
+    category: "🍃 Nature & Homeland",
+    title_km: "១៦. ខ្យល់បក់វាលស្រែ ជនបទខ្មែរ",
+    title_en: "Countryside Rice Paddy Breeze",
+    badge: "HOMELAND VIBES",
+    theme: "spectrum",
+    palette: "kirirom_pine",
+    lyricStyle: "pop",
+    barCount: 56,
+    bassBoost: 1.25,
+    particlesLevel: 3,
+    desc: "Fresh emerald paddy leaves rustling under a golden afternoon sun with dancing breeze dust.",
+    bestFor: "Farmer folk songs, homeland tribute, relaxing countryside acoustic",
+    gradient: "linear-gradient(135deg, #064e3b, #059669, #34d399)"
+  },
+  {
+    id: "kirirom_pine",
+    category: "🍃 Nature & Homeland",
+    title_km: "១៧. ស្រល់គិរីរម្យ អ័ព្ទព្រឹកព្រលឹម",
+    title_en: "Kirirom Pine Forest Mist",
+    badge: "PINE RETREAT",
+    theme: "ocean_wave",
+    palette: "kirirom_pine",
+    lyricStyle: "fade",
+    barCount: 72,
+    bassBoost: 1.2,
+    particlesLevel: 3,
+    desc: "Cool alpine pine needles with morning fog teal and calm nature ripples.",
+    bestFor: "Weekend escape songs, ambient meditation, scenic travel music videos",
+    gradient: "linear-gradient(135deg, #134e4a, #0d9488, #2dd4bf)"
+  },
+  {
+    id: "pailin_gem",
+    category: "🍃 Nature & Homeland",
+    title_km: "១៨. ត្បូងប៉ៃលិន រាត្រីចែងចាំង",
+    title_en: "Pailin Blue Sapphire Glow",
+    badge: "JEWEL RADIANCE",
+    theme: "trap_circle",
+    palette: "electric",
+    lyricStyle: "highlight",
+    barCount: 64,
+    bassBoost: 1.3,
+    particlesLevel: 4,
+    desc: "Radiant deep sapphire blue and ruby violet sparkles with crystalline visualizer ring.",
+    bestFor: "Songs of Pailin, gemstone folk tales, high-energy modern pop ballads",
+    gradient: "linear-gradient(135deg, #312e81, #4338ca, #6366f1)"
+  },
+
+  // ── Category 5: 🎉 Festive, Romvong & Modern ──
+  {
+    id: "romvong_festive",
+    category: "🎉 Festive & Dance",
+    title_km: "១៩. រាំវង់ចូលឆ្នាំថ្មី ប្រពៃណី",
+    title_en: "Khmer New Year Romvong",
+    badge: "FESTIVAL PARTY",
+    theme: "trap_circle",
+    palette: "romvong_festive",
+    lyricStyle: "bounce",
+    barCount: 64,
+    bassBoost: 1.45,
+    particlesLevel: 5,
+    desc: "Bright joyful festival pink & golden sun with high-energy bouncing karaoke lyrics.",
+    bestFor: "Khmer New Year, Romvong, Saravan, Madizon, temple dance celebrations",
+    gradient: "linear-gradient(135deg, #831843, #db2777, #f472b6)"
+  },
+  {
+    id: "khmer_remix",
+    category: "🎉 Festive & Dance",
+    title_km: "២០. តន្ត្រីខ្មែរ រីមិច យូធូប ២០២៦",
+    title_en: "Modern Khmer YouTube Remix",
+    badge: "🚀 ULTRA VIRAL BASS",
+    theme: "trap_circle",
+    palette: "cyberpunk",
+    lyricStyle: "karaoke",
+    barCount: 64,
+    bassBoost: 1.5,
+    particlesLevel: 5,
+    desc: "Heavy bass reactive pulsing circle with electric neon glow — tailor-made for YouTube bass boosters & remix channels.",
+    bestFor: "Khmer Club Remixes, Trap Bass Boost, Vannda style Hip-Hop, EDM party tracks",
+    gradient: "linear-gradient(135deg, #083344, #0891b2, #06b6d4)"
+  }
+];
+
+/**
+ * Cambodian Singers from the 60-70s (Golden Era Legends)
+ * Complete roster matching historical archives & vinyl records
+ */
+export const KHMER_SINGERS_60S_70S = [
+  {
+    id: "sinn_sisamouth",
+    name_km: "ស៊ីន ស៊ីសាមុត",
+    name_en: "Sinn Sisamouth",
+    years: "1932 - 1976",
+    title: "អធិរាជសំឡេងមាស (King of Khmer Music)",
+    badge: "👑 KING OF KHMER MUSIC",
+    accent: "#d97706",
+    bgAccent: "linear-gradient(135deg, #451a03, #78350f, #b45309)",
+    templateId: "vinyl_60s",
+    defaultSong: "ចំប៉ាបាត់ដំបង",
+    famousSongs: [
+      "ចំប៉ាបាត់ដំបង",
+      "ស្រណោះក្លិនម្អម",
+      "ព្រែកឯងអស់សង្ឃឹម",
+      "អនិច្ចាកាលកន្លង",
+      "ស្នេហ៍ឆ្លងវេហា"
+    ],
+    desc: "Renowned as the Emperor of the Golden Voice, with over 1,000 timeless romantic, rumba, and rock masterpieces."
+  },
+  {
+    id: "ros_sereysothea",
+    name_km: "រស់ សេរីសុទ្ធា",
+    name_en: "Ros Serey Sothea",
+    years: "1948 - 1977",
+    title: "រាជិនីសំឡេងមាស (Queen of the Golden Voice)",
+    badge: "👑 GOLDEN VOICE QUEEN",
+    accent: "#9a3412",
+    bgAccent: "linear-gradient(135deg, #7c2d12, #9a3412, #ea580c)",
+    templateId: "candlelight",
+    defaultSong: "ចិត្តនៅតែស្នេហ៍",
+    famousSongs: [
+      "ចិត្តនៅតែស្នេហ៍",
+      "ផ្ការីកលើមេឃ",
+      "ស្អប់ណាស់មនុស្សប្រុស",
+      "ចង់រាំជាមួយបង",
+      "កុំស្រឡាញ់ស្រីផ្កា"
+    ],
+    desc: "Legendary powerhouse female vocalist whose bell-like tone and versatile garage rock singing enchanted the nation."
+  },
+  {
+    id: "pen_ran",
+    name_km: "ប៉ែន រ៉ន",
+    name_en: "Pen Ran",
+    years: "1944 - 1979",
+    title: "ម្ចាស់ក្សត្រីតន្ត្រី Rock & Cha-cha-cha",
+    badge: "🎸 QUEEN OF KHMER ROCK",
+    accent: "#b91c1c",
+    bgAccent: "linear-gradient(135deg, #7f1d1d, #b91c1c, #dc2626)",
+    templateId: "vinyl_60s",
+    defaultSong: "កុំអាលញញឹម",
+    famousSongs: [
+      "កុំអាលញញឹម",
+      "ស្រឡាញ់ស្រីក្បាលខូច",
+      "ទេវតាខ្ញុំទៅណា?",
+      "រាំចង្វាក់អាហ្គោហ្គោ",
+      "តណ្ហាស្រីក្មេង"
+    ],
+    desc: "Dynamic, flirtatious, energetic singer celebrated for psychedelic garage rock, soulful twist, and upbeat cha-cha-cha."
+  },
+  {
+    id: "mao_sareth",
+    name_km: "ម៉ៅ សារ៉េត",
+    name_en: "Mao Sareth",
+    years: "1944 - 1975",
+    title: "តារាចម្រៀងមនោសញ្ចេតនាជើងចាស់",
+    badge: "🌊 MELANCHOLY PIONEER",
+    accent: "#0891b2",
+    bgAccent: "linear-gradient(135deg, #155e75, #0891b2, #06b6d4)",
+    templateId: "ocean_wave",
+    defaultSong: "ស្ទឹងជីនិត",
+    famousSongs: [
+      "ស្ទឹងជីនិត",
+      "វាលស្រីស្រណោះ",
+      "ឱព្រៃស្ងប់ស្ងាត់",
+      "មេឃខ្មៅងងឹត"
+    ],
+    desc: "Pioneer of early 1960s Cambodian vocal melodrama with emotionally deep, heart-touching phrasing."
+  },
+  {
+    id: "meas_samon",
+    name_km: "មាស សាម៉ន",
+    name_en: "Meas Samon",
+    years: "1940s - 1976(?)",
+    title: "តារាចម្រៀងកំប្លែង និងប្រជាប្រិយ",
+    badge: "😄 MASTER OF FOLK & HUMOR",
+    accent: "#ea580c",
+    bgAccent: "linear-gradient(135deg, #9a3412, #ea580c, #f97316)",
+    templateId: "spectrum",
+    defaultSong: "ក្រមុំស្រុកណា?",
+    famousSongs: [
+      "ក្រមុំស្រុកណា?",
+      "ស្រឡាញ់អូនដរាបណា?",
+      "ចាបមាស",
+      "តូចចិត្តណាស់"
+    ],
+    desc: "Beloved comedic showman and folk icon whose infectious energy, humor, and satirical songs won all hearts."
+  },
+  {
+    id: "huoy_meas",
+    name_km: "ហួយ មាស",
+    name_en: "Huoy Meas",
+    years: "1946 - 1977",
+    title: "សំនៀងស្រទន់ រំជួលចិត្ត & អ្នកប្រកាសវិទ្យុ",
+    badge: "📻 GOLDEN RADIO VOICE",
+    accent: "#ca8a04",
+    bgAccent: "linear-gradient(135deg, #854d0e, #ca8a04, #eab308)",
+    templateId: "candlelight",
+    defaultSong: "សម្រស់កោះកុង",
+    famousSongs: [
+      "សម្រស់កោះកុង",
+      "ទឹកភ្នែកសាមពាន់",
+      "ជំនោរព្រៃព្រឹក្សា",
+      "ផ្កាយព្រឹក"
+    ],
+    desc: "Sublime, velvety voice and leading national radio host whose melancholic ballads defined Cambodian evening radio."
+  },
+  {
+    id: "pou_vannary",
+    name_km: "ពៅ វណ្ណារី",
+    name_en: "Pou Vannary",
+    years: "1940s - 1975(?)",
+    title: "តន្ត្រី Rock & Western Folk Soul",
+    badge: "🎙️ ACOUSTIC SOUL PIONEER",
+    accent: "#64748b",
+    bgAccent: "linear-gradient(135deg, #334155, #475569, #64748b)",
+    templateId: "neon_bars",
+    defaultSong: "You Stole My Heart",
+    famousSongs: [
+      "You Stole My Heart",
+      "ព្រាត់ស្នេហ៍នៅកោះពេជ្រ",
+      "យំស្តាយស្នេហ៍"
+    ],
+    desc: "Renowned for bridging acoustic Western folk-soul and Khmer ballads with deep, rich, introspective singing."
+  },
+  {
+    id: "yol_aularong",
+    name_km: "យ៉ុល អូឡារ៉ុង",
+    name_en: "Yol Aularong",
+    years: "1940s - 1975",
+    title: "ស្ថាបនិក Garage Psychedelic Rock",
+    badge: "⚡ GARAGE ROCK REBEL",
+    accent: "#334155",
+    bgAccent: "linear-gradient(135deg, #1e293b, #334155, #475569)",
+    templateId: "trap_circle",
+    defaultSong: "យប់មិញបងញ៉ាំស្រា",
+    famousSongs: [
+      "យប់មិញបងញ៉ាំស្រា",
+      "ស៊ីក្លូ (Cyclo)",
+      "ជិះម៉ូតូ",
+      "ស្រីស្រស់ស្អាត"
+    ],
+    desc: "Rebellious, sunglasses-clad psychedelic garage-rock pioneer known for humorous, gritty rock 'n' roll riffs."
+  },
+  {
+    id: "liev_tuk",
+    name_km: "លីវ ទឹក",
+    name_en: "Liev Tuk",
+    years: "1940s - 1976(?)",
+    title: "ស្តេចតន្ត្រី Soul & Funk ខ្មែរ",
+    badge: "🎷 CAMBODIAN JAMES BROWN",
+    accent: "#2563eb",
+    bgAccent: "linear-gradient(135deg, #1e3a8a, #1d4ed8, #3b82f6)",
+    templateId: "trap_circle",
+    defaultSong: "ស្រីស្រស់ស្អាត",
+    famousSongs: [
+      "ស្រីស្រស់ស្អាត",
+      "អារម្មណ៍ស្នេហ៍",
+      "រាំញាក់កន្ត្រាក់អារម្មណ៍"
+    ],
+    desc: "Electric soul and funk frontman renowned for fiery performances and gritty, passionate vocal delivery."
+  },
+  {
+    id: "so_savoeun",
+    name_km: "សូ សាវឿន",
+    name_en: "So Savoeun",
+    years: "1945 - Living",
+    title: "តារាចម្រៀងរាំវង់ សារ៉ាវ៉ាន់",
+    badge: "🌸 QUEEN OF SARAVAN",
+    accent: "#06b6d4",
+    bgAccent: "linear-gradient(135deg, #164e63, #0891b2, #06b6d4)",
+    templateId: "spectrum",
+    defaultSong: "ផ្កាក្រវ៉ាន់",
+    famousSongs: [
+      "ផ្កាក្រវ៉ាន់",
+      "បុប្ផាកំពង់ចាម",
+      "រាំវង់ចូលឆ្នាំ",
+      "កម្លោះប្រពន្ធលែង"
+    ],
+    desc: "Beloved living treasure of Cambodian folk song, renowned for traditional wedding melodies and festive Saravan dance."
+  },
+  {
+    id: "drakkar",
+    name_km: "វង់តន្ត្រី ដ្រាកា",
+    name_en: "Drakkar (Band)",
+    years: "1967 - 1975",
+    title: "Oer Sam Ol, Som Sareth, Touch Seang Tana, Touch Chhatha, Ouk Sam Art",
+    badge: "🔥 1ST HARD ROCK BAND",
+    accent: "#eab308",
+    bgAccent: "linear-gradient(135deg, #713f12, #a16207, #ca8a04)",
+    templateId: "trap_circle",
+    defaultSong: "ឈាមអើយឈាមរាវ",
+    famousSongs: [
+      "ឈាមអើយឈាមរាវ",
+      "យុវជនសម័យថ្មី",
+      "ក្រមុំចិញ្ចើមក្រាស់"
+    ],
+    desc: "Cambodia's pioneering heavy psychedelic rock band whose heavy fuzzed guitars made history in 1967-1975 Phnom Penh."
+  }
+];

@@ -1,0 +1,10 @@
+# Sinn Sisamouth — Demo Test Song
+# Place the reference text here after the pipeline has run.
+# Format: one lyric line per row (matching Whisper segment output).
+# Example:
+#
+# ចង់ឱ្យអូនជ្រាបថា
+# បងស្រឡាញ់អូន
+# ដូចច្បាស់ចិត្ត
+#
+# Leave this file empty until you have human-verified reference lyrics.

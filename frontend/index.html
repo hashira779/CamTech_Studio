@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VIDA Studio Pro — AI-Powered Audio-Visual DAW</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;900&family=Kantumruy+Pro:wght@400;600;700&family=Battambang:wght@400;700&family=Siemreap&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  <!-- Tailwind CSS v4 Engine -->
+  <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+  <style type="text/tailwindcss">
+    @theme {
+      --color-studio-app: #06080d;
+      --color-studio-panel: #0c1019;
+      --color-studio-surface: #101522;
+      --color-studio-card: rgba(20, 26, 40, 0.68);
+      --color-cyan-glow: #0ea5e9;
+      --color-amber-gold: #f59e0b;
+      --color-ai-violet: #a855f7;
+    }
+  </style>
+</head>
+<body class="daw-theme">
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Top Navigation Bar -->
+  <header class="daw-header">
+    <div class="header-left">
+      <div class="logo">VIDA<span class="pro-badge">PRO</span></div>
+      <button id="btn-toggle-left-panel" class="panel-toggle-btn active" title="Toggle Media Pool Panel (Theater Mode)">
+        <span>⊞</span> Media
+      </button>
+      <div class="menu-items">
+        <span>File</span>
+        <span>Edit</span>
+        <span>AI Models</span>
+        <span>Render</span>
+        <span>Help</span>
+      </div>
+    </div>
+
+    <div class="header-center">
+      <div class="project-title-capsule">
+        <span class="project-title">Project: Cyber Horizon - 60 FPS Studio</span>
+        <span class="project-format-badge">1080p • 60 FPS</span>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <button id="btn-toggle-right-panel" class="panel-toggle-btn active" title="Toggle Inspector Panel (Wide View)">
+        <span>⚙</span> Inspector
+      </button>
+      <div class="status-indicator">
+        <span class="dot active"></span> Local LLM: Ready
+      </div>
+      <button class="btn-primary" id="btn-export">
+        <span>⚡</span> Export Video
+      </button>
+    </div>
+  </header>
+
+  <!-- Main DAW Workspace -->
+  <main class="daw-workspace" id="daw-workspace">
+    
+    <!-- ============ Left Panel: Segmented Media Hub & AI ============ -->
+    <aside class="panel left-panel" id="left-panel">
+      <!-- Segmented Navigation Switcher -->
+      <div class="segmented-nav" id="nav-left-panel">
+        <button class="segmented-tab active" data-target="tab-left-media">📁 Media Pool</button>
+        <button class="segmented-tab" data-target="tab-left-ai">🧠 AI & Vocal Stems</button>
+      </div>
+
+      <div class="panel-content">
+        <!-- TAB 1: Media Pool -->
+        <div id="tab-left-media" class="tab-pane">
+          <!-- Audio Dropzone -->
+          <div class="upload-zone" id="audio-dropzone">
+            <input type="file" id="audio-file-input" accept="audio/*,video/mp4" class="hidden">
+            <span class="upload-zone-icon">🎙️</span>
+            <span>Drop Audio / Video or Click to Browse</span>
+          </div>
+          
+          <!-- Modern YouTube Input Capsule -->
+          <div class="youtube-capsule">
+            <input type="text" id="youtube-url-input" class="youtube-input" placeholder="Paste YouTube link...">
+            <button id="btn-paste-yt" class="btn-icon-inline" title="Paste from clipboard">📋</button>
+            <button id="btn-download-yt" class="btn-youtube-dl" title="Download Audio">⬇️ DL</button>
+          </div>
+          
+          <!-- Media Assets Cards -->
+          <div class="media-list">
+            <div class="media-item active" id="btn-upload-audio">
+              <div class="media-item-left">
+                <span class="icon">🎵</span>
+                <span class="media-item-title">Master Audio Track</span>
+              </div>
+              <span class="media-item-badge">Active</span>
+            </div>
+
+            <div class="media-item" id="btn-upload-bg" style="cursor: pointer;">
+              <div class="media-item-left">
+                <span class="icon">🖼️</span>
+                <span class="media-item-title">Background Art</span>
+              </div>
+              <input type="file" id="bg-file-input" accept="image/*" class="hidden">
+              <span class="media-item-badge">Auto</span>
+            </div>
+
+            <div class="media-item" id="btn-upload-logo" style="cursor: pointer;">
+              <div class="media-item-left">
+                <span class="icon">🎨</span>
+                <span class="media-item-title">Center Logo</span>
+              </div>
+              <input type="file" id="logo-file-input" accept="image/*" class="hidden">
+              <span class="media-item-badge">Click Upload</span>
+            </div>
+          </div>
+
+          <!-- Quick Presets -->
+          <button id="btn-load-demo" class="btn-secondary mt-10">⚡ Load Synth Demo</button>
+          <button id="btn-load-sinisamut" class="btn-secondary mt-10 w-full" style="background: linear-gradient(135deg, #78350f, #451a03); border: 1px solid #d97706; color: #fef3c7; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 6px;">
+            <span>📻</span> ស៊ីន ស៊ីសាមុត Demo (60s Vinyl)
+          </button>
+          <button id="btn-open-khmer-templates" class="btn-ai mt-10 w-full" style="background: linear-gradient(135deg, #d97706, #b45309); border: 1px solid #f59e0b; display: flex; align-items: center; justify-content: center; gap: 6px; font-weight: 600; padding: 8px 10px; font-size: 11px; box-shadow: 0 4px 12px rgba(217, 119, 6, 0.25);">
+            <span>🇰🇭</span> 20 Khmer YouTube Templates
+          </button>
+        </div>
+
+        <!-- TAB 2: AI & Audio Tools -->
+        <div id="tab-left-ai" class="tab-pane hidden">
+          <div class="glass-card">
+            <button id="btn-run-deep-audit" class="btn-ai w-full">🧠 SuperSmart Scan (Local LLM)</button>
+            <div style="display: flex; gap: 6px; margin-top: 8px;">
+              <button id="btn-transcribe-ai" class="btn-ai" style="flex: 1; background: linear-gradient(135deg, #10b981, #047857);">🎤 Auto-Sync Lyrics (AI)</button>
+              <button id="btn-upload-lrc" class="btn-secondary" style="font-size: 0.75rem; padding: 6px 8px; white-space: nowrap;" title="Import LRC, SRT, or VTT subtitle file">📄 Import Sub</button>
+              <input type="file" id="lrc-file-input" accept=".lrc,.srt,.vtt,.txt" class="hidden">
+            </div>
+
+            <!-- Real-Time AI Transcription Progress Bar -->
+            <div id="transcribe-progress-box" style="display: none; margin-top: 8px; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; padding: 6px 10px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <span id="transcribe-progress-status" style="font-size: 11px; color: #34d399; font-weight: 500;">Transcribing audio...</span>
+                <span id="transcribe-progress-pct" style="font-size: 11px; color: #fff; font-weight: 700; font-family: monospace;">0%</span>
+              </div>
+              <div style="width: 100%; height: 5px; background: rgba(255, 255, 255, 0.12); border-radius: 3px; overflow: hidden;">
+                <div id="transcribe-progress-fill" style="width: 0%; height: 100%; background: linear-gradient(90deg, #10b981, #06b6d4); transition: width 0.3s ease-out; border-radius: 3px;"></div>
+              </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px;">
+              <div>
+                <label style="font-size: 10px; color: var(--text-dim); display: block; margin-bottom: 2px;">Vocal Language</label>
+                <select id="select-vocal-lang" class="prop-select" style="font-size: 11px; padding: 4px 6px;">
+                  <option value="auto" selected>🌐 Auto Detect</option>
+                  <option value="km">🇰🇭 Khmer (km)</option>
+                  <option value="en">🇬🇧 English (en)</option>
+                </select>
+              </div>
+              <div>
+                <label style="font-size: 10px; color: var(--text-dim); display: block; margin-bottom: 2px;">AI Model Engine</label>
+                <select id="select-whisper-model" class="prop-select" style="font-size: 11px; padding: 4px 6px;">
+                  <option value="large-v3-turbo" selected>👑 Large-v3 Turbo</option>
+                  <option value="distil-large-v3">🚀 Distil-Large-v3</option>
+                  <option value="medium">⭐ Medium</option>
+                  <option value="small">⚡ Small</option>
+                  <option value="base">💨 Base</option>
+                </select>
+              </div>
+            </div>
+
+            <div style="background: rgba(0,0,0,0.3); border-radius: 6px; padding: 8px; margin-top: 8px; display: flex; flex-direction: column; gap: 4px; font-size: 11px;">
+              <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-dim);">BPM</span><span id="stat-bpm" style="font-family: var(--font-mono); color: var(--accent); font-weight: 700;">--</span></div>
+              <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-dim);">Key</span><span id="stat-key" style="font-family: var(--font-mono); color: var(--text-secondary);">C Minor</span></div>
+              <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-dim);">Energy</span><span id="stat-energy" style="font-family: var(--font-mono); color: var(--accent); font-weight: 700;">--</span></div>
+            </div>
+          </div>
+
+          <!-- Local LLM AI Assistant -->
+          <div class="glass-card">
+            <div class="card-title">🤖 Local LLM Prompt</div>
+            <textarea placeholder="Ask AI to generate lyrics, translate, or analyze mood..." style="width: 100%; background: var(--bg-input); border: 1px solid var(--border-color); border-radius: 6px; color: #fff; padding: 8px; font-size: 11px; resize: none; height: 50px; outline: none;" class="llm-input"></textarea>
+            <button class="btn-ai-small w-full" style="background: linear-gradient(135deg, var(--accent-ai), #7e22ce); color: white; border: none; padding: 6px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer;">Ask Qwen 2.5</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ============ Center Panel: Canvas Stage ============ -->
+    <section class="panel center-panel">
+      <div class="stage-header">
+        <div class="aspect-tabs">
+          <button class="active">16:9 Landscape</button>
+          <button>9:16 Vertical</button>
+          <button>1:1 Square</button>
+        </div>
+        <div class="stage-actions">
+          <button id="btn-toggle-lyrics-overlay" title="Toggle Lyrics Overlay on Video" style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #10b981; border-radius: 4px; padding: 4px 9px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px; font-weight: 500; transition: all 0.2s;">
+            <span id="toggle-lyrics-icon">👁️</span> <span id="toggle-lyrics-text">Lyrics: ON</span>
+          </button>
+          <button id="btn-fullscreen-stage" title="Maximize Preview Monitor (Theater Mode)" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: 4px; padding: 4px 8px; font-size: 11px; cursor: pointer;">
+            ⛶
+          </button>
+        </div>
+      </div>
+      
+      <div class="canvas-container">
+        <div class="canvas-studio-frame">
+          <div class="canvas-wrapper aspect-16-9">
+            <canvas id="visualizer-canvas" width="1920" height="1080"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Right Panel: Segmented Inspector ============ -->
+    <aside class="panel right-panel" id="right-panel">
+      <!-- Segmented Navigation Switcher -->
+      <div class="segmented-nav" id="nav-right-panel">
+        <button class="segmented-tab active" data-target="tab-right-visualizer">🎨 Style</button>
+        <button class="segmented-tab" data-target="tab-right-director">🎬 Director & VFX</button>
+        <button class="segmented-tab" data-target="tab-right-dsp">🎛️ DSP</button>
+      </div>
+
+      <div class="panel-content">
+        <!-- TAB 1: Visualizer Style -->
+        <div id="tab-right-visualizer" class="tab-pane">
+          <!-- 🇰🇭 20 Authentic Khmer Video Templates -->
+          <div class="glass-card" style="border-color: rgba(217, 119, 6, 0.35); background: rgba(217, 119, 6, 0.06);">
+            <div class="card-title-row">
+              <span class="card-title" style="color: #fbbf24;">🇰🇭 Khmer Video Template</span>
+              <button id="btn-browse-khmer-grid" style="background: transparent; border: none; color: #fbbf24; font-size: 10px; text-decoration: underline; cursor: pointer;">Browse 20</button>
+            </div>
+            <select id="select-khmer-template" class="prop-select" style="font-size: 11px; border-color: rgba(217, 119, 6, 0.4);">
+              <option value="" disabled selected>✨ Choose 1 of 20 Khmer Styles...</option>
+              <optgroup label="📻 1960s Golden Era & Vintage">
+                <option value="vinyl_60s">📻 1. Golden Era 1960s Vinyl (យុគមាស ឆ្នាំ៦០)</option>
+                <option value="candlelight">🕯️ 2. Candlelight Nostalgia (ពន្លឺទៀន អនុស្សាវរីយ៍)</option>
+                <option value="pp_cafe">☕ 3. Phnom Penh Vintage Cafe (កាហ្វេតន្ត្រី អតីតកាល)</option>
+                <option value="battambang">🌾 4. Battambang Sunset (ដីក្រហម បាត់ដំបង)</option>
+              </optgroup>
+              <optgroup label="👑 Angkor & Heritage Majesty">
+                <option value="angkor_sunset">🇰🇭 5. Angkor Wat Sunset (ថ្ងៃលិច ប្រាសាទអង្គរ)</option>
+                <option value="royal_palace">🏰 6. Royal Palace Golden Aura (ព្រះបរមរាជវាំង)</option>
+                <option value="preah_khan">🌙 7. Preah Khan Moonlight (ពន្លឺព្រះច័ន្ទ ប្រាសាទ)</option>
+                <option value="chapei">🪕 8. Chapei Dong Veng Heritage (ចាប៉ីដងវែង បុរាណ)</option>
+                <option value="pleng_kar">🥁 9. Traditional Pleng Kar (ភ្លេងការបុរាណ មង្គលការ)</option>
+              </optgroup>
+              <optgroup label="🌧️ Romantic, Melancholy & Waters">
+                <option value="rainy_night">🌧️ 10. Rainy Night Melancholy (រាត្រីភ្លៀងធ្លាក់)</option>
+                <option value="tonle_sap">🌊 11. Tonle Sap Moonlit Waves (មាត់បឹងទន្លេសាប)</option>
+                <option value="lotus_pond">🪷 12. Sacred Lotus Pond (ស្រះឈូក បុរាណ)</option>
+                <option value="bokor_fog">🔥 13. Bokor Mountain Fog (អ័ព្ទភ្នំបូកគោ)</option>
+                <option value="acoustic_live">🎸 14. Khmer Acoustic Session (អាគូស្ទិក អារម្មណ៍ស្ងប់)</option>
+              </optgroup>
+              <optgroup label="🍃 Countryside, Nature & Flowers">
+                <option value="romduol">🌸 15. Romduol Blossom (ផ្ការំដួល ផ្កាជាតិ)</option>
+                <option value="bamboo_breeze">🎋 16. Countryside Bamboo Breeze (ខ្យល់បក់វាលស្រែ)</option>
+                <option value="kirirom_pine">🍃 17. Kirirom Pine Mist (ស្រល់គិរីរម្យ)</option>
+                <option value="pailin_gem">💎 18. Pailin Gemstone Radiance (ត្បូងប៉ៃលិន)</option>
+              </optgroup>
+              <optgroup label="🎉 Festive, Romvong & Modern">
+                <option value="romvong_festive">🪘 19. Romvong New Year (រាំវង់ចូលឆ្នាំថ្មី)</option>
+                <option value="khmer_remix">✨ 20. Modern Khmer Remix (តន្ត្រីខ្មែរ រីមិច ២០២៦)</option>
+              </optgroup>
+            </select>
+          </div>
+
+          <!-- Visualizer Settings -->
+          <div class="glass-card">
+            <div class="card-title">Theme Visualizer</div>
+            <select id="select-theme" class="prop-select">
+              <optgroup label="🚀 2026–2029 Next-Gen Futuristic Spectrum">
+                <option value="quantum_vortex">🌀 2026 Quantum Warp Vortex</option>
+                <option value="neural_synapse">🧠 2027 Neural AI Synapse Matrix</option>
+                <option value="hyper_liquid">🌊 2028 Hyper-Liquid Chromatic Wave</option>
+                <option value="angkor_mandala">🇰🇭 2029 Cyber-Angkor Sacred Mandala</option>
+                <option value="hologram_hud">🎛️ 2029 Cyberpunk Hologram HUD</option>
+              </optgroup>
+              <optgroup label="Classic Visualizers">
+                <option value="trap_circle">Trap Nation Pulse</option>
+                <option value="neon_bars">Cyber Equalizer</option>
+                <option value="ocean_wave">Ocean Wave</option>
+                <option value="spectrum">Spectrum Analyzer</option>
+              </optgroup>
+            </select>
+          </div>
+
+          <div class="glass-card">
+            <div class="card-title">Color Palette</div>
+            <select id="select-palette" class="prop-select">
+              <optgroup label="🇰🇭 Khmer Authentic Palettes">
+                <option value="angkor">🇰🇭 Angkor Heritage Gold</option>
+                <option value="vintage_vinyl">📻 1960s Vintage Vinyl</option>
+                <option value="candlelight">🕯️ Candlelight Amber</option>
+                <option value="rainy_night">🌧️ Rainy Night Blue</option>
+                <option value="tonle_sap">🌊 Tonle Sap Twilight</option>
+                <option value="royal_palace">🏰 Royal Palace Gold</option>
+                <option value="romduol">🌸 Romduol Flower</option>
+                <option value="pleng_kar">🥁 Traditional Pleng Kar</option>
+                <option value="romvong_festive">🪘 Romvong Festive</option>
+                <option value="kirirom_pine">🍃 Kirirom Pine Forest</option>
+                <option value="lotus_pond">🪷 Sacred Lotus Pond</option>
+                <option value="chapei_wood">🪕 Chapei Teak Wood</option>
+              </optgroup>
+              <optgroup label="🎨 Modern Palettes">
+                <option value="cyberpunk">Cyberpunk Neon</option>
+                <option value="sunset">Sunset Gold</option>
+                <option value="matrix">Matrix Green</option>
+                <option value="electric">Electric Purple</option>
+                <option value="bloodmoon">Blood Moon</option>
+                <option value="pastel">Pastel Pop</option>
+                <option value="monochrome">Monochrome</option>
+              </optgroup>
+            </select>
+          </div>
+
+          <!-- 📝 On-Screen Text & Titles Card -->
+          <div class="glass-card" style="border-color: rgba(56, 189, 248, 0.25); background: rgba(15, 23, 42, 0.45);">
+            <div class="card-title-row">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="color: #38bdf8; font-size: 13px;">📝</span>
+                <span class="card-title" style="color: #f1f5f9; font-weight: 600;">On-Screen Text & Titles</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-size: 10px; color: var(--text-dim);">Visible</span>
+                <label class="switch toggle-switch" title="Toggle On-Screen Header Titles">
+                  <input type="checkbox" id="check-show-titles" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 6px;">
+              <!-- Song Title Input + Delete Button -->
+              <div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <label for="input-song-title" style="font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Song Title</label>
+                  <button id="btn-clear-title" style="background: transparent; border: none; color: #ef4444; font-size: 10px; cursor: pointer; padding: 0 2px; font-weight: 600;" title="Clear Song Title">✕ Delete</button>
+                </div>
+                <div style="position: relative; display: flex; align-items: center;">
+                  <input type="text" id="input-song-title" class="prop-input" placeholder="e.g. Cyber Horizon, ថ្ងៃដែលពួកយើងរង់ចាំ..." value="Cyber Horizon" style="padding-right: 28px; width: 100%;">
+                  <span style="position: absolute; right: 8px; font-size: 11px; opacity: 0.4; pointer-events: none;">🎵</span>
+                </div>
+              </div>
+
+              <!-- Singer / Artist Input + Delete Button -->
+              <div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <label for="input-artist-name" style="font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Singer / Artist</label>
+                  <button id="btn-clear-artist" style="background: transparent; border: none; color: #ef4444; font-size: 10px; cursor: pointer; padding: 0 2px; font-weight: 600;" title="Clear Singer Name">✕ Delete</button>
+                </div>
+                <div style="position: relative; display: flex; align-items: center;">
+                  <input type="text" id="input-artist-name" class="prop-input" placeholder="e.g. VIDA Synth Engine, ស៊ីន ស៊ីសាមុត..." value="VIDA Synth Engine" style="padding-right: 28px; width: 100%;">
+                  <span style="position: absolute; right: 8px; font-size: 11px; opacity: 0.4; pointer-events: none;">🎙️</span>
+                </div>
+              </div>
+
+              <!-- Center Badge / Emblem Text -->
+              <div style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                  <span style="font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Center Emblem Badge</span>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <button id="btn-clear-center-text" style="background: transparent; border: none; color: #ef4444; font-size: 10px; cursor: pointer; padding: 0 2px; font-weight: 600;" title="Clear Center Badge Text">✕ Delete</button>
+                    <label class="switch toggle-switch" title="Toggle Center Badge Text">
+                      <input type="checkbox" id="check-show-center-text" checked>
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+                  <div>
+                    <span style="font-size: 9px; color: var(--text-dim); display: block; margin-bottom: 2px;">Line 1</span>
+                    <input type="text" id="input-center-primary" class="prop-input" placeholder="VIDA" value="VIDA" style="font-size: 11px; width: 100%;">
+                  </div>
+                  <div>
+                    <span style="font-size: 9px; color: var(--text-dim); display: block; margin-bottom: 2px;">Line 2</span>
+                    <input type="text" id="input-center-secondary" class="prop-input" placeholder="FLUID WAVE" value="FLUID WAVE" style="font-size: 11px; width: 100%;">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Lyric Animation Style (9 Styles) -->
+          <div class="glass-card">
+            <div class="card-title-row">
+              <span class="card-title">Lyric Animation</span>
+              <button id="btn-toggle-lyrics-prop" style="background: transparent; border: none; color: #10b981; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 3px;" title="Toggle lyrics visibility on video">
+                <span id="prop-toggle-lyrics-icon">👁️</span> <span id="prop-toggle-lyrics-text">Visible</span>
+              </button>
+            </div>
+            <select id="select-lyric-style" class="prop-select">
+              <option value="karaoke">Karaoke (Sweep Glow)</option>
+              <option value="highlight">Word Highlight Glow</option>
+              <option value="glow">Neon Glow Aura</option>
+              <option value="bounce">Kinetic Bounce</option>
+              <option value="typewriter">Typewriter Reveal</option>
+              <option value="fade">Smooth Line Fade</option>
+              <option value="pop">Modern Pop Pill</option>
+              <option value="cinematic">Cinematic Golden Subtitle</option>
+              <option value="none">Hidden (No Lyrics)</option>
+            </select>
+          </div>
+
+          <!-- Synced Lyrics Teleprompter -->
+          <div class="glass-card">
+            <div class="card-title-row">
+              <span class="card-title">Synced Teleprompter</span>
+              <div style="display: flex; gap: 5px; align-items: center;">
+                <button id="btn-toggle-teleprompter" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border-color); color: var(--text-dim); border-radius: 4px; padding: 2px 6px; font-size: 10px; cursor: pointer;">👁️ Hide</button>
+                <button id="btn-clear-lyrics" style="background: rgba(255,255,255,0.06); border: 1px solid var(--border-color); color: var(--text-dim); border-radius: 4px; padding: 2px 6px; font-size: 10px; cursor: pointer;">🗑️ Clear</button>
+                <span id="lyrics-count-badge" style="font-size: 10px; color: var(--accent); background: rgba(14, 165, 233, 0.15); padding: 2px 6px; border-radius: 4px; font-weight: 600;">0 Lines</span>
+              </div>
+            </div>
+            <div id="lyrics-teleprompter" style="max-height: 120px; overflow-y: auto; background: var(--bg-input); border: 1px solid var(--border-color); border-radius: 6px; padding: 6px; font-size: 11px; display: flex; flex-direction: column; gap: 4px; scroll-behavior: smooth;">
+              <div class="teleprompter-empty" style="color: var(--text-dim); text-align: center; padding: 12px 0;">No lyrics loaded yet</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 2: Director & VFX -->
+        <div id="tab-right-director" class="tab-pane hidden">
+          <!-- 🎬 Smart Video Director & Rule Flow -->
+          <div class="glass-card" style="border-color: rgba(168, 85, 247, 0.35); background: rgba(168, 85, 247, 0.06);">
+            <div class="card-title-row">
+              <span class="card-title" style="color: #c084fc;">🎬 Smart Video Director</span>
+              <label class="switch toggle-switch">
+                <input type="checkbox" id="check-director-active" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            
+            <select id="select-director-preset" class="prop-select" style="font-size: 11px; border-color: rgba(168, 85, 247, 0.4);">
+              <option value="festival_drop" selected>🔥 1. 2026 Ultra Festival Drop</option>
+              <option value="neural_glitch">🧠 2. 2027 Neural Glitch Flow</option>
+              <option value="ambient_liquid">🌊 3. 2028 Ambient Liquid Float</option>
+              <option value="cyber_angkor">🇰🇭 4. 2029 Cyber-Angkor Sacred Flow</option>
+              <option value="auto_ai_director">🤖 5. Full Autonomous AI Director</option>
+              <option value="custom">🛠️ 6. Custom User Rule Flow</option>
+            </select>
+
+            <!-- Interactive Rule Toggles Grid -->
+            <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 4px;">
+              <div class="toggle-row">
+                <span>Drop Camera Shake</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="check-rule-shake" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <span>Bass Shockwave</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="check-rule-shockwave" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <span>Strobe Bloom Flash</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="check-rule-bloom" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <span>Auto-Switch Theme Sections</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="check-rule-switch">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- ✨ Real-Time VFX Rack -->
+          <div class="glass-card" style="border-color: rgba(14, 165, 233, 0.35); background: rgba(14, 165, 233, 0.06);">
+            <div class="card-title-row">
+              <span class="card-title" style="color: #38bdf8;">✨ Real-Time VFX Rack</span>
+              <button id="btn-trigger-vfx-test" style="background: rgba(14, 165, 233, 0.2); border: 1px solid var(--accent); color: #fff; font-size: 10px; padding: 3px 8px; border-radius: 4px; cursor: pointer;">⚡ Test Impact</button>
+            </div>
+            
+            <div>
+              <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin-bottom: 4px;">
+                <span style="color: var(--text-dim);">Impact Master Power</span>
+                <span id="label-vfx-power" style="font-family: var(--font-mono); color: var(--accent); font-weight: 700;">100%</span>
+              </div>
+              <input type="range" id="slider-vfx-power" min="0.2" max="2.5" step="0.1" value="1.0" style="width: 100%; accent-color: var(--accent);">
+            </div>
+            
+            <div class="toggle-row" style="margin-top: 4px;">
+              <span>Cyberpunk CRT Scanlines</span>
+              <label class="toggle-switch">
+                <input type="checkbox" id="check-vfx-scanlines">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 3: Audio DSP -->
+        <div id="tab-right-dsp" class="tab-pane hidden">
+          <div class="glass-card">
+            <div class="card-title">3-Band Master Equalizer</div>
+            <div class="eq-rack">
+              <div class="eq-knob">
+                <input type="range" id="eq-sub" min="-12" max="18" value="4" orient="vertical">
+                <span>Sub</span>
+              </div>
+              <div class="eq-knob">
+                <input type="range" id="eq-mid" min="-12" max="12" value="2" orient="vertical">
+                <span>Mid</span>
+              </div>
+              <div class="eq-knob">
+                <input type="range" id="eq-high" min="-12" max="14" value="3" orient="vertical">
+                <span>High</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- ============ Bottom Panel: Hardware Transport Console ============ -->
+  <footer class="daw-timeline">
+    <div class="transport-controls">
+      <!-- Transport Cluster -->
+      <div class="transport-cluster">
+        <button id="btn-transport-prev" class="btn-transport" title="Return to Start (00:00)">⏮</button>
+        <button id="btn-play-pause" class="btn-play" title="Play / Pause (Spacebar)">▶</button>
+        <button id="btn-transport-stop" class="btn-transport" title="Stop & Reset">⏹</button>
+      </div>
+
+      <!-- High-Contrast LED Timecode -->
+      <div class="timecode-display">
+        <div class="timecode">00:00:00:00</div>
+        <span class="duration-display" id="duration-display">/ --:--</span>
+      </div>
+
+      <!-- Volume Controls -->
+      <div class="volume-cluster">
+        <span id="btn-volume-icon" class="volume-icon" title="Mute / Unmute">🔊</span>
+        <input type="range" id="volume-slider" class="volume-slider" min="0" max="1" step="0.05" value="0.85" title="Master Volume">
+      </div>
+    </div>
+
+    <!-- Scrubber & Tracks -->
+    <div class="timeline-tracks">
+      <div class="track-header">
+        <span>Master Waveform</span>
+      </div>
+      <div class="track-content" id="track-scrubber-content">
+        <canvas id="waveform-canvas"></canvas>
+        <div id="timeline-progress"></div>
+        <input type="range" id="timeline-scrubber" min="0" max="100" value="0" step="0.1" title="Seek Audio">
+      </div>
+    </div>
+    
+    <audio id="audio-player" preload="auto" class="hidden"></audio>
+  </footer>
+
+  <!-- 🇰🇭 20 Authentic Khmer YouTube Templates Modal -->
+  <div id="khmer-templates-modal" style="display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(12px); z-index: 10000; align-items: center; justify-content: center; padding: 20px;">
+    <div style="background: #0d111b; border: 1px solid rgba(217, 119, 6, 0.4); border-radius: 14px; width: 100%; max-width: 980px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 60px -12px rgba(0, 0, 0, 0.9), 0 0 40px rgba(217, 119, 6, 0.25);">
+      
+      <!-- Modal Header -->
+      <div style="padding: 16px 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); display: flex; justify-content: space-between; align-items: center; background: linear-gradient(90deg, rgba(217, 119, 6, 0.15), transparent);">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 26px;">🇰🇭</span>
+          <div>
+            <h2 style="font-size: 16px; font-weight: 700; color: #fbbf24; margin: 0; font-family: 'Kantumruy Pro', 'Khmer OS Battambang', sans-serif;">២០ គំរូតន្ត្រីខ្មែរសម្រាប់ YouTube (20 Khmer YouTube Templates)</h2>
+            <p style="font-size: 11px; color: var(--text-dim); margin: 2px 0 0 0;">Curated visual styles for Sinn Sisamouth, acoustic ballads, Angkor heritage, and modern Khmer remixes</p>
+          </div>
+        </div>
+        <button id="btn-close-khmer-modal" style="background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.15); color: #fff; width: 32px; height: 32px; border-radius: 6px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; transition: background 0.2s;">✕</button>
+      </div>
+
+      <!-- Category Filter Tabs -->
+      <div id="khmer-category-tabs" style="padding: 10px 20px; display: flex; gap: 6px; overflow-x: auto; background: rgba(0, 0, 0, 0.25); border-bottom: 1px solid rgba(255, 255, 255, 0.05);">
+        <button class="khmer-tab active" data-cat="all">All 20 Templates</button>
+        <button class="khmer-tab" data-cat="singers" style="background: rgba(217, 119, 6, 0.2); border-color: #d97706; color: #fbbf24; font-weight: 700;">🎙️ 11 Golden Era Legends</button>
+        <button class="khmer-tab" data-cat="📻 Golden Era 1960s">📻 1960s Golden Era</button>
+        <button class="khmer-tab" data-cat="👑 Angkor & Heritage">👑 Angkor & Heritage</button>
+        <button class="khmer-tab" data-cat="🌧️ Romantic & Melancholic">🌧️ Romantic & Rain</button>
+        <button class="khmer-tab" data-cat="🍃 Nature & Homeland">🍃 Nature & Homeland</button>
+        <button class="khmer-tab" data-cat="🎉 Festive & Dance">🎉 Festive & Dance</button>
+      </div>
+
+      <!-- Template Cards Grid -->
+      <div id="khmer-templates-grid" style="padding: 16px 20px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; flex: 1;">
+        <!-- Populated dynamically via JS -->
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/static/js/main.js"></script>
+  
+  <!-- Auto-Reflect Hot Reloader for Development -->
+  <script>
+    let lastMtime = 0;
+    setInterval(async () => {
+      try {
+        if (window.__VIDA_PIPELINE_RUNNING) return;
+        const res = await fetch('/api/dev/mtime');
+        const data = await res.json();
+        if (lastMtime === 0) {
+          lastMtime = data.mtime;
+        } else if (data.mtime > lastMtime) {
+          const audioPlayer = document.getElementById('audio-player');
+          if (audioPlayer && audioPlayer.src && audioPlayer.src !== window.location.href) {
+            sessionStorage.setItem('vida_audio_src', audioPlayer.src);
+            sessionStorage.setItem('vida_audio_time', audioPlayer.currentTime);
+            sessionStorage.setItem('vida_audio_server_path', window.__VIDA_SERVER_PATH || '');
+          }
+          console.log("Update detected. Auto-refreshing...");
+          window.location.reload();
+        }
+      } catch(e) {}
+    }, 2000);
+  </script>
+</body>
+</html>
