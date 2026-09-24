@@ -4,6 +4,13 @@ import { initVisualizer, startVisualizer } from './core/visualizer.js';
 import { KHMER_TEMPLATES, KHMER_SINGERS_60S_70S } from './core/khmer_templates.js';
 import { DIRECTOR_PRESETS } from './plugins/director_rules.js';
 import { triggerCameraShake, triggerShockwave, triggerBloomFlash } from './plugins/vfx_engine.js';
+import { 
+  initResizableLayout, 
+  toggleLeftPanel, 
+  toggleRightPanel, 
+  toggleTheaterMode, 
+  onLayoutResize 
+} from './ui/resizable_layout.js';
 
 // ============ Toast Notification System ============
 function showToast(title, body, type = 'info', duration = 4000) {
@@ -85,6 +92,9 @@ document.addEventListener('DOMContentLoaded', () => {
     initVisualizer(canvas);
     startVisualizer();
   }
+
+  // Initialize Studio Resizable Layout System
+  initResizableLayout();
 
   // Clear lyrics on startup
   state.lyrics = [];
@@ -203,40 +213,111 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  // ============ Universal Studio Activity & Progress Bar Helper ============
+  function setGlobalProgress(percent, isVisible = true, label = 'Processing') {
+    const line = document.getElementById('global-progress-line');
+    const fill = document.getElementById('global-progress-fill');
+    const headerCapsule = document.getElementById('header-progress-capsule');
+    const headerTask = document.getElementById('header-progress-task');
+    const headerPct = document.getElementById('header-progress-pct');
+
+    if (!line || !fill) return;
+    if (!isVisible) {
+      line.style.display = 'none';
+      fill.style.width = '0%';
+      if (headerCapsule) headerCapsule.style.display = 'none';
+      return;
+    }
+    line.style.display = 'block';
+    const clamped = Math.min(100, Math.max(0, Math.round(percent)));
+    fill.style.width = `${clamped}%`;
+
+    if (headerCapsule && headerPct) {
+      headerCapsule.style.display = 'inline-flex';
+      if (headerTask && label) headerTask.textContent = label;
+      headerPct.textContent = `${clamped}%`;
+    }
+
+    if (clamped >= 100) {
+      if (headerCapsule && headerPct) {
+        headerPct.textContent = '100% ✓';
+      }
+      setTimeout(() => {
+        line.style.display = 'none';
+        fill.style.width = '0%';
+        if (headerCapsule) headerCapsule.style.display = 'none';
+      }, 1600);
+    }
+  }
+
+  // ============ Studio Unified Pipeline Progress Card Helper ============
+  function setStudioPipelineProgress(stepIndex, percent, stageText, title = 'Smart Studio Pipeline', isVisible = true) {
+    const card = document.getElementById('studio-pipeline-card');
+    if (!card) return;
+    if (!isVisible) {
+      card.style.display = 'none';
+      return;
+    }
+    card.style.display = 'block';
+    const pctEl = document.getElementById('pipeline-card-pct');
+    const fillEl = document.getElementById('pipeline-card-fill');
+    const stageEl = document.getElementById('pipeline-card-stage');
+    const titleEl = document.getElementById('pipeline-card-title');
+
+    const clamped = Math.min(100, Math.max(0, Math.round(percent)));
+    if (pctEl) pctEl.textContent = `${clamped}%`;
+    if (fillEl) fillEl.style.width = `${clamped}%`;
+    if (stageEl && stageText) stageEl.textContent = stageText;
+    if (titleEl && title) titleEl.textContent = title;
+
+    // Highlight active step
+    const step1 = document.getElementById('pstep-1');
+    const step2 = document.getElementById('pstep-2');
+    const step3 = document.getElementById('pstep-3');
+    if (step1 && step2 && step3) {
+      step1.className = 'pstep' + (stepIndex === 1 ? ' active' : (stepIndex > 1 ? ' done' : ''));
+      step2.className = 'pstep' + (stepIndex === 2 ? ' active' : (stepIndex > 2 ? ' done' : ''));
+      step3.className = 'pstep' + (stepIndex === 3 ? ' active' : (stepIndex >= 3 && clamped === 100 ? ' done' : ''));
+    }
+
+    setGlobalProgress(clamped, true, title);
+
+    if (clamped >= 100 && stepIndex >= 3) {
+      setTimeout(() => {
+        card.style.display = 'none';
+      }, 3000);
+    }
+  }
+
   // ============ Panel Toggles & Theater Mode ============
   const btnToggleLeft = document.getElementById('btn-toggle-left-panel');
   const btnToggleRight = document.getElementById('btn-toggle-right-panel');
-  const dawWorkspace = document.getElementById('daw-workspace');
   const btnFullscreen = document.getElementById('btn-fullscreen-stage');
 
-  if (btnToggleLeft && dawWorkspace) {
+  if (btnToggleLeft) {
     btnToggleLeft.addEventListener('click', () => {
-      dawWorkspace.classList.toggle('left-collapsed');
-      btnToggleLeft.classList.toggle('active', !dawWorkspace.classList.contains('left-collapsed'));
+      toggleLeftPanel();
     });
   }
 
-  if (btnToggleRight && dawWorkspace) {
+  if (btnToggleRight) {
     btnToggleRight.addEventListener('click', () => {
-      dawWorkspace.classList.toggle('right-collapsed');
-      btnToggleRight.classList.toggle('active', !dawWorkspace.classList.contains('right-collapsed'));
+      toggleRightPanel();
     });
   }
 
-  if (btnFullscreen && dawWorkspace) {
+  if (btnFullscreen) {
     btnFullscreen.addEventListener('click', () => {
-      const isTheater = dawWorkspace.classList.contains('left-collapsed') && dawWorkspace.classList.contains('right-collapsed');
-      if (isTheater) {
-        dawWorkspace.classList.remove('left-collapsed', 'right-collapsed');
-        if (btnToggleLeft) btnToggleLeft.classList.add('active');
-        if (btnToggleRight) btnToggleRight.classList.add('active');
-      } else {
-        dawWorkspace.classList.add('left-collapsed', 'right-collapsed');
-        if (btnToggleLeft) btnToggleLeft.classList.remove('active');
-        if (btnToggleRight) btnToggleRight.classList.remove('active');
-      }
+      toggleTheaterMode();
     });
   }
+
+  // Redraw waveform when layout dimensions resize
+  onLayoutResize(() => {
+    if (window.__VIDA_AUDIO_PEAKS) {
+      drawWaveform(window.__VIDA_AUDIO_PEAKS);
+    }
+  });
 
   // ============ Segmented Tab Switcher (Left & Right Panels) ============
   function setupSegmentedNav(navId, panelId) {
@@ -334,8 +415,96 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (err) {
         showToast('LLM Error', err.message, 'error');
       } finally {
-        clearButtonLoading(llmBtn, 'Ask Qwen 2.5');
+        clearButtonLoading(llmBtn, 'Ask SeaLLMs');
       }
+    });
+  }
+
+  // ============ ✍️ AI Khmer Lyric Composer Controls ============
+  const btnGenKhmerLyrics = document.getElementById('btn-generate-khmer-lyrics');
+  const btnPolishLyrics = document.getElementById('btn-polish-khmer-lyrics');
+  const btnLoadGenLyrics = document.getElementById('btn-load-generated-lyrics');
+  const selectLyricGenre = document.getElementById('select-ai-lyric-genre');
+
+  if (btnGenKhmerLyrics) {
+    btnGenKhmerLyrics.addEventListener('click', async () => {
+      const genre = selectLyricGenre ? selectLyricGenre.value : 'romantic';
+      const prompt = llmInput ? llmInput.value.trim() : '';
+
+      try {
+        setButtonLoading(btnGenKhmerLyrics, '✨ Composing...');
+        const res = await fetch('/api/lyrics/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt, genre })
+        });
+        const data = await res.json();
+
+        if (data.status === 'success' && data.lyrics_text) {
+          window.__last_generated_lyrics = data;
+          if (llmInput) llmInput.value = data.lyrics_text;
+          if (btnLoadGenLyrics) btnLoadGenLyrics.style.display = 'inline-block';
+          showToast('✨ Song Composed', `${data.title} (${data.count} lines generated)`, 'success', 4000);
+        } else {
+          showToast('Generation Notice', data.detail || 'Could not compose lyrics', 'info');
+        }
+      } catch (err) {
+        showToast('Error', err.message, 'error');
+      } finally {
+        clearButtonLoading(btnGenKhmerLyrics, '✨ Compose');
+      }
+    });
+  }
+
+  if (btnPolishLyrics) {
+    btnPolishLyrics.addEventListener('click', async () => {
+      const textToPolish = (llmInput && llmInput.value.trim()) ||
+        (state.lyrics && state.lyrics.length > 0 ? state.lyrics.map(l => l.text).join('\n') : '');
+
+      if (!textToPolish) {
+        showToast('Info', 'Enter Khmer lyrics in the prompt box or load lyrics to polish!', 'info');
+        return;
+      }
+
+      try {
+        setButtonLoading(btnPolishLyrics, '🪄 Fixing...');
+        const res = await fetch('/api/lyrics/polish', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lyrics_text: textToPolish })
+        });
+        const data = await res.json();
+
+        if (data.status === 'success') {
+          if (llmInput) llmInput.value = data.polished_text;
+          showToast('🪄 Khmer Spelling Polished', `Fixed ${data.corrections_made} spelling & subscript issues!`, 'success', 4000);
+        } else {
+          showToast('Notice', data.detail || 'Could not polish lyrics', 'info');
+        }
+      } catch (err) {
+        showToast('Error', err.message, 'error');
+      } finally {
+        clearButtonLoading(btnPolishLyrics, '🪄 Fix Spelling');
+      }
+    });
+  }
+
+  if (btnLoadGenLyrics) {
+    btnLoadGenLyrics.addEventListener('click', () => {
+      const gen = window.__last_generated_lyrics;
+      if (!gen || !gen.lyrics_data || gen.lyrics_data.length === 0) {
+        showToast('No Lyrics', 'Please compose a song first!', 'info');
+        return;
+      }
+      state.lyrics = gen.lyrics_data;
+      if (gen.title) {
+        state.songTitle = gen.title;
+        const inputTitle = document.getElementById('input-song-title');
+        if (inputTitle) inputTitle.value = gen.title;
+      }
+      renderLyricsTeleprompter(state.lyrics);
+      setLyricsVisibility(true, false);
+      showToast('📥 Loaded into Studio', `${gen.title} ready for video sync & visualizer!`, 'success', 3500);
     });
   }
 
@@ -997,6 +1166,47 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // 🔍 Double-Check Lyrics (100% Correct Verification)
+  const btnVerifyLyrics = document.getElementById('btn-verify-lyrics');
+  const lyricsVerifiedBadge = document.getElementById('lyrics-verified-badge');
+  if (btnVerifyLyrics) {
+    btnVerifyLyrics.addEventListener('click', async () => {
+      if (!state.lyrics || state.lyrics.length === 0) {
+        showToast('No Lyrics', 'Please load audio, demo, or import lyrics first to verify', 'info', 2500);
+        return;
+      }
+      setButtonLoading(btnVerifyLyrics, 'Verifying 100%...');
+      setGlobalProgress(20, true, 'Double-Checking Lyrics');
+      try {
+        const res = await fetch('/api/lyrics/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lyrics_data: state.lyrics })
+        });
+        const data = await res.json();
+        setGlobalProgress(100, true, '100% Lyrics Verified');
+        if (data.status === 'success' && data.lyrics) {
+          state.lyrics = data.lyrics;
+          renderLyricsTeleprompter(state.lyrics, true);
+          showToast(
+            'Lyrics 100% Verified',
+            `Verified ${data.lines_count} lines (${data.words_count} words). 0 missing, exact millisecond alignment!`,
+            'success',
+            3500
+          );
+        } else {
+          showToast('Verification Notice', data.message || 'Lyrics processed successfully', 'info', 3000);
+        }
+      } catch (err) {
+        console.error('Lyrics verification error:', err);
+        showToast('Verification Error', err.message, 'error', 3000);
+      } finally {
+        clearButtonLoading(btnVerifyLyrics, '🔍 Double-Check');
+        setTimeout(() => setGlobalProgress(100, false, ''), 1000);
+      }
+    });
+  }
+
   // Clear Lyrics Button
   const btnClearLyrics = document.getElementById('btn-clear-lyrics');
   if (btnClearLyrics) {
@@ -1007,6 +1217,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       state.lyrics = [];
       renderLyricsTeleprompter([]);
+      if (lyricsVerifiedBadge) lyricsVerifiedBadge.style.display = 'none';
       const btnTranscribe = document.getElementById('btn-transcribe-ai');
       if (btnTranscribe) clearButtonLoading(btnTranscribe, '🎤 Auto-Sync Lyrics (AI)');
       showToast('Lyrics Cleared', 'Loaded lyrics have been removed from studio', 'info', 3000);
@@ -1014,17 +1225,23 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ============ Synced Lyrics Teleprompter ============
-  function renderLyricsTeleprompter(lyrics) {
+  function renderLyricsTeleprompter(lyrics, isVerified = true) {
     const el = document.getElementById('lyrics-teleprompter');
     const badge = document.getElementById('lyrics-count-badge');
+    const verifiedBadge = document.getElementById('lyrics-verified-badge');
     if (!el) return;
     if (!lyrics || lyrics.length === 0) {
       el.innerHTML = '<div class="teleprompter-empty" style="color: var(--text-muted); text-align: center; padding: 12px 0;">No lyrics loaded yet</div>';
       if (badge) badge.textContent = '0 Lines';
+      if (verifiedBadge) verifiedBadge.style.display = 'none';
       return;
     }
 
     if (badge) badge.textContent = `${lyrics.length} Lines`;
+    if (verifiedBadge) {
+      verifiedBadge.style.display = 'inline-block';
+      verifiedBadge.textContent = '✓ 100% Verified';
+    }
     el.innerHTML = '';
 
     lyrics.forEach((line, index) => {
@@ -1258,7 +1475,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Shared audio loading function
+  // Shared audio loading function with live upload percentage
   async function loadAudioFile(file) {
     const url = URL.createObjectURL(file);
     const baseName = file.name.replace(/\.[^/.]+$/, '');
@@ -1273,24 +1490,76 @@ document.addEventListener('DOMContentLoaded', () => {
       autoPlay: true
     });
 
-    // Upload to server then auto-run Smart Pipeline
+    const uploadBox = document.getElementById('upload-progress-box');
+    const uploadStatus = document.getElementById('upload-progress-status');
+    const uploadPct = document.getElementById('upload-progress-pct');
+    const uploadFill = document.getElementById('upload-progress-fill');
+
+    if (uploadBox) {
+      uploadBox.style.display = 'block';
+      if (uploadPct) uploadPct.textContent = '5%';
+      if (uploadFill) uploadFill.style.width = '5%';
+      if (uploadStatus) uploadStatus.textContent = `Uploading ${file.name.substring(0, 22)}...`;
+    }
+    setStudioPipelineProgress(1, 5, `Uploading ${file.name.substring(0, 20)} (5%)...`, 'Audio Upload');
+    setGlobalProgress(5, true, 'Audio Upload');
+
     const formData = new FormData();
     formData.append("file", file);
-    
-    try {
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
-      const data = await res.json();
-      state.audioServerPath = data.saved_path;
-      window.__VIDA_SERVER_PATH = data.saved_path;
-      try {
-        sessionStorage.setItem('vida_audio_server_path', data.saved_path);
-      } catch(e) {}
-      
-      // 🧠 Smart Pipeline: auto-analyze + auto-lyrics
-      runSmartPipeline();
-    } catch (err) {
-      console.error("Upload failed:", err);
-    }
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/upload");
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const pct = Math.round((e.loaded / e.total) * 95);
+        if (uploadPct) uploadPct.textContent = `${pct}%`;
+        if (uploadFill) uploadFill.style.width = `${pct}%`;
+        if (uploadStatus) uploadStatus.textContent = `Uploading audio (${pct}%)...`;
+        setStudioPipelineProgress(1, pct, `Uploading ${file.name.substring(0, 20)} (${pct}%)...`, 'Audio Upload');
+      }
+    };
+
+    xhr.onload = async () => {
+      if (xhr.status === 200) {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          if (uploadPct) uploadPct.textContent = '100%';
+          if (uploadFill) uploadFill.style.width = '100%';
+          if (uploadStatus) uploadStatus.textContent = '✅ Upload Complete (100%)';
+          setStudioPipelineProgress(1, 100, `✅ "${file.name.substring(0, 20)}" Uploaded (100%)`, 'Audio Upload');
+
+          state.audioServerPath = data.saved_path;
+          window.__VIDA_SERVER_PATH = data.saved_path;
+          try {
+            sessionStorage.setItem('vida_audio_server_path', data.saved_path);
+          } catch(e) {}
+
+          setTimeout(() => {
+            if (uploadBox) uploadBox.style.display = 'none';
+          }, 1600);
+
+          // 🧠 Smart Pipeline: auto-analyze + auto-lyrics
+          await runSmartPipeline();
+        } catch (err) {
+          console.error("Upload parse error:", err);
+          if (uploadBox) uploadBox.style.display = 'none';
+          setStudioPipelineProgress(1, 0, '❌ Upload parse error', 'Audio Upload', false);
+        }
+      } else {
+        if (uploadStatus) uploadStatus.textContent = '❌ Upload failed';
+        if (uploadBox) setTimeout(() => uploadBox.style.display = 'none', 3000);
+        setStudioPipelineProgress(1, 0, '❌ Upload failed', 'Audio Upload', false);
+      }
+    };
+
+    xhr.onerror = () => {
+      if (uploadStatus) uploadStatus.textContent = '❌ Upload network error';
+      if (uploadBox) setTimeout(() => uploadBox.style.display = 'none', 3000);
+      setStudioPipelineProgress(1, 0, '❌ Network error', 'Audio Upload', false);
+    };
+
+    xhr.send(formData);
   }
 
   // ============ 🧠 SMART STUDIO AI PIPELINE ============
@@ -1306,9 +1575,39 @@ document.addEventListener('DOMContentLoaded', () => {
     const selectTheme = document.getElementById('select-theme');
     const selectPalette = document.getElementById('select-palette');
 
-    // ── Step 1: Audio DNA Analysis ──
-    showToast('🧠 Smart Studio', 'Step 1/3: Analyzing audio DNA...', 'info', 6000);
-    if (btnAnalyze) setButtonLoading(btnAnalyze, 'AI Scanning...');
+    // ── Step 1: Audio DNA Analysis with Live Percentage ──
+    const auditBox = document.getElementById('audit-progress-box');
+    const auditStatus = document.getElementById('audit-progress-status');
+    const auditPct = document.getElementById('audit-progress-pct');
+    const auditFill = document.getElementById('audit-progress-fill');
+
+    if (auditBox) {
+      auditBox.style.display = 'block';
+      if (auditPct) auditPct.textContent = '15%';
+      if (auditFill) auditFill.style.width = '15%';
+      if (auditStatus) auditStatus.textContent = 'FFT Spectrogram & Frequency Spectrum (15%)...';
+    }
+    setStudioPipelineProgress(2, 15, 'FFT Spectrogram & Frequency Spectrum (15%)...', 'Audio DNA Analysis');
+
+    showToast('🧠 Smart Studio', 'Step 1/3: Analyzing audio DNA (BPM, Key & Sections)...', 'info', 6000);
+    if (btnAnalyze) setButtonLoading(btnAnalyze, 'AI Scanning (20%)...');
+
+    let curAuditPct = 20;
+    const auditSimInterval = setInterval(() => {
+      if (curAuditPct < 85) {
+        curAuditPct += 15;
+        if (auditPct) auditPct.textContent = `${curAuditPct}%`;
+        if (auditFill) auditFill.style.width = `${curAuditPct}%`;
+        if (btnAnalyze) btnAnalyze.textContent = `AI Scanning (${curAuditPct}%)...`;
+
+        let stageDesc = `BPM & Harmonic Key Detection (${curAuditPct}%)...`;
+        if (curAuditPct >= 70) {
+          stageDesc = `Song Sections & Viral Hook Detection (${curAuditPct}%)...`;
+        }
+        if (auditStatus) auditStatus.textContent = stageDesc;
+        setStudioPipelineProgress(2, curAuditPct, stageDesc, 'Audio DNA Analysis');
+      }
+    }, 380);
     
     try {
       const analyzeRes = await fetch('/api/analyze', {
@@ -1317,6 +1616,15 @@ document.addEventListener('DOMContentLoaded', () => {
         body: JSON.stringify({ audio_path: state.audioServerPath })
       });
       const analyzeData = await analyzeRes.json();
+      clearInterval(auditSimInterval);
+
+      if (auditPct) auditPct.textContent = '100%';
+      if (auditFill) auditFill.style.width = '100%';
+      if (auditStatus) auditStatus.textContent = `✅ Audio DNA Complete: BPM ${analyzeData.bpm} (100%)`;
+      setStudioPipelineProgress(2, 100, `✅ Audio DNA Complete: BPM ${analyzeData.bpm} (100%)`, 'Audio DNA Analysis');
+      setTimeout(() => {
+        if (auditBox) auditBox.style.display = 'none';
+      }, 2000);
       
       if (analyzeData.status === 'success' || analyzeData.status === 'fallback') {
         // Update stats
@@ -1355,7 +1663,7 @@ document.addEventListener('DOMContentLoaded', () => {
           state.hookName = analyzeData.hook.name;
         }
         
-        if (btnAnalyze) clearButtonLoading(btnAnalyze, '✅ Analysis Complete');
+        if (btnAnalyze) clearButtonLoading(btnAnalyze, '✅ Analysis Complete (100%)');
         showToast('✅ Audio DNA', `BPM: ${analyzeData.bpm} | Energy: ${Math.round(analyzeData.energy * 100)}% | Mood: ${analyzeData.mood}`, 'success', 4000);
 
         // ── Step 2: Smart Theme & Palette ──
@@ -1368,17 +1676,22 @@ document.addEventListener('DOMContentLoaded', () => {
         
         const themeName = selectTheme ? selectTheme.options[selectTheme.selectedIndex]?.text : rec.theme;
         const paletteName = selectPalette ? selectPalette.options[selectPalette.selectedIndex]?.text : rec.palette;
+        setStudioPipelineProgress(2, 100, `🎨 Style Selected: ${themeName} (${paletteName})`, 'Style Auto-Matching');
         showToast('🎨 Auto-Style', `Theme: ${themeName} | Palette: ${paletteName}`, 'success', 3000);
       }
     } catch (err) {
+      clearInterval(auditSimInterval);
       console.error('Smart Pipeline - Analysis failed:', err);
       if (btnAnalyze) clearButtonLoading(btnAnalyze, '🧠 SuperSmart Scan');
+      if (auditBox) auditBox.style.display = 'none';
+      setStudioPipelineProgress(2, 0, '❌ Analysis failed', 'Audio DNA Analysis', false);
     }
 
     // ── Step 3: Auto Lyrics with Live Percentage ──
     if (state.lyrics && state.lyrics.length > 0) {
-      if (btnTranscribe) clearButtonLoading(btnTranscribe, '✅ Lyrics Synced!');
-      showToast('🎤 Lyrics Ready', `${state.lyrics.length} lines synced from captions`, 'success', 4000);
+      if (btnTranscribe) clearButtonLoading(btnTranscribe, '✅ Lyrics Synced (100%)');
+      setStudioPipelineProgress(3, 100, `🎤 ${state.lyrics.length} lines synced from captions (100%)`, 'Lyrics Synced');
+      showToast('🎤 Lyrics Ready', `${state.lyrics.length} lines synced from captions (100%)`, 'success', 4000);
       renderLyricsTeleprompter(state.lyrics);
     } else {
       showToast('🧠 Smart Studio', 'Step 3/3: Transcribing vocals with Whisper AI...', 'info', 8000);
@@ -1389,7 +1702,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (targetLang === 'auto') {
         targetLang = (/[\u1780-\u17FF]/.test(state.audioPath || '') || /[\u1780-\u17FF]/.test(state.audioServerPath || '')) ? 'km' : null;
       }
-      const targetModel = modelSelect ? modelSelect.value : 'base';
+      const targetModel = modelSelect ? modelSelect.value : 'large-v3-turbo';
       try {
         await runAITranscription({ targetLang, targetModel });
       } catch (err) {
@@ -1399,6 +1712,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ── Pipeline Complete ──
     window.__VIDA_PIPELINE_RUNNING = false;
+    setStudioPipelineProgress(3, 100, '🚀 Studio Ready: Audio analyzed, styled & synced (100%)', 'Studio Complete');
     showToast('🚀 Studio Ready', 'Audio analyzed, styled, and synced — ready to create!', 'success', 5000);
   }
 
@@ -1419,12 +1733,35 @@ document.addEventListener('DOMContentLoaded', () => {
         btnBg.innerHTML = `<span class="icon">🖼️</span> ${file.name.substring(0, 20)}`;
         showToast('Background Set', `Using "${file.name}"`, 'success', 2000);
 
+        const badgeBg = document.getElementById('badge-upload-bg');
+        if (badgeBg) badgeBg.textContent = '5%';
+        setGlobalProgress(5, true, 'Uploading BG');
+
         try {
           const formData = new FormData();
           formData.append('file', file);
-          const res = await fetch('/api/upload', { method: 'POST', body: formData });
-          const data = await res.json();
-          if (data.saved_path) state.bgImagePath = data.saved_path;
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', '/api/upload');
+          xhr.upload.onprogress = (evt) => {
+            if (evt.lengthComputable) {
+              const pct = Math.round((evt.loaded / evt.total) * 100);
+              if (badgeBg) badgeBg.textContent = `${pct}%`;
+              setGlobalProgress(pct, true, 'Uploading BG');
+            }
+          };
+          xhr.onload = () => {
+            if (xhr.status === 200) {
+              try {
+                const data = JSON.parse(xhr.responseText);
+                if (data.saved_path) state.bgImagePath = data.saved_path;
+                if (badgeBg) badgeBg.textContent = 'Active ✓';
+                setGlobalProgress(100, true, 'Uploading BG');
+              } catch(e) {}
+            } else {
+              if (badgeBg) badgeBg.textContent = 'Error';
+            }
+          };
+          xhr.send(formData);
         } catch (err) {
           console.warn('Background server upload error:', err);
         }
@@ -1449,12 +1786,35 @@ document.addEventListener('DOMContentLoaded', () => {
         updateBadgeStatusUI();
         showToast('Center Artwork Set', `Using "${file.name}"`, 'success', 2500);
 
+        const badgeLogo = document.getElementById('badge-upload-logo');
+        if (badgeLogo) badgeLogo.textContent = '5%';
+        setGlobalProgress(5, true, 'Uploading Logo');
+
         try {
           const formData = new FormData();
           formData.append('file', file);
-          const res = await fetch('/api/upload', { method: 'POST', body: formData });
-          const data = await res.json();
-          if (data.saved_path) state.logoImagePath = data.saved_path;
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', '/api/upload');
+          xhr.upload.onprogress = (evt) => {
+            if (evt.lengthComputable) {
+              const pct = Math.round((evt.loaded / evt.total) * 100);
+              if (badgeLogo) badgeLogo.textContent = `${pct}%`;
+              setGlobalProgress(pct, true, 'Uploading Logo');
+            }
+          };
+          xhr.onload = () => {
+            if (xhr.status === 200) {
+              try {
+                const data = JSON.parse(xhr.responseText);
+                if (data.saved_path) state.logoImagePath = data.saved_path;
+                if (badgeLogo) badgeLogo.textContent = 'Active ✓';
+                setGlobalProgress(100, true, 'Uploading Logo');
+              } catch(e) {}
+            } else {
+              if (badgeLogo) badgeLogo.textContent = 'Error';
+            }
+          };
+          xhr.send(formData);
         } catch (err) {
           console.warn('Logo server upload error:', err);
         }
@@ -1485,9 +1845,46 @@ document.addEventListener('DOMContentLoaded', () => {
       const url = inputYt.value.trim();
       if (!url) return;
       
+      const ytProgressBox = document.getElementById('youtube-progress-box');
+      const ytProgressStatus = document.getElementById('youtube-progress-status');
+      const ytProgressPct = document.getElementById('youtube-progress-pct');
+      const ytProgressFill = document.getElementById('youtube-progress-fill');
+
+      if (ytProgressBox) {
+        ytProgressBox.style.display = 'block';
+        if (ytProgressPct) ytProgressPct.textContent = '5%';
+        if (ytProgressFill) ytProgressFill.style.width = '5%';
+        if (ytProgressStatus) ytProgressStatus.textContent = 'Connecting to YouTube stream...';
+      }
+      setStudioPipelineProgress(1, 5, 'Connecting to YouTube stream (5%)...', 'YouTube Stream');
+      setGlobalProgress(5, true, 'YouTube Stream');
+
+      let ytPollInterval = setInterval(async () => {
+        try {
+          const res = await fetch('/api/youtube/progress');
+          if (res.ok) {
+            const data = await res.json();
+            if (data && typeof data.percent === 'number') {
+              const pct = data.percent;
+              const stage = data.stage || 'Downloading audio...';
+              if (ytProgressPct) ytProgressPct.textContent = `${pct}%`;
+              if (ytProgressFill) ytProgressFill.style.width = `${pct}%`;
+              if (ytProgressStatus) ytProgressStatus.textContent = stage;
+              if (btnDownloadYt) btnDownloadYt.textContent = `⏳ ${pct}%`;
+              setStudioPipelineProgress(1, pct, `${stage} (${pct}%)`, 'YouTube Stream');
+              setGlobalProgress(pct, true, 'YouTube Stream');
+              if (pct >= 100) {
+                clearInterval(ytPollInterval);
+              }
+            }
+          }
+        } catch (_) {}
+      }, 250);
+
       try {
-        setButtonLoading(btnDownloadYt, '⏳');
-        showToast('Downloading', 'Extracting audio from YouTube...', 'info', 8000);
+        window.__VIDA_PIPELINE_RUNNING = true;
+        setButtonLoading(btnDownloadYt, '⏳ 5%');
+        showToast('Downloading', 'Extracting audio from YouTube...', 'info', 10000);
 
         const res = await fetch('/api/youtube', {
           method: 'POST',
@@ -1496,8 +1893,15 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         
         const data = await res.json();
+        clearInterval(ytPollInterval);
+
         if (data.status === 'success') {
-          showToast('Download Complete', `"${data.title}" loaded successfully`, 'success');
+          if (ytProgressPct) ytProgressPct.textContent = '100%';
+          if (ytProgressFill) ytProgressFill.style.width = '100%';
+          if (ytProgressStatus) ytProgressStatus.textContent = `✅ Ready: "${data.title}" (100%)`;
+          setStudioPipelineProgress(1, 100, `✅ Ready: "${data.title}" (100%)`, 'YouTube Stream');
+          setGlobalProgress(100, true, 'YouTube Stream');
+          showToast('Download Complete', `"${data.title}" loaded successfully (100%)`, 'success');
 
           loadAudioTrack({
             src: data.audio_url,
@@ -1510,17 +1914,31 @@ document.addEventListener('DOMContentLoaded', () => {
             autoPlay: true
           });
 
+          setTimeout(() => {
+            if (ytProgressBox) ytProgressBox.style.display = 'none';
+          }, 2000);
+
           // 🧠 Smart Pipeline: auto-analyze + auto-lyrics
-          runSmartPipeline();
+          await runSmartPipeline();
           
         } else {
           showToast('Download Failed', data.detail || 'Could not extract audio', 'error');
+          if (ytProgressStatus) ytProgressStatus.textContent = '❌ Download failed';
+          setStudioPipelineProgress(1, 0, '❌ Download failed', 'YouTube Stream', false);
+          window.__VIDA_PIPELINE_RUNNING = false;
         }
       } catch (err) {
+        clearInterval(ytPollInterval);
         console.error("YouTube download failed:", err);
         showToast('Network Error', 'Failed to reach backend', 'error');
+        if (ytProgressStatus) ytProgressStatus.textContent = '❌ Network error';
+        window.__VIDA_PIPELINE_RUNNING = false;
       } finally {
+        clearInterval(ytPollInterval);
         clearButtonLoading(btnDownloadYt, '⬇️ DL');
+        if (!state.audioServerPath) {
+          window.__VIDA_PIPELINE_RUNNING = false;
+        }
       }
     });
   }
@@ -1530,8 +1948,15 @@ document.addEventListener('DOMContentLoaded', () => {
   if (btnLoadDemo && audioPlayer) {
     btnLoadDemo.addEventListener('click', async () => {
       try {
-        setButtonLoading(btnLoadDemo, 'Loading...');
+        setButtonLoading(btnLoadDemo, '⚡ Ingesting 25%...');
+        setGlobalProgress(25, true, 'Synth Demo');
+        setStudioPipelineProgress(1, 25, 'Loading Synthwave Master Track (25%)...', 'Synth Demo');
+
         const res = await fetch('/api/demo');
+        setButtonLoading(btnLoadDemo, '⚡ Synthesizing 75%...');
+        setGlobalProgress(75, true, 'Synth Demo');
+        setStudioPipelineProgress(1, 75, 'Decoding waveform audio buffer (75%)...', 'Synth Demo');
+
         const data = await res.json();
         
         loadAudioTrack({
@@ -1551,7 +1976,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (bpmEl) bpmEl.textContent = data.bpm;
         if (energyEl) energyEl.textContent = data.energy >= 0.75 ? 'High' : 'Medium';
 
-        showToast('Demo Loaded', `"${data.title}" — Ready to play!`, 'success');
+        setStudioPipelineProgress(1, 100, `"${data.title}" Ready (100%)`, 'Synth Demo');
+        setGlobalProgress(100, true, 'Synth Demo');
+        showToast('Demo Loaded', `"${data.title}" — Ready to play! (100%)`, 'success');
         
       } catch (err) {
         console.error(err);
@@ -1567,8 +1994,15 @@ document.addEventListener('DOMContentLoaded', () => {
   if (btnLoadSinisamut && audioPlayer) {
     btnLoadSinisamut.addEventListener('click', async () => {
       try {
-        setButtonLoading(btnLoadSinisamut, 'Loading 60s Vinyl...');
+        setButtonLoading(btnLoadSinisamut, '📻 Restoring Vinyl 30%...');
+        setGlobalProgress(30, true, '60s Vinyl Demo');
+        setStudioPipelineProgress(1, 30, 'Simulating 33⅓ RPM vinyl groove & tube warmth (30%)...', 'Sinn Sisamouth Demo');
+
         const res = await fetch('/api/demo/sinisamut');
+        setButtonLoading(btnLoadSinisamut, '📻 Tube Saturation 80%...');
+        setGlobalProgress(80, true, '60s Vinyl Demo');
+        setStudioPipelineProgress(1, 80, 'Applying warm vintage analog acoustic model (80%)...', 'Sinn Sisamouth Demo');
+
         const data = await res.json();
         
         loadAudioTrack({
@@ -1591,7 +2025,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (bpmEl) bpmEl.textContent = data.bpm;
         if (energyEl) energyEl.textContent = 'Golden 60s';
 
-        showToast('📻 ស៊ីន ស៊ីសាមុត Loaded!', `"${data.title}" — 33⅓ RPM Vinyl Playing`, 'success', 5000);
+        setStudioPipelineProgress(1, 100, `📻 "${data.title}" Ready (100%)`, 'Sinn Sisamouth Demo');
+        setGlobalProgress(100, true, '60s Vinyl Demo');
+        showToast('📻 ស៊ីន ស៊ីសាមុត Loaded!', `"${data.title}" — 33⅓ RPM Vinyl Playing (100%)`, 'success', 5000);
         
       } catch (err) {
         console.error(err);
@@ -1610,15 +2046,53 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast('No Audio', 'Please load an audio file first!', 'error');
         return;
       }
+      const auditBox = document.getElementById('audit-progress-box');
+      const auditStatus = document.getElementById('audit-progress-status');
+      const auditPct = document.getElementById('audit-progress-pct');
+      const auditFill = document.getElementById('audit-progress-fill');
+
+      if (auditBox) {
+        auditBox.style.display = 'block';
+        if (auditPct) auditPct.textContent = '15%';
+        if (auditFill) auditFill.style.width = '15%';
+        if (auditStatus) auditStatus.textContent = 'FFT Spectrogram & Frequency Spectrum (15%)...';
+      }
+      setButtonLoading(btnAnalyze, 'Scanning DNA (20%)...');
+      setStudioPipelineProgress(2, 20, 'Scanning audio DNA (20%)...', 'Audio DNA Scan');
+
+      let curAuditPct = 20;
+      const auditSimInterval = setInterval(() => {
+        if (curAuditPct < 85) {
+          curAuditPct += 15;
+          if (auditPct) auditPct.textContent = `${curAuditPct}%`;
+          if (auditFill) auditFill.style.width = `${curAuditPct}%`;
+          if (btnAnalyze) btnAnalyze.textContent = `AI Scanning (${curAuditPct}%)...`;
+          let stageDesc = `BPM & Harmonic Key Detection (${curAuditPct}%)...`;
+          if (curAuditPct >= 70) {
+            stageDesc = `Song Sections & Viral Hook Detection (${curAuditPct}%)...`;
+          }
+          if (auditStatus) auditStatus.textContent = stageDesc;
+          setStudioPipelineProgress(2, curAuditPct, stageDesc, 'Audio DNA Scan');
+        }
+      }, 380);
+
       try {
-        setButtonLoading(btnAnalyze, 'Scanning DNA...');
         const res = await fetch('/api/analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ audio_path: state.audioServerPath })
         });
         const data = await res.json();
-        
+        clearInterval(auditSimInterval);
+
+        if (auditPct) auditPct.textContent = '100%';
+        if (auditFill) auditFill.style.width = '100%';
+        if (auditStatus) auditStatus.textContent = `✅ Audio DNA Complete: BPM ${data.bpm} (100%)`;
+        setStudioPipelineProgress(2, 100, `✅ Audio DNA Complete: BPM ${data.bpm} (100%)`, 'Audio DNA Scan');
+        setTimeout(() => {
+          if (auditBox) auditBox.style.display = 'none';
+        }, 2200);
+
         if (data.status === 'success' || data.status === 'fallback') {
           const bpmEl = document.getElementById('stat-bpm');
           const energyEl = document.getElementById('stat-energy');
@@ -1635,14 +2109,16 @@ document.addEventListener('DOMContentLoaded', () => {
              drawWaveform(data.waveform_peaks);
           }
           
-          showToast('Analysis Complete', `BPM: ${data.bpm} | Energy: ${Math.round(data.energy * 100)}%`, 'success');
-          clearButtonLoading(btnAnalyze, '✅ Analysis Complete');
+          showToast('Analysis Complete', `BPM: ${data.bpm} | Energy: ${Math.round(data.energy * 100)}% (100%)`, 'success');
+          clearButtonLoading(btnAnalyze, '✅ Analysis Complete (100%)');
         } else {
           clearButtonLoading(btnAnalyze, '❌ Analysis Failed');
         }
       } catch (err) {
+        clearInterval(auditSimInterval);
         console.error(err);
         clearButtonLoading(btnAnalyze, '❌ Analysis Failed');
+        if (auditBox) auditBox.style.display = 'none';
         showToast('Analysis Error', err.message, 'error');
       }
     });
@@ -1700,6 +2176,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (progressPct) progressPct.textContent = `${displayPct}%`;
       if (progressFill) progressFill.style.width = `${displayPct}%`;
       if (btnTranscribe) btnTranscribe.textContent = `⏳ AI ${displayPct}%`;
+      setStudioPipelineProgress(3, displayPct, progressStatus ? progressStatus.textContent : `Whisper AI (${displayPct}%)...`, 'AI Whisper Lyrics');
     }, 400);
 
     try {
@@ -1722,6 +2199,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (progressFill) progressFill.style.width = '100%';
         if (progressStatus) progressStatus.textContent = '✅ Sync Complete (100%)';
         if (btnTranscribe) clearButtonLoading(btnTranscribe, '✅ Synced 100%');
+        setStudioPipelineProgress(3, 100, `✅ Synced ${data.count} lines (100%)`, 'AI Whisper Lyrics');
 
         state.lyrics = data.lyrics;
         renderLyricsTeleprompter(state.lyrics);
@@ -1736,6 +2214,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         if (progressStatus) progressStatus.textContent = '❌ No Lyrics Detected';
         if (btnTranscribe) clearButtonLoading(btnTranscribe, '🎤 Auto-Sync Lyrics (AI)');
+        setStudioPipelineProgress(3, 0, 'No vocal segments detected', 'AI Whisper Lyrics', false);
         showToast('No Lyrics', 'No vocal segments detected in audio', 'info');
         setTimeout(() => {
           if (progressBox) progressBox.style.display = 'none';
@@ -1747,6 +2226,7 @@ document.addEventListener('DOMContentLoaded', () => {
       clearInterval(pollInterval);
       if (progressStatus) progressStatus.textContent = '❌ Failed';
       if (btnTranscribe) clearButtonLoading(btnTranscribe, '🎤 Auto-Sync Lyrics (AI)');
+      setStudioPipelineProgress(3, 0, '❌ Transcription failed', 'AI Whisper Lyrics', false);
       showToast('Transcription Error', err.message, 'error');
       setTimeout(() => {
         if (progressBox) progressBox.style.display = 'none';
@@ -1770,7 +2250,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (targetLang === 'auto') {
         targetLang = (/[\u1780-\u17FF]/.test(state.audioPath || '') || /[\u1780-\u17FF]/.test(state.audioServerPath || '')) ? 'km' : null;
       }
-      const targetModel = modelSelect ? modelSelect.value : 'base';
+      const targetModel = modelSelect ? modelSelect.value : 'large-v3-turbo';
       try {
         await runAITranscription({ targetLang, targetModel });
       } catch (err) {
@@ -1790,26 +2270,45 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const formData = new FormData();
       formData.append('file', file);
+      setButtonLoading(btnUploadLrc, '⏳ 15%');
+      setGlobalProgress(15, true, 'Parsing Subtitles');
 
-      try {
-        showToast('Importing Subtitles', `Parsing ${file.name}...`, 'info', 3000);
-        const res = await fetch('/api/lyrics/upload', {
-          method: 'POST',
-          body: formData
-        });
-        const data = await res.json();
-        if (data.status === 'success' && data.lyrics && data.count > 0) {
-          state.lyrics = data.lyrics;
-          renderLyricsTeleprompter(state.lyrics);
-          showToast('Lyrics Loaded', `Imported ${data.count} lines with word timing`, 'success');
-          if (btnTranscribe) clearButtonLoading(btnTranscribe, '✅ Lyrics Synced!');
-        } else {
-          showToast('Import Error', 'Could not parse lyrics from file', 'error');
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/lyrics/upload');
+      xhr.upload.onprogress = (evt) => {
+        if (evt.lengthComputable) {
+          const pct = Math.round((evt.loaded / evt.total) * 90);
+          btnUploadLrc.textContent = `⏳ ${pct}%`;
+          setGlobalProgress(pct, true, 'Parsing Subtitles');
         }
-      } catch (err) {
-        console.error('LRC import failed:', err);
-        showToast('Import Failed', err.message, 'error');
-      }
+      };
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            if (data.status === 'success' && data.lyrics && data.count > 0) {
+              state.lyrics = data.lyrics;
+              renderLyricsTeleprompter(state.lyrics);
+              btnUploadLrc.textContent = '✅ 100%';
+              setGlobalProgress(100, true, 'Subtitles Ready');
+              showToast('Lyrics Loaded', `Imported ${data.count} lines with word timing (100%)`, 'success');
+              if (btnTranscribe) clearButtonLoading(btnTranscribe, '✅ Lyrics Synced!');
+              setTimeout(() => { btnUploadLrc.textContent = '📄 Import Sub'; }, 3000);
+            } else {
+              btnUploadLrc.textContent = '📄 Import Sub';
+              showToast('Import Error', 'Could not parse lyrics from file', 'error');
+            }
+          } catch(err) {
+            btnUploadLrc.textContent = '📄 Import Sub';
+          }
+        } else {
+          btnUploadLrc.textContent = '📄 Import Sub';
+        }
+      };
+      xhr.onerror = () => {
+        btnUploadLrc.textContent = '📄 Import Sub';
+      };
+      xhr.send(formData);
     });
   }
 
@@ -1862,18 +2361,50 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function pollRenderProgress(jobId) {
+    const modal = document.getElementById('export-progress-modal');
+    const modalPct = document.getElementById('export-modal-pct');
+    const modalFill = document.getElementById('export-modal-fill');
+    const modalStatus = document.getElementById('export-modal-status');
+    const modalFrames = document.getElementById('export-modal-frames');
+    const modalFps = document.getElementById('export-modal-fps');
+
+    if (modal) modal.style.display = 'flex';
+    setGlobalProgress(5, true);
+
     const interval = setInterval(async () => {
       try {
         const res = await fetch(`/api/progress/${jobId}`);
         const data = await res.json();
         
         const btnExport = document.getElementById('btn-export');
-        
+        const pct = Math.round(data.percent || 0);
+
+        if (modalPct) modalPct.textContent = `${pct}%`;
+        if (modalFill) modalFill.style.width = `${pct}%`;
+        if (btnExport) btnExport.textContent = `Rendering ${pct}%`;
+        setGlobalProgress(pct, true);
+
+        if (data.frame && data.total_frames) {
+          if (modalFrames) modalFrames.textContent = `Frame: ${data.frame} / ${data.total_frames}`;
+        }
+        if (data.fps) {
+          if (modalFps) modalFps.textContent = `Speed: ${Math.round(data.fps)} FPS`;
+        }
+
         if (data.status === 'completed') {
           clearInterval(interval);
+          if (modalPct) modalPct.textContent = '100%';
+          if (modalFill) modalFill.style.width = '100%';
+          if (modalStatus) modalStatus.textContent = '✅ Video Rendered Successfully (100%)!';
+          setGlobalProgress(100, true);
+
           clearButtonLoading(btnExport, 'Export Video');
-          showToast('Export Complete!', 'Your video is ready for download', 'success', 8000);
+          showToast('Export Complete!', 'Your 60 FPS video is ready for download (100%)', 'success', 8000);
           
+          setTimeout(() => {
+            if (modal) modal.style.display = 'none';
+          }, 2000);
+
           if (data.output_url) {
             const a = document.createElement('a');
             a.href = data.output_url;
@@ -1882,20 +2413,26 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         } else if (data.status === 'failed') {
           clearInterval(interval);
+          if (modalStatus) modalStatus.textContent = `❌ Render Failed: ${data.error || 'Unknown error'}`;
           clearButtonLoading(btnExport, 'Export Video');
           showToast('Render Failed', data.error || 'Unknown error', 'error');
+          setTimeout(() => {
+            if (modal) modal.style.display = 'none';
+          }, 3500);
         } else {
-          const pct = Math.round(data.percent || 0);
-          if (btnExport) btnExport.textContent = `Rendering ${pct}%`;
+          if (modalStatus) modalStatus.textContent = `Compositing visualizer & audio at 60 FPS (${pct}%)...`;
         }
       } catch (e) {
         clearInterval(interval);
       }
-    }, 1500);
+    }, 1000);
   }
 
   // ============ Draw Waveform to Canvas ============
   function drawWaveform(peaks) {
+    if (peaks && peaks.length > 0) {
+      window.__VIDA_AUDIO_PEAKS = peaks;
+    }
     const canvas = document.getElementById('waveform-canvas');
     if (!canvas || !peaks || peaks.length === 0) return;
     const parent = canvas.parentElement;

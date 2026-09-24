@@ -95,8 +95,22 @@ def download_youtube_audio(url: str, output_dir: str, on_progress=None) -> Tuple
 
     output_template = os.path.join(output_dir, "%(title)s.%(ext)s")
 
-    if on_progress:
-        on_progress("Connecting to YouTube...")
+    def notify_progress(pct: int, msg: str):
+        if on_progress:
+            try:
+                import inspect
+                sig = inspect.signature(on_progress)
+                if len(sig.parameters) >= 2:
+                    on_progress(pct, msg)
+                else:
+                    on_progress(f"{msg} ({pct}%)")
+            except Exception:
+                try:
+                    on_progress(pct, msg)
+                except Exception:
+                    pass
+
+    notify_progress(5, "Connecting to YouTube...")
 
     # Build base args with ffmpeg location
     base_args = [yt_dlp_path]
@@ -130,16 +144,13 @@ def download_youtube_audio(url: str, output_dir: str, on_progress=None) -> Tuple
                     "duration": duration,
                     "artist": parts[2].strip(),
                 }
-                if on_progress:
-                    on_progress(f"Downloading: {info['title']}")
+                notify_progress(15, f"Found: {info['title'][:40]}")
     except subprocess.TimeoutExpired:
         print("[KMVM] YouTube info timed out, continuing with download...", flush=True)
-        if on_progress:
-            on_progress("Downloading audio...")
+        notify_progress(15, "Downloading audio...")
     except Exception as e:
         print(f"[KMVM] YouTube info error: {e}", flush=True)
-        if on_progress:
-            on_progress("Downloading audio...")
+        notify_progress(15, "Downloading audio...")
 
     # Download audio — try multiple formats for best compatibility
     formats_to_try = [
@@ -181,13 +192,14 @@ def download_youtube_audio(url: str, output_dir: str, on_progress=None) -> Tuple
                 sub_args = [
                     "--write-subs",
                     "--write-auto-subs",
-                    "--sub-langs", "all,-live_chat",
+                    "--sub-langs", "km,km-orig,en,en-orig,vi,zh,th",
                     "--sub-format", "vtt/srt/best",
                 ]
 
             cmd = base_args + fmt["args"] + [
                 "-i",  # Ignore subtitle errors (like HTTP 429) so audio still downloads
                 "--no-mtime",
+                "--newline",
                 "--print", "after_move:filepath",
             ] + sub_args + [
                 "-o", output_template,
@@ -197,45 +209,70 @@ def download_youtube_audio(url: str, output_dir: str, on_progress=None) -> Tuple
                 clean_url
             ]
 
-            if on_progress:
-                on_progress(f"Downloading as {fmt['label']}...")
-
+            notify_progress(20, f"Downloading stream ({fmt['label']})...")
             print(f"[KMVM] Running: {' '.join(cmd)}", flush=True)
 
-            result = subprocess.run(
+            process = subprocess.Popen(
                 cmd,
-                capture_output=True, text=True, timeout=300,
-                encoding="utf-8"
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                encoding="utf-8",
+                errors="replace"
             )
 
+            stdout_lines = []
+            for line in process.stdout:
+                line_str = line.strip()
+                if not line_str:
+                    continue
+                stdout_lines.append(line_str)
+
+                # Real-time percentage parser: [download]  45.2% of ...
+                m = re.search(r'\[download\]\s+([\d\.]+)%', line_str)
+                if m:
+                    try:
+                        raw_pct = float(m.group(1))
+                        calc_pct = int(20 + raw_pct * 0.65)
+                        notify_progress(calc_pct, f"Downloading audio ({raw_pct:.0f}%)...")
+                    except ValueError:
+                        pass
+                elif "ExtractAudio" in line_str or "Destination" in line_str:
+                    notify_progress(88, "Extracting high-quality MP3...")
+                elif "[info] Writing video subtitles" in line_str:
+                    notify_progress(94, "Syncing subtitles...")
+
+            process.wait(timeout=180)
+
             # Check if audio was created (even if yt-dlp threw a subtitle 429 warning)
-            if result.stdout:
-                for line in reversed(result.stdout.strip().splitlines()):
+            if stdout_lines:
+                for line in reversed(stdout_lines):
                     candidate = line.strip()
                     if candidate and os.path.exists(candidate):
                         ext = os.path.splitext(candidate)[1].lower()
                         if ext in {".mp3", ".wav", ".m4a", ".opus", ".webm", ".ogg", ".aac", ".flac"}:
                             audio_file = convert_to_mp3(candidate)
+                            notify_progress(100, "Download complete!")
                             print(f"[KMVM] Downloaded (via yt-dlp output): {audio_file}", flush=True)
                             return audio_file, info
 
             title_hint = info.get("title") if info else None
             audio_file = _find_latest_audio_file(output_dir, title_hint=title_hint)
             if audio_file:
+                notify_progress(100, "Download complete!")
                 print(f"[KMVM] Downloaded (via directory scan): {audio_file}", flush=True)
                 return audio_file, info
 
-            print(f"[KMVM] yt-dlp ({fmt['label']}) stderr: {result.stderr[:300]}", flush=True)
+            print(f"[KMVM] yt-dlp ({fmt['label']}) stderr/output: {' '.join(stdout_lines[-5:])[:300]}", flush=True)
 
         except subprocess.TimeoutExpired:
             print(f"[KMVM] Download timed out for format {fmt['label']}", flush=True)
-            if on_progress:
-                on_progress("Download timed out, trying next format...")
+            notify_progress(20, "Download timed out, trying next format...")
         except Exception as e:
             print(f"[KMVM] Download error ({fmt['label']}): {e}", flush=True)
 
-    if on_progress:
-        on_progress("Download failed!")
+    notify_progress(0, "Download failed!")
     return None, None
 
 

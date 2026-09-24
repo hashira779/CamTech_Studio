@@ -54,6 +54,10 @@ function splitLineIntoWords(text, lineStart, lineEnd) {
       // CJK characters: split into characters / kana clusters while keeping Latin words intact
       tokens = clean.match(/[a-zA-Z0-9_\'-]+|[\u4e00-\u9fff]|[\u3040-\u309f]+|[\u30a0-\u30ff]+|[^\s]/g) || [];
       tokens = tokens.map(t => t.trim()).filter(Boolean);
+    } else if (/[\u1780-\u17FF]/.test(clean)) {
+      // Khmer syllable cluster fallback: Consonant + Coeng + Vowels/Diacritics
+      tokens = clean.match(/[\u1780-\u17A2][\u17D2][\u1780-\u17A2][\u17B6-\u17D3]*|[\u1780-\u17A2][\u17B6-\u17D3]*|[a-zA-Z0-9_\'-]+|[^\s]/g) || [];
+      tokens = tokens.map(t => t.trim()).filter(Boolean);
     } else if (/[\u0E00-\u0E7F]/.test(clean)) {
       // Thai cluster fallback
       tokens = clean.match(/[\u0E01-\u0E2E][\u0E30-\u0E3A\u0E47-\u0E4E]*|[\u0E2F-\u0E5B]|[a-zA-Z0-9_\'-]+/g) || [];
