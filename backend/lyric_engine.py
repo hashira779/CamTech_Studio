@@ -192,6 +192,8 @@ KHMER_SINGING_CORRECTIONS: Dict[str, str] = {
     "សេ្នហា": "ស្នេហា",
     "ស្នេហ៏": "ស្នេហ៍",
     "សេ្នហ៍": "ស្នេហ៍",
+    "លួចសិប": "លួចខ្សិប", # secretly whisper
+    "សិបប្រាប់": "ខ្សិបប្រាប់", # whisper tell
     "កណ្តាល": "កណ្ដាល",    # middle
     "អោយ": "ឱ្យ",           # give / let
     "ស្ដាយ": "ស្តាយ",       # regret / miss
@@ -604,13 +606,41 @@ def double_check_lyrics(lyrics: List[Dict[str, Any]]) -> Tuple[List[Dict[str, An
             total_words += 1
 
         prev_line_end = end
-        verified_lines.append({
-            "line_id": len(verified_lines),
-            "start": round(start, 2),
-            "end": round(end, 2),
-            "text": clean_text,
-            "words": fixed_words
-        })
+        if len(fixed_words) <= 12:
+            verified_lines.append({
+                "line_id": len(verified_lines),
+                "start": round(start, 2),
+                "end": round(end, 2),
+                "text": clean_text,
+                "words": fixed_words
+            })
+        else:
+            # Smart chunking for very long continuous lines (like Whisper hallucinations or zero-pause rap)
+            chunks = []
+            current_chunk = []
+            for i, w in enumerate(fixed_words):
+                current_chunk.append(w)
+                if i < len(fixed_words) - 1:
+                    next_w = fixed_words[i+1]
+                    pause = next_w['start'] - w['end']
+                    # Split if there's a vocal pause > 0.4s or chunk gets too long (>= 10 words)
+                    if (pause > 0.4 and len(current_chunk) >= 4) or len(current_chunk) >= 10:
+                        chunks.append(current_chunk)
+                        current_chunk = []
+            if current_chunk:
+                chunks.append(current_chunk)
+                
+            for chunk in chunks:
+                if not chunk: continue
+                # Reconstruct text without spaces for Khmer if needed, but spaces are fine for Karaoke word splits
+                c_text = " ".join(w["word"] for w in chunk)
+                verified_lines.append({
+                    "line_id": len(verified_lines),
+                    "start": chunk[0]["start"],
+                    "end": chunk[-1]["end"],
+                    "text": c_text,
+                    "words": chunk
+                })
 
     report = {
         "verified": True,
@@ -974,7 +1004,7 @@ class WhisperTranscriber:
                     condition_on_previous_text=False,
                     initial_prompt=prompt,
                     compression_ratio_threshold=2.2,
-                    no_speech_threshold=0.45,
+                    no_speech_threshold=0.75,
                     vad_filter=True,
                     vad_parameters=vad_params
                 )
@@ -1006,6 +1036,8 @@ class WhisperTranscriber:
                     condition_on_previous_text=False,
                     initial_prompt=prompt,
                     compression_ratio_threshold=2.2,
+                    no_speech_threshold=0.85,
+                    log_prob_threshold=None,
                     vad_filter=False
                 )
                 dur = getattr(info, "duration", 0) or 1.0

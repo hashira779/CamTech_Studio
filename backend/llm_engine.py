@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 class LocalLLMEngine:
     """
@@ -358,7 +358,45 @@ class LocalLLMEngine:
             }
         }
 
-        chosen = presets.get(g, presets["romantic"])
+        chosen = None
+        if self.llm is not None:
+            llm_prompt = (
+                f"Write a short, beautiful Khmer song about: {prompt}. "
+                f"Genre: {g}. "
+                f"Format it with exactly [Verse 1], [Verse 2], [Chorus], and [Outro]."
+                f"\n\nSong Lyrics:\n"
+            )
+            try:
+                out = self.llm(llm_prompt, max_tokens=300, temperature=0.8, stop=["\n\n\n"])
+                generated_text = out['choices'][0]['text'].strip()
+                
+                # Parse LLM output into sections
+                sections = []
+                current_section = {"section": "វគ្គទី១ (Verse 1)", "lines": []}
+                for line in generated_text.splitlines():
+                    line = line.strip()
+                    if not line: continue
+                    if line.startswith("[") and line.endswith("]"):
+                        if current_section["lines"]:
+                            sections.append(current_section)
+                        current_section = {"section": line.strip("[]"), "lines": []}
+                    else:
+                        current_section["lines"].append(line)
+                if current_section["lines"]:
+                    sections.append(current_section)
+                    
+                if sections:
+                    chosen = {
+                        "title": f"AI Composed: {prompt[:15]}...",
+                        "genre_name": f"AI {genre.capitalize()}",
+                        "tempo_bpm": bpm or 85,
+                        "sections": sections
+                    }
+            except Exception as e:
+                print(f"Dynamic LLM failure: {e}")
+                
+        if not chosen:
+            chosen = presets.get(g, presets["romantic"])
 
         # Format plain text with section markers
         full_text_parts = [f"🎵 {chosen['title']}", f"Style: {chosen['genre_name']}\n"]
@@ -446,6 +484,64 @@ class LocalLLMEngine:
             "polished_text": "\n".join(fixed),
             "corrections_made": corrections_count
         }
+
+    def auto_correct_transcription(self, lyrics_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Enterprise-scale Auto-Correction Pipeline.
+        Takes Whisper ASR structured output and passes the text through the LLM to fix
+        phonetic and spelling errors contextually, without altering timestamps.
+        """
+        if not lyrics_data:
+            return lyrics_data
+            
+        if not self.is_loaded:
+            self.load_model()
+            
+        if self.llm is None:
+            # Fallback to local regex dictionary if no LLM installed
+            from backend.lyric_engine import normalize_khmer_orthography
+            for idx, line in enumerate(lyrics_data):
+                lyrics_data[idx]['text'] = normalize_khmer_orthography(line.get('text', ''))
+            return lyrics_data
+
+        # Build numbered list
+        numbered_lines = []
+        for i, line in enumerate(lyrics_data):
+            numbered_lines.append(f"{i+1}. {line.get('text', '')}")
+            
+        raw_text_block = "\n".join(numbered_lines)
+        
+        prompt = (
+            "You are a Khmer linguistic expert. Correct the phonetic spelling mistakes in these Khmer singing lyrics. "
+            "Do not change the meaning or translate. Output exactly the same numbered list with corrected Khmer text.\n\n"
+            f"Original:\n{raw_text_block}\n\nCorrected:\n"
+        )
+        
+        try:
+            # We use max_tokens relative to the input length to ensure it can output all lines
+            output = self.llm(prompt, max_tokens=len(lyrics_data) * 20, temperature=0.1)
+            corrected_text = output['choices'][0]['text'].strip()
+            
+            # Parse numbered output
+            import re
+            corrected_dict = {}
+            for line in corrected_text.splitlines():
+                match = re.match(r"^(\d+)[\.\)]\s*(.+)$", line.strip())
+                if match:
+                    line_idx = int(match.group(1)) - 1
+                    corrected_dict[line_idx] = match.group(2).strip()
+                    
+            # Apply corrections while keeping 100% of the timestamps untouched!
+            for i, line_data in enumerate(lyrics_data):
+                if i in corrected_dict and corrected_dict[i]:
+                    lyrics_data[i]['text'] = corrected_dict[i]
+                    # We clear the words array so `double_check_lyrics` will cleanly re-interpolate the corrected words!
+                    lyrics_data[i]['words'] = [] 
+                    
+        except Exception as e:
+            print(f"LLM Auto-Fix Pipeline Failed: {e}")
+            
+        return lyrics_data
 
     def analyze_text(self, text: str) -> Dict[str, Any]:
         """Analyzes text or handles lyric composing requests in any language."""

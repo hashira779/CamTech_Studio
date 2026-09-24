@@ -1251,8 +1251,24 @@ document.addEventListener('DOMContentLoaded', () => {
       item.dataset.start = line.start;
       item.dataset.end = line.end;
       item.style.cssText = 'display: flex; align-items: baseline; gap: 8px; padding: 5px 8px; border-radius: 4px; cursor: pointer; transition: all 0.15s ease; border-left: 2px solid transparent; user-select: none;';
-      item.innerHTML = `<span style="font-family: monospace; font-size: 10px; color: var(--accent); opacity: 0.85; white-space: nowrap;">[${formatTime(line.start)}]</span> <span style="flex: 1; line-height: 1.4; font-family: 'Outfit', 'Inter', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Thai', 'Noto Sans Khmer', 'Kantumruy Pro', 'Khmer OS Battambang', 'Microsoft YaHei', 'PingFang SC', 'Meiryo', 'Malgun Gothic', 'Leelawadee UI', 'Khmer UI', 'Segoe UI', sans-serif;">${line.text}</span>`;
+      item.innerHTML = `<span style="font-family: monospace; font-size: 10px; color: var(--accent); opacity: 0.85; white-space: nowrap; pointer-events: none;">[${formatTime(line.start)}]</span> <span class="editable-lyric" contenteditable="true" spellcheck="false" style="flex: 1; line-height: 1.4; font-family: 'Outfit', 'Inter', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Thai', 'Noto Sans Khmer', 'Kantumruy Pro', 'Khmer OS Battambang', 'Microsoft YaHei', 'PingFang SC', 'Meiryo', 'Malgun Gothic', 'Leelawadee UI', 'Khmer UI', 'Segoe UI', sans-serif; outline: none; border-bottom: 1px dashed transparent; transition: border-color 0.2s;">${line.text}</span>`;
       
+      const textSpan = item.querySelector('.editable-lyric');
+      textSpan.addEventListener('click', (e) => {
+        e.stopPropagation(); // Prevent audio jump when clicking to edit text
+      });
+      textSpan.addEventListener('focus', () => {
+        textSpan.style.borderBottom = '1px dashed var(--accent)';
+      });
+      textSpan.addEventListener('blur', (e) => {
+        textSpan.style.borderBottom = '1px dashed transparent';
+        const newText = e.target.textContent.trim();
+        if (newText !== line.text) {
+          state.lyrics[index].text = newText;
+          showToast('✏️ Lyric Updated', 'Correction saved to memory.', 'success', 2000);
+        }
+      });
+
       item.addEventListener('mouseenter', () => {
         if (!item.classList.contains('active')) {
           item.style.background = 'rgba(255, 255, 255, 0.06)';
@@ -2170,6 +2186,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       } else if (currentPercent < 94) {
         currentPercent = Math.min(94, +(currentPercent + 0.25).toFixed(1));
+        if (progressStatus && currentPercent >= 93) {
+          progressStatus.textContent = 'AI is processing (may take a few minutes)...';
+        }
       }
 
       const displayPct = Math.floor(currentPercent);
@@ -2255,6 +2274,42 @@ document.addEventListener('DOMContentLoaded', () => {
         await runAITranscription({ targetLang, targetModel });
       } catch (err) {
         console.error('Manual transcription failed:', err);
+      }
+    });
+  }
+
+  // ============ AI Auto-Fix Spelling Click ============
+  const btnAiAutoFix = document.getElementById('btn-ai-auto-fix');
+  if (btnAiAutoFix) {
+    btnAiAutoFix.addEventListener('click', async () => {
+      if (!state.lyrics || state.lyrics.length === 0) {
+        showToast('No Lyrics', 'Please transcribe lyrics first before fixing!', 'error');
+        return;
+      }
+      try {
+        setButtonLoading(btnAiAutoFix, '🧠 Auto-Fixing...');
+        setGlobalProgress(50, true, 'Running LLM Auto-Correction...');
+        
+        const res = await fetch('/api/lyrics/auto_fix', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lyrics_data: state.lyrics })
+        });
+        
+        const data = await res.json();
+        if (data.status === 'success') {
+          state.lyrics = data.lyrics;
+          renderLyricsTeleprompter(state.lyrics);
+          showToast('LLM Fix Complete', 'Phonetic errors successfully auto-corrected!', 'success');
+        } else {
+          showToast('Auto-Fix Error', 'LLM failed to correct lyrics.', 'error');
+        }
+      } catch (err) {
+        console.error('LLM Auto-Fix failed:', err);
+        showToast('Error', 'API error during auto-fix', 'error');
+      } finally {
+        clearButtonLoading(btnAiAutoFix, '✨ AI Auto-Fix Spelling');
+        setGlobalProgress(100, true, 'Done');
       }
     });
   }

@@ -283,6 +283,24 @@ async def verify_lyrics_api(req: LyricsVerifyRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Lyrics verification error: {str(e)}")
 
+@app.post("/api/lyrics/auto_fix")
+async def auto_fix_lyrics_api(req: LyricsVerifyRequest):
+    """Passes the transcribed lyrics through the local LLM to fix phonetic/contextual errors."""
+    try:
+        from backend.llm_engine import llm_engine
+        # 1. Run LLM Auto-Correction Pipeline
+        llm_fixed = llm_engine.auto_correct_transcription(req.lyrics_data)
+        # 2. Run standard verification to re-interpolate missing/changed words
+        verified, report = double_check_lyrics(llm_fixed)
+        return {
+            "status": "success",
+            "verified": True,
+            "lyrics": verified,
+            "report": report
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LLM Auto-Fix Error: {str(e)}")
+
 def clean_youtube_title_and_artist(raw_title: str, uploader: Optional[str] = None, raw_artist: Optional[str] = None) -> tuple[str, str]:
     """
     Intelligently splits and cleans YouTube video titles into (clean_title, clean_artist/singer).
