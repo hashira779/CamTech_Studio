@@ -122,15 +122,21 @@ export function drawWaveTheme(ctx, w, h, bars, bass) {
     const center2 = state.centerTextSecondary !== undefined ? state.centerTextSecondary : "FLUID WAVE";
 
     if (center1 && center1.trim()) {
+      const len1 = Math.max(center1.length, 4);
+      const baseFs1 = Math.floor(radius * 0.42);
+      const fs1 = len1 > 6 ? Math.max(11, Math.floor(baseFs1 * (6 / len1))) : baseFs1;
       ctx.fillStyle = isVintage ? "#fef3c7" : `rgb(${priRgb})`;
-      ctx.font = `700 ${Math.floor(radius * 0.42)}px 'Kantumruy Pro', 'Outfit', sans-serif`;
+      ctx.font = `700 ${fs1}px 'Kantumruy Pro', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Thai', 'Outfit', sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(center1, cx, center2 && center2.trim() ? cy - radius * 0.15 : cy);
     }
 
     if (center2 && center2.trim()) {
-      ctx.font = `600 ${Math.floor(radius * 0.22)}px 'Outfit', sans-serif`;
+      const len2 = Math.max(center2.length, 6);
+      const baseFs2 = Math.floor(radius * 0.22);
+      const fs2 = len2 > 10 ? Math.max(9, Math.floor(baseFs2 * (10 / len2))) : baseFs2;
+      ctx.font = `600 ${fs2}px 'Kantumruy Pro', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Thai', 'Outfit', sans-serif`;
       ctx.fillStyle = isVintage ? "#fde68a" : "#94a3b8";
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';

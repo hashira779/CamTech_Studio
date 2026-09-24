@@ -7,26 +7,61 @@ export function getActiveLyricState() {
 }
 
 /**
- * Splits text into words with native Khmer language support.
- * Modern browsers support Intl.Segmenter('km') which handles unspaced Khmer script seamlessly.
+ * Detects the dominant linguistic script for locale-aware segmentation and typography.
+ */
+export function detectLanguageLocale(text) {
+  if (!text) return 'en';
+  if (/[\u1780-\u17FF]/.test(text)) return 'km'; // Khmer
+  if (/[\u3040-\u309F\u30A0-\u30FF]/.test(text)) return 'ja'; // Japanese (Hiragana/Katakana)
+  if (/[\u4E00-\u9FFF]/.test(text)) return 'zh'; // Chinese
+  if (/[\uAC00-\uD7AF\u1100-\u11FF]/.test(text)) return 'ko'; // Korean
+  if (/[\u0E00-\u0E7F]/.test(text)) return 'th'; // Thai
+  if (/[\u0E80-\u0EFF]/.test(text)) return 'lo'; // Lao
+  if (/[\u1000-\u109F]/.test(text)) return 'my'; // Burmese
+  if (/[\u0900-\u097F]/.test(text)) return 'hi'; // Hindi
+  if (/[\u0600-\u06FF]/.test(text)) return 'ar'; // Arabic
+  if (/[\u0400-\u04FF]/.test(text)) return 'ru'; // Russian / Cyrillic
+  if (/[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(text)) return 'vi'; // Vietnamese
+  return 'en';
+}
+
+/**
+ * Splits text into words or singing units with universal multi-language support.
+ * Modern browsers support Intl.Segmenter which handles unspaced scripts (Khmer, Chinese,
+ * Japanese, Thai, Lao, Burmese) and spaced scripts seamlessly according to Unicode Annex #29.
  */
 function splitLineIntoWords(text, lineStart, lineEnd) {
   if (!text) return [];
   const clean = text.trim();
   if (!clean) return [];
 
-  const isKhmer = /[\u1780-\u17FF]/.test(clean);
+  const locale = detectLanguageLocale(clean);
   let tokens = [];
 
-  if (isKhmer && typeof Intl !== 'undefined' && Intl.Segmenter) {
+  // 1. Universal modern Intl.Segmenter
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
     try {
-      const segmenter = new Intl.Segmenter('km', { granularity: 'word' });
+      const segmenter = new Intl.Segmenter(locale, { granularity: 'word' });
       tokens = Array.from(segmenter.segment(clean))
         .map(s => s.segment.trim())
         .filter(t => t.length > 0 && !/^[\s\p{P}]+$/u.test(t));
     } catch(e) {}
   }
 
+  // 2. Fallback regex segmentation for unspaced scripts if Intl.Segmenter is absent or returned 1 lump
+  if (!tokens || tokens.length <= 1) {
+    if (/[\u4E00-\u9FFF\u3040-\u30FF]/.test(clean)) {
+      // CJK characters: split into characters / kana clusters while keeping Latin words intact
+      tokens = clean.match(/[a-zA-Z0-9_\'-]+|[\u4e00-\u9fff]|[\u3040-\u309f]+|[\u30a0-\u30ff]+|[^\s]/g) || [];
+      tokens = tokens.map(t => t.trim()).filter(Boolean);
+    } else if (/[\u0E00-\u0E7F]/.test(clean)) {
+      // Thai cluster fallback
+      tokens = clean.match(/[\u0E01-\u0E2E][\u0E30-\u0E3A\u0E47-\u0E4E]*|[\u0E2F-\u0E5B]|[a-zA-Z0-9_\'-]+/g) || [];
+      tokens = tokens.map(t => t.trim()).filter(Boolean);
+    }
+  }
+
+  // 3. Standard whitespace splitting fallback for spaced languages
   if (!tokens || tokens.length === 0) {
     tokens = clean.split(/\s+/).filter(Boolean);
   }
@@ -171,7 +206,7 @@ export function drawLyrics(ctx, w, h) {
   ctx.globalAlpha = alpha;
 
   let fontSize = Math.floor(h * 0.052);
-  const fontFamilies = "'Kantumruy Pro', 'Khmer OS Battambang', 'Leelawadee UI', 'Khmer UI', 'Battambang', 'Siemreap', 'Outfit', 'Inter', sans-serif";
+  const fontFamilies = "'Outfit', 'Inter', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Thai', 'Noto Sans Khmer', 'Kantumruy Pro', 'Khmer OS Battambang', 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans', 'Meiryo', 'Malgun Gothic', 'Leelawadee UI', 'Khmer UI', 'Segoe UI', sans-serif";
   ctx.font = `700 ${fontSize}px ${fontFamilies}`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
@@ -183,8 +218,8 @@ export function drawLyrics(ctx, w, h) {
     words = splitLineIntoWords(line.text, line.start, line.end);
   }
 
-  const isKhmer = /[\u1780-\u17FF]/.test(line.text || '');
-  const spaceWidth = isKhmer ? Math.round(fontSize * 0.10) : ctx.measureText(" ").width;
+  const isUnspaced = /[\u1780-\u17FF\u4E00-\u9FFF\u3040-\u30FF\u0E00-\u0E7F\u0E80-\u0EFF\u1000-\u109F]/.test(line.text || '');
+  const spaceWidth = isUnspaced ? Math.round(fontSize * 0.08) : ctx.measureText(" ").width;
 
   // Calculate total width of the line to center it properly
   let totalWidth = 0;

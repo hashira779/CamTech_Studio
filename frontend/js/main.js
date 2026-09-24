@@ -370,6 +370,104 @@ document.addEventListener('DOMContentLoaded', () => {
   const inputCenterPrimary = document.getElementById('input-center-primary');
   const inputCenterSecondary = document.getElementById('input-center-secondary');
   const btnClearCenterText = document.getElementById('btn-clear-center-text');
+  const badgeStatusText = document.getElementById('badge-status-text');
+  const btnRemoveLogo = document.getElementById('btn-remove-logo');
+  const btnUploadLogoInline = document.getElementById('btn-upload-logo-inline');
+  const btnSyncTitlesToBadge = document.getElementById('btn-sync-titles-to-badge');
+  const btnStageCenterBadge = document.getElementById('btn-stage-center-badge');
+
+  function updateBadgeStatusUI() {
+    if (state.logoImageObj && state.logoImageObj.complete) {
+      if (badgeStatusText) badgeStatusText.innerHTML = '<span style="color:#10b981; font-weight:600;">🖼️ Custom Artwork Active</span>';
+      if (btnRemoveLogo) btnRemoveLogo.classList.remove('hidden');
+    } else if (state.showCenterText === false) {
+      if (badgeStatusText) badgeStatusText.innerHTML = '<span style="color:#94a3b8;">👁️ Badge Hidden (Off)</span>';
+      if (btnRemoveLogo) btnRemoveLogo.classList.add('hidden');
+    } else {
+      const c1 = state.centerTextPrimary !== undefined ? state.centerTextPrimary : 'VIDA';
+      const c2 = state.centerTextSecondary !== undefined ? state.centerTextSecondary : 'FLUID WAVE';
+      if (!c1.trim() && !c2.trim()) {
+        if (badgeStatusText) badgeStatusText.innerHTML = '<span style="color:#f59e0b; font-weight:600;">⚪ Clean Ring (No Text)</span>';
+      } else {
+        if (badgeStatusText) badgeStatusText.innerHTML = `<span style="color:#ec4899; font-weight:600;">🔤 Badge: "${c1}" / "${c2}"</span>`;
+      }
+      if (btnRemoveLogo) btnRemoveLogo.classList.add('hidden');
+    }
+  }
+
+  function focusCenterBadgeEditor(showToastMsg = true) {
+    // 1. Ensure Right Panel is on Visualizer tab
+    const styleTab = document.querySelector('#nav-right-panel .segmented-tab[data-target="tab-right-visualizer"]');
+    if (styleTab && !styleTab.classList.contains('active')) {
+      styleTab.click();
+    }
+
+    // 2. Scroll into view and flash highlight ring
+    const section = document.getElementById('section-center-badge');
+    if (section) {
+      section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      section.classList.remove('badge-highlight-active');
+      void section.offsetWidth; // Trigger reflow for animation restart
+      section.classList.add('badge-highlight-active');
+      setTimeout(() => {
+        section.classList.remove('badge-highlight-active');
+      }, 2000);
+    }
+
+    // 3. Focus Line 1 input and select text for effortless typing
+    if (inputCenterPrimary) {
+      setTimeout(() => {
+        inputCenterPrimary.focus();
+        inputCenterPrimary.select();
+      }, 150);
+    }
+
+    // 4. Helpful toast notification
+    if (showToastMsg) {
+      showToast('🎯 Center Badge', 'Edit Line 1 & Line 2, clear text, or upload custom logo artwork!', 'info', 3000);
+    }
+  }
+
+  // Quick Center Badge button on stage header
+  if (btnStageCenterBadge) {
+    btnStageCenterBadge.addEventListener('click', () => {
+      focusCenterBadgeEditor();
+    });
+  }
+
+  // Interactive Click & Hover on Visualizer Canvas Center Circle
+  function isMouseInCenterBadge(e) {
+    if (!vizCanvas) return false;
+    const rect = vizCanvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return false;
+    const scaleX = vizCanvas.width / rect.width;
+    const scaleY = vizCanvas.height / rect.height;
+    const x = (e.clientX - rect.left) * scaleX;
+    const y = (e.clientY - rect.top) * scaleY;
+    const cx = vizCanvas.width / 2;
+    const cy = vizCanvas.height / 2;
+    const dist = Math.hypot(x - cx, y - cy);
+    const radius = Math.min(vizCanvas.width, vizCanvas.height) * 0.18;
+    return dist <= radius;
+  }
+
+  if (vizCanvas) {
+    vizCanvas.addEventListener('mousemove', (e) => {
+      if (isMouseInCenterBadge(e)) {
+        vizCanvas.style.cursor = 'pointer';
+        vizCanvas.title = '🎯 Click to customize Center Badge (Text & Logo)';
+      } else {
+        vizCanvas.style.cursor = 'default';
+        vizCanvas.title = '';
+      }
+    });
+
+    vizCanvas.addEventListener('click', (e) => {
+      if (isMouseInCenterBadge(e)) {
+        focusCenterBadgeEditor();
+      }
+    });
+  }
 
   function syncTitleInputs() {
     if (inputSongTitle) inputSongTitle.value = state.songTitle || '';
@@ -378,6 +476,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (inputCenterSecondary && state.centerTextSecondary !== undefined) inputCenterSecondary.value = state.centerTextSecondary;
     if (checkShowTitles) checkShowTitles.checked = state.showTitles !== false;
     if (checkShowCenterText) checkShowCenterText.checked = state.showCenterText !== false;
+    updateBadgeStatusUI();
   }
   syncTitleInputs();
 
@@ -431,6 +530,7 @@ document.addEventListener('DOMContentLoaded', () => {
     checkShowCenterText.checked = state.showCenterText !== false;
     checkShowCenterText.addEventListener('change', (e) => {
       state.showCenterText = e.target.checked;
+      updateBadgeStatusUI();
       showToast('Center Badge', state.showCenterText ? 'Badge Text Visible' : 'Badge Text Hidden', 'info', 1500);
     });
   }
@@ -439,6 +539,7 @@ document.addEventListener('DOMContentLoaded', () => {
     inputCenterPrimary.value = state.centerTextPrimary !== undefined ? state.centerTextPrimary : 'VIDA';
     inputCenterPrimary.addEventListener('input', (e) => {
       state.centerTextPrimary = e.target.value;
+      updateBadgeStatusUI();
     });
   }
 
@@ -446,6 +547,7 @@ document.addEventListener('DOMContentLoaded', () => {
     inputCenterSecondary.value = state.centerTextSecondary !== undefined ? state.centerTextSecondary : 'FLUID WAVE';
     inputCenterSecondary.addEventListener('input', (e) => {
       state.centerTextSecondary = e.target.value;
+      updateBadgeStatusUI();
     });
   }
 
@@ -455,7 +557,45 @@ document.addEventListener('DOMContentLoaded', () => {
       state.centerTextSecondary = '';
       if (inputCenterPrimary) inputCenterPrimary.value = '';
       if (inputCenterSecondary) inputCenterSecondary.value = '';
+      updateBadgeStatusUI();
       showToast('Center Badge', 'Center emblem text deleted/cleared', 'info', 1500);
+    });
+  }
+
+  if (btnRemoveLogo) {
+    btnRemoveLogo.addEventListener('click', () => {
+      state.logoImageObj = null;
+      state.logoImagePath = null;
+      state.logoImageUrl = null;
+      const btnLogoEl = document.getElementById('btn-upload-logo');
+      if (btnLogoEl) {
+        btnLogoEl.classList.remove('active');
+        btnLogoEl.innerHTML = `<div class="media-item-left"><span class="icon">🎨</span><span class="media-item-title">Center Logo</span></div><span class="media-item-badge">Click Upload</span>`;
+      }
+      updateBadgeStatusUI();
+      showToast('Artwork Removed', 'Reverted to custom text badge', 'info', 2000);
+    });
+  }
+
+  if (btnUploadLogoInline) {
+    btnUploadLogoInline.addEventListener('click', () => {
+      const inputLogoEl = document.getElementById('logo-file-input');
+      if (inputLogoEl) inputLogoEl.click();
+    });
+  }
+
+  if (btnSyncTitlesToBadge) {
+    btnSyncTitlesToBadge.addEventListener('click', () => {
+      const title = (state.songTitle || 'VIDA').split('(')[0].trim();
+      const artist = (state.artistName || 'AUDIO').split('(')[0].trim();
+      state.centerTextPrimary = title;
+      state.centerTextSecondary = artist;
+      if (inputCenterPrimary) inputCenterPrimary.value = title;
+      if (inputCenterSecondary) inputCenterSecondary.value = artist;
+      state.showCenterText = true;
+      if (checkShowCenterText) checkShowCenterText.checked = true;
+      updateBadgeStatusUI();
+      showToast('Badge Synced', `Set to "${title}" / "${artist}"`, 'success', 2000);
     });
   }
 
@@ -894,7 +1034,7 @@ document.addEventListener('DOMContentLoaded', () => {
       item.dataset.start = line.start;
       item.dataset.end = line.end;
       item.style.cssText = 'display: flex; align-items: baseline; gap: 8px; padding: 5px 8px; border-radius: 4px; cursor: pointer; transition: all 0.15s ease; border-left: 2px solid transparent; user-select: none;';
-      item.innerHTML = `<span style="font-family: monospace; font-size: 10px; color: var(--accent); opacity: 0.85; white-space: nowrap;">[${formatTime(line.start)}]</span> <span style="flex: 1; line-height: 1.4; font-family: 'Kantumruy Pro', 'Khmer OS Battambang', 'Leelawadee UI', 'Khmer UI', sans-serif;">${line.text}</span>`;
+      item.innerHTML = `<span style="font-family: monospace; font-size: 10px; color: var(--accent); opacity: 0.85; white-space: nowrap;">[${formatTime(line.start)}]</span> <span style="flex: 1; line-height: 1.4; font-family: 'Outfit', 'Inter', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Thai', 'Noto Sans Khmer', 'Kantumruy Pro', 'Khmer OS Battambang', 'Microsoft YaHei', 'PingFang SC', 'Meiryo', 'Malgun Gothic', 'Leelawadee UI', 'Khmer UI', 'Segoe UI', sans-serif;">${line.text}</span>`;
       
       item.addEventListener('mouseenter', () => {
         if (!item.classList.contains('active')) {
@@ -1244,7 +1384,8 @@ document.addEventListener('DOMContentLoaded', () => {
       showToast('🧠 Smart Studio', 'Step 3/3: Transcribing vocals with Whisper AI...', 'info', 8000);
       const langSelect = document.getElementById('select-vocal-lang');
       const modelSelect = document.getElementById('select-whisper-model');
-      let targetLang = langSelect ? langSelect.value : 'auto';
+      let targetLang = langSelect ? langSelect.value : 'km';
+      if (!targetLang) targetLang = 'km';
       if (targetLang === 'auto') {
         targetLang = (/[\u1780-\u17FF]/.test(state.audioPath || '') || /[\u1780-\u17FF]/.test(state.audioServerPath || '')) ? 'km' : null;
       }
@@ -1266,7 +1407,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const inputBg = document.getElementById('bg-file-input');
   if (btnBg && inputBg) {
     btnBg.addEventListener('click', () => inputBg.click());
-    inputBg.addEventListener('change', (e) => {
+    inputBg.addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (file) {
         const url = URL.createObjectURL(file);
@@ -1277,6 +1418,16 @@ document.addEventListener('DOMContentLoaded', () => {
         btnBg.classList.add('active');
         btnBg.innerHTML = `<span class="icon">🖼️</span> ${file.name.substring(0, 20)}`;
         showToast('Background Set', `Using "${file.name}"`, 'success', 2000);
+
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
+          const res = await fetch('/api/upload', { method: 'POST', body: formData });
+          const data = await res.json();
+          if (data.saved_path) state.bgImagePath = data.saved_path;
+        } catch (err) {
+          console.warn('Background server upload error:', err);
+        }
       }
     });
   }
@@ -1285,7 +1436,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const inputLogo = document.getElementById('logo-file-input');
   if (btnLogo && inputLogo) {
     btnLogo.addEventListener('click', () => inputLogo.click());
-    inputLogo.addEventListener('change', (e) => {
+    inputLogo.addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (file) {
         const url = URL.createObjectURL(file);
@@ -1295,7 +1446,18 @@ document.addEventListener('DOMContentLoaded', () => {
         state.logoImageObj = img;
         btnLogo.classList.add('active');
         btnLogo.innerHTML = `<span class="icon">🎨</span> ${file.name.substring(0, 20)}`;
-        showToast('Logo Set', `Using "${file.name}"`, 'success', 2000);
+        updateBadgeStatusUI();
+        showToast('Center Artwork Set', `Using "${file.name}"`, 'success', 2500);
+
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
+          const res = await fetch('/api/upload', { method: 'POST', body: formData });
+          const data = await res.json();
+          if (data.saved_path) state.logoImagePath = data.saved_path;
+        } catch (err) {
+          console.warn('Logo server upload error:', err);
+        }
       }
     });
   }
@@ -1564,7 +1726,8 @@ document.addEventListener('DOMContentLoaded', () => {
         state.lyrics = data.lyrics;
         renderLyricsTeleprompter(state.lyrics);
         const src = data.source === 'subtitle' ? 'Captions' : 'Whisper AI';
-        showToast('🎤 Lyrics Ready', `${data.count} lines synced from ${src} (100%)`, 'success', 4000);
+        const langTag = data.detected_language ? ` [${data.detected_language.toUpperCase()}]` : '';
+        showToast('🎤 Lyrics Ready', `${data.count} lines synced from ${src}${langTag} (100%)`, 'success', 4000);
 
         setTimeout(() => {
           if (progressBox) progressBox.style.display = 'none';
@@ -1602,7 +1765,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       const langSelect = document.getElementById('select-vocal-lang');
       const modelSelect = document.getElementById('select-whisper-model');
-      let targetLang = langSelect ? langSelect.value : 'auto';
+      let targetLang = langSelect ? langSelect.value : 'km';
+      if (!targetLang) targetLang = 'km';
       if (targetLang === 'auto') {
         targetLang = (/[\u1780-\u17FF]/.test(state.audioPath || '') || /[\u1780-\u17FF]/.test(state.audioServerPath || '')) ? 'km' : null;
       }
@@ -1673,6 +1837,11 @@ document.addEventListener('DOMContentLoaded', () => {
             fps: state.renderFps,
             song_title: state.songTitle,
             artist_name: state.artistName,
+            background_image: state.bgImagePath,
+            logo_image: state.logoImagePath,
+            center_text_primary: state.centerTextPrimary !== undefined ? state.centerTextPrimary : "VIDA",
+            center_text_secondary: state.centerTextSecondary !== undefined ? state.centerTextSecondary : "FLUID WAVE",
+            show_center_text: state.showCenterText !== false,
             lyrics_data: state.showLyrics === false ? [] : state.lyrics,
             lyric_style: state.showLyrics === false ? "none" : state.lyricStyle,
             bar_count: state.barCount,

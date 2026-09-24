@@ -6,6 +6,8 @@
 A **local, CPU-compatible pipeline** that extracts timestamped Khmer lyrics
 from any song audio file. No cloud, no database, no GPU required.
 
+> 📖 **Full Guide:** See [KHMER_LYRICS_ASR_GUIDE.md](docs/KHMER_LYRICS_ASR_GUIDE.md) for technology & architecture roadmap to reach English-level quality.
+
 ```
 song.mp3
   │
@@ -15,8 +17,10 @@ song.mp3
   ▼ Stage 2 — Demucs htdemucs (CPU)
 vocals.wav
   │
-  ▼ Stage 3 — faster-whisper (Khmer, int8, CPU)
+  ▼ Stage 3 — faster-whisper (Khmer, initial_prompt, two-pass, int8)
 raw_transcription.json  ←── always preserved, never modified
+  │
+  ▼ Stage 3.5 — Khmer NLP Post-Processing (khmer-nltk, spelling, de-dupe)
   │
   ├── lyrics.txt
   ├── lyrics.lrc   ←── load directly into VIDA
@@ -87,9 +91,11 @@ Each song gets its own folder under `output/<song_name>/`:
 | `base` | 150 MB | ★★★☆☆ | ~2 min |
 | `small` | 500 MB | ★★★★☆ | ~5 min |
 | `medium` | 1.5 GB | ★★★★★ | ~15 min |
+| `large-v3-turbo` | 1.5 GB | ★★★★★ | ~15-20 min (Recommended default) |
 | `large-v3` | 3 GB | ★★★★★ | ~40 min |
 
-**Recommended:** `small` for development, `medium` for final production export.
+**Recommended:** `small` for quick dev/testing, `large-v3-turbo` for production Khmer lyrics.
+
 
 ## Configuration (`config.py`)
 

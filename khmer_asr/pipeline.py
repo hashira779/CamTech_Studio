@@ -186,6 +186,10 @@ def run_pipeline(args: argparse.Namespace) -> int:
     log.info("=" * 55)
 
     try:
+        use_two_pass = False if args.no_two_pass else config.WHISPER_TWO_PASS
+        use_post_process = False if args.no_post_process else getattr(config, "KHMER_POSTPROCESS_ENABLED", True)
+        prompt = args.initial_prompt if args.initial_prompt is not None else getattr(config, "WHISPER_INITIAL_PROMPT", None)
+
         result = transcribe(
             audio_path=audio_for_transcription,
             output_dir=output_dir,
@@ -201,6 +205,12 @@ def run_pipeline(args: argparse.Namespace) -> int:
             condition_on_prev=config.WHISPER_CONDITION_ON_PREV,
             cpu_threads=cpu_threads,
             khmer_model_path=khmer_model,
+            initial_prompt=prompt,
+            two_pass=use_two_pass,
+            low_conf_threshold=getattr(config, "WHISPER_LOW_CONF_THRESHOLD", -1.5),
+            repass_beam_size=getattr(config, "WHISPER_REPASS_BEAM_SIZE", 10),
+            post_process=use_post_process,
+            segment_with_spaces=args.segment_spaces or getattr(config, "KHMER_SEGMENT_WITH_SPACES", False),
         )
     except Exception as e:
         log.error(f"Stage 3 failed: {e}")
@@ -245,7 +255,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
     return 0
 
 
-def run_regen(raw_json_path: str) -> int:
+def run_regen(raw_json_path: str, post_process: bool = True, segment_with_spaces: bool = False) -> int:
     """Regenerate output files from existing raw_transcription.json."""
     log = logging.getLogger(__name__)
     raw_json_path = str(raw_json_path)
@@ -253,8 +263,13 @@ def run_regen(raw_json_path: str) -> int:
         log.error(f"File not found: {raw_json_path}")
         return 1
     output_dir = os.path.dirname(raw_json_path)
-    log.info(f"Regenerating lyrics from: {raw_json_path}")
-    regenerate_from_raw(raw_json_path, output_dir)
+    log.info(f"Regenerating lyrics from: {raw_json_path} (post_process={post_process})")
+    regenerate_from_raw(
+        raw_json_path,
+        output_dir,
+        post_process=post_process,
+        segment_with_spaces=segment_with_spaces,
+    )
     log.info("Done.")
     return 0
 
@@ -285,13 +300,23 @@ def parse_args() -> argparse.Namespace:
 
     # Model selection
     parser.add_argument("--model", "-m",
-                        choices=["tiny", "base", "small", "medium", "large-v2", "large-v3"],
+                        choices=["tiny", "base", "small", "medium", "large-v1", "large-v2", "large-v3", "large-v3-turbo", "turbo"],
                         default=None,
                         help=f"Whisper model size (default: {config.WHISPER_MODEL})")
     parser.add_argument("--khmer-model", metavar="PATH_OR_REPOID", default=None,
                         help="Custom fine-tuned Khmer Whisper model (HF repo-id or local path)")
     parser.add_argument("--demucs-model", default=None,
                         help=f"Demucs model name (default: {config.DEMUCS_MODEL})")
+
+    # ASR tuning & Khmer enhancements
+    parser.add_argument("--initial-prompt", default=None,
+                        help="Initial prompt to bias decoding toward Khmer vocabulary")
+    parser.add_argument("--no-two-pass", action="store_true",
+                        help="Disable second pass beam search on low-confidence segments")
+    parser.add_argument("--no-post-process", action="store_true",
+                        help="Disable Stage 3.5 Khmer NLP post-processing and error corrections")
+    parser.add_argument("--segment-spaces", action="store_true",
+                        help="Format output Khmer lyrics with word boundary spaces using khmer-nltk")
 
     # Device / hardware
     parser.add_argument("--device", choices=["cpu", "cuda", "auto"], default=None,
@@ -316,9 +341,14 @@ def main() -> None:
     setup_logging(args.verbose)
 
     if args.regen:
-        sys.exit(run_regen(args.regen))
+        sys.exit(run_regen(
+            args.regen,
+            post_process=not args.no_post_process,
+            segment_with_spaces=args.segment_spaces,
+        ))
     else:
         sys.exit(run_pipeline(args))
+
 
 
 if __name__ == "__main__":

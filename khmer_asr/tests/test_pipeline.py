@@ -164,8 +164,8 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)-7s %(message)s")
 
     parser = argparse.ArgumentParser(description="Phase 15 — Pipeline quality test runner")
-    parser.add_argument("--model", choices=["tiny", "base", "small", "medium", "large-v3"],
-                        default="small")
+    parser.add_argument("--model", choices=["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"],
+                        default="large-v3-turbo")
     parser.add_argument("--skip-separation", action="store_true")
     parser.add_argument("--device", choices=["cpu", "cuda", "auto"], default="cpu")
     parser.add_argument("--reuse-existing", action="store_true",

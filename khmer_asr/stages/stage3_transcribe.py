@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 def transcribe(
     audio_path: str,
     output_dir: str,
-    model_size: str = "small",
+    model_size: str = "large-v3-turbo",
     device: str = "cpu",
     language: str = "km",
     compute_type: str = "int8",
@@ -39,6 +39,12 @@ def transcribe(
     condition_on_prev: bool = False,
     cpu_threads: int = 8,
     khmer_model_path: str = "",
+    initial_prompt: Optional[str] = None,
+    two_pass: bool = False,
+    low_conf_threshold: float = -1.5,
+    repass_beam_size: int = 10,
+    post_process: bool = True,
+    segment_with_spaces: bool = False,
 ) -> dict:
     """
     Transcribe an audio file to Khmer lyrics using faster-whisper.
@@ -46,7 +52,7 @@ def transcribe(
     Args:
         audio_path:          Input WAV/MP3 (vocals.wav recommended)
         output_dir:          Directory to save all output files
-        model_size:          Whisper model size (tiny/base/small/medium/large-v3)
+        model_size:          Whisper model size (tiny/base/small/medium/large-v3/large-v3-turbo)
         device:              "cpu" or "cuda"
         language:            ISO-639-1 language code ("km" = Khmer)
         compute_type:        Quantization — "int8" is fastest on CPU
@@ -58,6 +64,12 @@ def transcribe(
         condition_on_prev:   False = prevents repetition hallucinations
         cpu_threads:         Number of CPU threads for CTranslate2
         khmer_model_path:    Path/HF-repo of a fine-tuned Khmer model, or ""
+        initial_prompt:      Khmer lyrics vocabulary prompt to bias decoder
+        two_pass:            Re-transcribe low confidence segments with beam search
+        low_conf_threshold:  avg_logprob threshold below which segments get re-transcribed
+        repass_beam_size:    Beam search width for second pass
+        post_process:        Run Stage 3.5 Khmer NLP post-processing & error correction
+        segment_with_spaces: Format output with word-delimiting spaces
 
     Returns:
         dict with keys:
@@ -90,6 +102,8 @@ def transcribe(
     )
 
     log.info(f"[stage3] Transcribing: {audio_path}")
+    if initial_prompt:
+        log.info(f"[stage3] Using initial_prompt ({len(initial_prompt)} chars) to bias Khmer lyrics decoding")
 
     # VAD parameters tuned for singing / Khmer music:
     # Lower threshold = more audio passes through (less aggressive filtering)
@@ -110,6 +124,7 @@ def transcribe(
         vad_filter=vad_filter,
         vad_parameters=vad_params if vad_filter else None,
         condition_on_previous_text=condition_on_prev,
+        initial_prompt=initial_prompt,
         no_speech_threshold=0.4,   # default 0.6 — singing often has lower confidence
         log_prob_threshold=-2.0,   # default -1.0 — allow lower-confidence Khmer segments
     )
@@ -141,12 +156,83 @@ def transcribe(
     detected_language = info.language
     detected_prob = round(info.language_probability, 4)
     log.info(f"[stage3] Detected language: {detected_language} (prob={detected_prob})")
-    log.info(f"[stage3] Total segments: {len(segments)}")
+    log.info(f"[stage3] Pass 1 complete: {len(segments)} segments")
+
+    # ── Optional Two-Pass Re-transcription for Low-Confidence Segments ──
+    if two_pass and any(s["avg_logprob"] < low_conf_threshold for s in segments):
+        try:
+            from faster_whisper.audio import decode_audio
+            log.info(f"[stage3] Running Pass 2 on low-confidence segments (avg_logprob < {low_conf_threshold})...")
+            audio_waveform = decode_audio(audio_path, sampling_rate=16000)
+            total_samples = len(audio_waveform)
+            low_conf_count = 0
+            improved_count = 0
+
+            for seg in segments:
+                if seg["avg_logprob"] < low_conf_threshold:
+                    low_conf_count += 1
+                    # Pad segment by 0.15s on each side to avoid clipping syllable onsets
+                    start_sample = max(0, int((seg["start"] - 0.15) * 16000))
+                    end_sample = min(total_samples, int((seg["end"] + 0.15) * 16000))
+                    if end_sample - start_sample < 1600:
+                        continue
+
+                    slice_audio = audio_waveform[start_sample:end_sample]
+                    slice_offset = start_sample / 16000.0
+
+                    re_iter, _ = model.transcribe(
+                        slice_audio,
+                        language=language if language != "auto" else None,
+                        beam_size=repass_beam_size,
+                        best_of=repass_beam_size,
+                        temperature=[0.0, 0.2, 0.4],
+                        word_timestamps=word_timestamps,
+                        vad_filter=False,
+                        condition_on_previous_text=False,
+                        initial_prompt=initial_prompt,
+                    )
+                    re_segs = list(re_iter)
+                    if re_segs:
+                        re_text = " ".join(s.text.strip() for s in re_segs).strip()
+                        avg_lp = sum(s.avg_logprob for s in re_segs) / len(re_segs)
+                        if re_text and avg_lp > seg["avg_logprob"]:
+                            improved_count += 1
+                            seg["text"] = re_text
+                            seg["avg_logprob"] = round(avg_lp, 4)
+                            if word_timestamps:
+                                re_words = []
+                                for rs in re_segs:
+                                    if rs.words:
+                                        for rw in rs.words:
+                                            re_words.append({
+                                                "word": rw.word,
+                                                "start": round(slice_offset + rw.start, 3),
+                                                "end": round(slice_offset + rw.end, 3),
+                                                "probability": round(rw.probability, 4),
+                                            })
+                                if re_words:
+                                    seg["words"] = re_words
+
+            log.info(f"[stage3] Pass 2 finished: checked {low_conf_count} segments, improved {improved_count}")
+        except Exception as e:
+            log.warning(f"[stage3] Two-pass re-transcription encountered error: {e}")
 
     # ── Unload model immediately ──
     log.info("[stage3] Unloading Whisper model from RAM")
     del model
     gc.collect()
+
+    # ── Stage 3.5: Khmer NLP Post-Processing ──
+    if post_process:
+        try:
+            from stages.stage3_5_postprocess import post_process_segments
+            log.info("[stage3] Applying Stage 3.5 Khmer NLP post-processing & corrections...")
+            segments = post_process_segments(
+                segments,
+                segment_with_spaces=segment_with_spaces,
+            )
+        except Exception as e:
+            log.warning(f"[stage3] Stage 3.5 post-processing encountered error: {e}")
 
     # ── Save raw transcription FIRST — never modify this file ──
     raw_path = os.path.join(output_dir, "raw_transcription.json")
@@ -156,6 +242,9 @@ def transcribe(
         "language_hint": language,
         "detected_language": detected_language,
         "detected_language_probability": detected_prob,
+        "initial_prompt_used": bool(initial_prompt),
+        "two_pass_applied": two_pass,
+        "post_process_applied": post_process,
         "audio_path": audio_path,
         "duration_seconds": round(info.duration, 2),
         "segments": segments,
@@ -269,16 +358,26 @@ def _save_lyrics_srt(segments: list, path: str) -> None:
 # Reload from saved JSON (no re-inference needed)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def regenerate_from_raw(raw_json_path: str, output_dir: str) -> None:
+def regenerate_from_raw(
+    raw_json_path: str,
+    output_dir: str,
+    post_process: bool = False,
+    segment_with_spaces: bool = False,
+) -> None:
     """
     Re-generate lyrics.txt / .lrc / .srt from an existing raw_transcription.json
-    without running Whisper again. Useful after manual corrections.
+    without running Whisper again. Useful after manual corrections or to apply post-processing.
     """
     with open(raw_json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     segments = data.get("segments", [])
+    if post_process:
+        from stages.stage3_5_postprocess import post_process_segments
+        segments = post_process_segments(segments, segment_with_spaces=segment_with_spaces)
+
     _save_lyrics_txt(segments, os.path.join(output_dir, "lyrics.txt"))
     _save_lyrics_lrc(segments, os.path.join(output_dir, "lyrics.lrc"))
     _save_lyrics_srt(segments, os.path.join(output_dir, "lyrics.srt"))
     log.info(f"[stage3] Regenerated lyrics from {raw_json_path}")
+

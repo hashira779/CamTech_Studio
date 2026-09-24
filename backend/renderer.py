@@ -206,6 +206,9 @@ class VideoRenderer:
         palette_name: str = "cyberpunk",
         background_image: str = None,
         logo_image: str = None,
+        center_text_primary: str = "VIDA",
+        center_text_secondary: str = "FLUID WAVE",
+        show_center_text: bool = True,
         song_title: str = "",
         artist_name: str = "",
         lyrics_data: list = None,
@@ -222,6 +225,9 @@ class VideoRenderer:
         self.palette = PALETTES.get(palette_name, PALETTES["cyberpunk"])
         self.background_image_path = background_image
         self.logo_image_path = logo_image
+        self.center_text_primary = center_text_primary if center_text_primary is not None else "VIDA"
+        self.center_text_secondary = center_text_secondary if center_text_secondary is not None else "FLUID WAVE"
+        self.show_center_text = show_center_text
         self.song_title = song_title or "VIDA Visualizer"
         self.artist_name = artist_name or "Official Audio"
         self.lyrics_data = lyrics_data or []
@@ -238,27 +244,97 @@ class VideoRenderer:
         self.logo_circle = self._prepare_logo()
 
         # Fonts
-        self.font_title = self._load_font(int(height * 0.035), bold=True)
-        self.font_artist = self._load_font(int(height * 0.022), bold=False)
-        self.font_lyrics = self._load_font(int(height * 0.045), bold=True)
-        self.font_lyrics_sub = self._load_font(int(height * 0.030), bold=False)
+        self.font_title = self._load_font(int(height * 0.035), bold=True, text=self.song_title)
+        self.font_artist = self._load_font(int(height * 0.022), bold=False, text=self.artist_name)
+        sample_lyric = " ".join([l.get("text", "") for l in self.lyrics_data[:3]]) if self.lyrics_data else self.song_title
+        self.font_lyrics = self._load_font(int(height * 0.045), bold=True, text=sample_lyric)
+        self.font_lyrics_sub = self._load_font(int(height * 0.030), bold=False, text=sample_lyric)
 
-    def _load_font(self, size: int, bold: bool = False):
-        """Attempts to load high quality system TTF font with fallback to default."""
-        font_paths = [
-            # High-fidelity Windows Khmer & International Fonts
-            "C:\\Windows\\Fonts\\LeelaUIb.ttf" if bold else "C:\\Windows\\Fonts\\LeelawUI.ttf",
-            "C:\\Windows\\Fonts\\KhmerOSbattambang.ttf",
-            "C:\\Windows\\Fonts\\KhmerOSsiemreap.ttf",
-            "C:\\Windows\\Fonts\\KhmerUIb.ttf" if bold else "C:\\Windows\\Fonts\\KhmerUI.ttf",
-            "C:\\Windows\\Fonts\\KhmerOS.ttf",
-            "C:\\Windows\\Fonts\\daunpenh.ttf",
-            # Western fonts
+    def _load_font(self, size: int, bold: bool = False, text: str = ""):
+        """
+        Loads high quality system TrueType/OpenType font tailored to the text's linguistic script.
+        Supports Khmer, Chinese, Japanese, Korean, Thai, Hindi, Arabic, Cyrillic, and Latin/Vietnamese.
+        """
+        # Detect script from text sample
+        script = "latin"
+        if text:
+            for c in text:
+                code = ord(c)
+                if 0x1780 <= code <= 0x17FF:
+                    script = "khmer"
+                    break
+                if 0x3040 <= code <= 0x30FF:
+                    script = "japanese"
+                    break
+                if 0x4E00 <= code <= 0x9FFF:
+                    script = "chinese"
+                    break
+                if 0xAC00 <= code <= 0xD7AF or 0x1100 <= code <= 0x11FF:
+                    script = "korean"
+                    break
+                if 0x0E00 <= code <= 0x0E7F:
+                    script = "thai"
+                    break
+                if 0x0900 <= code <= 0x097F:
+                    script = "hindi"
+                    break
+                if 0x0600 <= code <= 0x06FF:
+                    script = "arabic"
+                    break
+                if 0x0400 <= code <= 0x04FF:
+                    script = "cyrillic"
+                    break
+
+        font_map = {
+            "khmer": [
+                "C:\\Windows\\Fonts\\KhmerOSbattambang.ttf",
+                "C:\\Windows\\Fonts\\KhmerUIb.ttf" if bold else "C:\\Windows\\Fonts\\KhmerUI.ttf",
+                "C:\\Windows\\Fonts\\LeelaUIb.ttf" if bold else "C:\\Windows\\Fonts\\LeelawUI.ttf",
+                "C:\\Windows\\Fonts\\KhmerOS.ttf"
+            ],
+            "chinese": [
+                "C:\\Windows\\Fonts\\simsunb.ttf" if bold else "C:\\Windows\\Fonts\\simsun.ttc",
+                "C:\\Windows\\Fonts\\simsun.ttc",
+                "C:\\Windows\\Fonts\\SimsunExtG.ttf"
+            ],
+            "japanese": [
+                "C:\\Windows\\Fonts\\msgothic.ttc",
+                "C:\\Windows\\Fonts\\simsun.ttc"
+            ],
+            "korean": [
+                "C:\\Windows\\Fonts\\malgunbd.ttf" if bold else "C:\\Windows\\Fonts\\malgun.ttf",
+                "C:\\Windows\\Fonts\\malgun.ttf"
+            ],
+            "thai": [
+                "C:\\Windows\\Fonts\\LeelaUIb.ttf" if bold else "C:\\Windows\\Fonts\\LeelawUI.ttf",
+                "C:\\Windows\\Fonts\\tahomabd.ttf" if bold else "C:\\Windows\\Fonts\\tahoma.ttf"
+            ],
+            "hindi": [
+                "C:\\Windows\\Fonts\\Nirmala.ttc",
+                "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf"
+            ],
+            "arabic": [
+                "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf",
+                "C:\\Windows\\Fonts\\tahomabd.ttf" if bold else "C:\\Windows\\Fonts\\tahoma.ttf"
+            ],
+            "cyrillic": [
+                "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf",
+                "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf"
+            ],
+            "latin": [
+                "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf",
+                "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf",
+                "C:\\Windows\\Fonts\\calibrib.ttf" if bold else "C:\\Windows\\Fonts\\calibri.ttf"
+            ]
+        }
+
+        candidates = list(font_map.get(script, font_map["latin"]))
+        candidates.extend([
             "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf",
-            "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf",
-            "C:\\Windows\\Fonts\\calibrib.ttf" if bold else "C:\\Windows\\Fonts\\calibri.ttf"
-        ]
-        for p in font_paths:
+            "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf"
+        ])
+
+        for p in candidates:
             if os.path.exists(p):
                 try:
                     return ImageFont.truetype(p, size)
@@ -338,6 +414,41 @@ class VideoRenderer:
             val = int(25 + 40 * (1.0 - r / radius))
             cv2.circle(circle, (center, center), r, (val + 10, val, val + 25, 255), -1, lineType=cv2.LINE_AA)
         cv2.circle(circle, (center, center), radius, (self.palette["primary"][2], self.palette["primary"][1], self.palette["primary"][0], 255), 3, lineType=cv2.LINE_AA)
+
+        # Draw custom center badge text if enabled
+        if self.show_center_text and (self.center_text_primary or self.center_text_secondary):
+            try:
+                pil_circle = Image.fromarray(cv2.cvtColor(circle, cv2.COLOR_BGRA2RGBA))
+                draw = ImageDraw.Draw(pil_circle)
+                c1 = (self.center_text_primary or "").strip()
+                c2 = (self.center_text_secondary or "").strip()
+                pri = self.palette.get("primary", (0, 240, 255))
+
+                if c1:
+                    len1 = max(len(c1), 4)
+                    base_fs1 = max(14, int(radius * 0.40))
+                    fs1 = int(base_fs1 * (6 / len1)) if len1 > 6 else base_fs1
+                    font1 = self._load_font(max(11, fs1), bold=True, text=c1)
+                    bbox1 = draw.textbbox((0, 0), c1, font=font1)
+                    w1 = bbox1[2] - bbox1[0]
+                    h1 = bbox1[3] - bbox1[1]
+                    y1 = center - (h1 // 2) - (int(radius * 0.16) if c2 else 0)
+                    draw.text((center - w1 // 2, y1), c1, font=font1, fill=(pri[0], pri[1], pri[2], 255))
+
+                if c2:
+                    len2 = max(len(c2), 6)
+                    base_fs2 = max(10, int(radius * 0.20))
+                    fs2 = int(base_fs2 * (10 / len2)) if len2 > 10 else base_fs2
+                    font2 = self._load_font(max(9, fs2), bold=False, text=c2)
+                    bbox2 = draw.textbbox((0, 0), c2, font=font2)
+                    w2 = bbox2[2] - bbox2[0]
+                    y2 = center + (int(radius * 0.18) if c1 else 0)
+                    draw.text((center - w2 // 2, y2), c2, font=font2, fill=(160, 180, 210, 230))
+
+                circle = cv2.cvtColor(np.array(pil_circle), cv2.COLOR_RGBA2BGRA)
+            except Exception as e:
+                print(f"Warning: error rendering center badge text: {e}")
+
         return circle
 
     def render_trap_circle(self, frame: np.ndarray, spectrum: np.ndarray, bass: float, onset: float):
@@ -524,15 +635,17 @@ class VideoRenderer:
 
             full_line_text = " ".join([w["word"] for w in words]) if words else active_line.get("text", "")
 
+            # Script-aware font loading for current lyric line
+            used_font = self._load_font(int(self.height * 0.045), bold=True, text=full_line_text)
+
             # Calculate total width of the line to center it and auto-scale if too wide
-            bbox = draw.textbbox((0, 0), full_line_text, font=self.font_lyrics)
+            bbox = draw.textbbox((0, 0), full_line_text, font=used_font)
             total_text_w = bbox[2] - bbox[0]
 
-            used_font = self.font_lyrics
             if total_text_w > self.width * 0.85:
                 scale = (self.width * 0.85) / max(1, total_text_w)
-                new_size = max(18, int(self.font_lyrics.size * scale))
-                used_font = self._load_font(new_size, bold=True)
+                new_size = max(18, int(self.height * 0.045 * scale))
+                used_font = self._load_font(new_size, bold=True, text=full_line_text)
                 bbox = draw.textbbox((0, 0), full_line_text, font=used_font)
                 total_text_w = bbox[2] - bbox[0]
 
@@ -550,9 +663,11 @@ class VideoRenderer:
             draw.rounded_rectangle(pill_box, radius=16, fill=(10, 10, 16, int(190 * alpha)))
 
             # Draw word by word with karaoke highlight
+            is_unspaced = any(0x1780 <= ord(c) <= 0x17FF or 0x4E00 <= ord(c) <= 0x9FFF or 0x3040 <= ord(c) <= 0x30FF or 0x0E00 <= ord(c) <= 0x0E7F for c in full_line_text)
+            w_space = "" if is_unspaced else " "
             cur_x = start_x
             for w_idx, w in enumerate(words):
-                w_text = w["word"] + " "
+                w_text = w["word"] + w_space
                 w_bbox = draw.textbbox((0, 0), w_text, font=used_font)
                 w_w = w_bbox[2] - w_bbox[0]
 

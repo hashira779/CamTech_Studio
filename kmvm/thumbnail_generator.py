@@ -18,15 +18,82 @@ class ThumbnailGenerator:
         self.width = 1280
         self.height = 720
 
-    def _load_font(self, size: int, bold: bool = True):
-        font_paths = [
-            "C:\\Windows\\Fonts\\KantumruyPro-Bold.ttf",
-            "C:\\Windows\\Fonts\\KhmerOSmuollight.ttf",
-            "C:\\Windows\\Fonts\\KhmerOSbattambang.ttf",
-            "C:\\Windows\\Fonts\\segoeuib.ttf",
-            "C:\\Windows\\Fonts\\arialbd.ttf"
-        ]
-        for p in font_paths:
+    def _load_font(self, size: int, bold: bool = True, text: str = ""):
+        """Loads script-aware system font for thumbnail typography across all world languages."""
+        script = "latin"
+        if text:
+            for c in text:
+                code = ord(c)
+                if 0x1780 <= code <= 0x17FF:
+                    script = "khmer"
+                    break
+                if 0x3040 <= code <= 0x30FF:
+                    script = "japanese"
+                    break
+                if 0x4E00 <= code <= 0x9FFF:
+                    script = "chinese"
+                    break
+                if 0xAC00 <= code <= 0xD7AF or 0x1100 <= code <= 0x11FF:
+                    script = "korean"
+                    break
+                if 0x0E00 <= code <= 0x0E7F:
+                    script = "thai"
+                    break
+                if 0x0900 <= code <= 0x097F:
+                    script = "hindi"
+                    break
+                if 0x0600 <= code <= 0x06FF:
+                    script = "arabic"
+                    break
+                if 0x0400 <= code <= 0x04FF:
+                    script = "cyrillic"
+                    break
+
+        font_map = {
+            "khmer": [
+                "C:\\Windows\\Fonts\\KhmerOSmuollight.ttf",
+                "C:\\Windows\\Fonts\\KhmerOSbattambang.ttf",
+                "C:\\Windows\\Fonts\\LeelaUIb.ttf" if bold else "C:\\Windows\\Fonts\\LeelawUI.ttf"
+            ],
+            "chinese": [
+                "C:\\Windows\\Fonts\\simsunb.ttf" if bold else "C:\\Windows\\Fonts\\simsun.ttc",
+                "C:\\Windows\\Fonts\\simsun.ttc"
+            ],
+            "japanese": [
+                "C:\\Windows\\Fonts\\msgothic.ttc",
+                "C:\\Windows\\Fonts\\simsun.ttc"
+            ],
+            "korean": [
+                "C:\\Windows\\Fonts\\malgunbd.ttf" if bold else "C:\\Windows\\Fonts\\malgun.ttf"
+            ],
+            "thai": [
+                "C:\\Windows\\Fonts\\LeelaUIb.ttf" if bold else "C:\\Windows\\Fonts\\LeelawUI.ttf",
+                "C:\\Windows\\Fonts\\tahomabd.ttf" if bold else "C:\\Windows\\Fonts\\tahoma.ttf"
+            ],
+            "hindi": [
+                "C:\\Windows\\Fonts\\Nirmala.ttc"
+            ],
+            "arabic": [
+                "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf",
+                "C:\\Windows\\Fonts\\tahoma.ttf"
+            ],
+            "cyrillic": [
+                "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf",
+                "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf"
+            ],
+            "latin": [
+                "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf",
+                "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf"
+            ]
+        }
+
+        candidates = list(font_map.get(script, font_map["latin"]))
+        candidates.extend([
+            "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf",
+            "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf"
+        ])
+
+        for p in candidates:
             if os.path.exists(p):
                 try:
                     return ImageFont.truetype(p, size)
@@ -49,9 +116,9 @@ class ThumbnailGenerator:
         else:
             base_bg = None
 
-        font_title = self._load_font(64, bold=True)
-        font_sub = self._load_font(32, bold=False)
-        font_badge = self._load_font(20, bold=True)
+        font_title = self._load_font(64, bold=True, text=self.song_title)
+        font_sub = self._load_font(32, bold=False, text=self.artist_name)
+        font_badge = self._load_font(20, bold=True, text="4K ULTRA HD")
 
         # Concept 1: Cinematic Gold
         c1 = base_bg.copy() if base_bg else Image.new("RGB", (self.width, self.height), (12, 14, 24))

@@ -181,7 +181,7 @@ def download_youtube_audio(url: str, output_dir: str, on_progress=None) -> Tuple
                 sub_args = [
                     "--write-subs",
                     "--write-auto-subs",
-                    "--sub-langs", "km,km-*,en,en-*",
+                    "--sub-langs", "all,-live_chat",
                     "--sub-format", "vtt/srt/best",
                 ]
 

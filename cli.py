@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--fps", type=int, choices=[30, 60], default=60, help="Output frame rate")
     parser.add_argument("--transcribe", action="store_true", help="Auto-transcribe lyrics using Whisper AI")
     parser.add_argument("--model", default="base", choices=["tiny", "base", "small"], help="Whisper model size")
+    parser.add_argument("--language", "-l", default=None, help="Vocal language code (e.g. km, en, zh, ja, ko, th, es, fr, or auto)")
     parser.add_argument("--lrc", help="Path to LRC lyrics file to sync")
     parser.add_argument("--bg", help="Path to custom background image")
     parser.add_argument("--logo", help="Path to center logo/cover image")
@@ -49,8 +50,10 @@ def main():
     elif args.transcribe:
         print(f"Transcribing audio with Whisper AI (model={args.model})...")
         transcriber = WhisperTranscriber(model_size=args.model)
-        lyrics_data = transcriber.transcribe(args.audio)
-        print(f"Transcribed {len(lyrics_data)} lyric lines with word-level sync.")
+        lang_code = None if args.language in (None, "", "auto") else args.language
+        lyrics_data = transcriber.transcribe(args.audio, language=lang_code)
+        det_lang = getattr(transcriber, "last_detected_language", lang_code or "auto")
+        print(f"Transcribed {len(lyrics_data)} lyric lines with word-level sync (Language: {det_lang}).")
 
     # 2. Resolution setup
     if args.aspect == "9:16":

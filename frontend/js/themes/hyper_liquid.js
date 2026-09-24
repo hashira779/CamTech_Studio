@@ -151,15 +151,21 @@ export function drawHyperLiquid(ctx, w, h, bars, bass) {
     const center2 = state.centerTextSecondary !== undefined ? state.centerTextSecondary : "LIQUID WAVE";
 
     if (center1 && center1.trim()) {
+      const len1 = Math.max(center1.length, 4);
+      const baseFs1 = Math.floor(pulseRadius * 0.38);
+      const fs1 = len1 > 7 ? Math.max(11, Math.floor(baseFs1 * (7 / len1))) : baseFs1;
       ctx.fillStyle = `rgb(${priRgb})`;
-      ctx.font = `800 ${Math.floor(pulseRadius * 0.38)}px 'Outfit', sans-serif`;
+      ctx.font = `800 ${fs1}px 'Kantumruy Pro', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Thai', 'Outfit', sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(center1, cx, center2 && center2.trim() ? cy - pulseRadius * 0.15 : cy);
     }
 
     if (center2 && center2.trim()) {
-      ctx.font = `600 ${Math.floor(pulseRadius * 0.22)}px 'Outfit', sans-serif`;
+      const len2 = Math.max(center2.length, 6);
+      const baseFs2 = Math.floor(pulseRadius * 0.22);
+      const fs2 = len2 > 10 ? Math.max(9, Math.floor(baseFs2 * (10 / len2))) : baseFs2;
+      ctx.font = `600 ${fs2}px 'Kantumruy Pro', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Thai', 'Outfit', sans-serif`;
       ctx.fillStyle = `rgba(${secRgb}, 0.95)`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';

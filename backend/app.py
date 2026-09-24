@@ -23,7 +23,8 @@ from backend.lyric_engine import (
     parse_lrc_file,
     parse_subtitle_content,
     parse_subtitle_file,
-    find_matching_subtitles
+    find_matching_subtitles,
+    detect_text_language
 )
 from backend.renderer import VideoRenderer
 from backend.demo_audio import generate_demo_track, generate_khmer_60s_demo
@@ -89,6 +90,9 @@ class RenderRequest(BaseModel):
     artist_name: str = "Original Mix"
     background_image: Optional[str] = None
     logo_image: Optional[str] = None
+    center_text_primary: Optional[str] = "VIDA"
+    center_text_secondary: Optional[str] = "FLUID WAVE"
+    show_center_text: Optional[bool] = True
     lyrics_data: Optional[List[Dict[str, Any]]] = None
     lyric_style: str = "karaoke"
     bar_count: int = 64
@@ -97,7 +101,7 @@ class RenderRequest(BaseModel):
 class TranscribeRequest(BaseModel):
     audio_path: str
     model_size: str = "base"
-    language: Optional[str] = None
+    language: Optional[str] = "km"
 
 class LrcParseRequest(BaseModel):
     lrc_text: str
@@ -151,17 +155,24 @@ def transcribe_audio(req: TranscribeRequest):
     if not os.path.exists(req.audio_path):
         raise HTTPException(status_code=404, detail="Audio file not found")
 
+    target_lang = req.language
+    if target_lang in ("auto", "", "None"):
+        target_lang = None
+
     # 1. Fast check: matching subtitle file (.vtt, .srt, .lrc)
-    sub_path = find_matching_subtitles(req.audio_path)
+    sub_path = find_matching_subtitles(req.audio_path, target_lang=target_lang)
     if sub_path and os.path.exists(sub_path):
         try:
             update_transcribe_progress(100, "Loaded from captions")
             lyrics = parse_subtitle_file(sub_path)
             if lyrics:
+                sample_text = " ".join([l.get("text", "") for l in lyrics[:5]])
+                detected_lang = detect_text_language(sample_text)
                 return {
                     "status": "success",
                     "source": "subtitle",
                     "file": os.path.basename(sub_path),
+                    "detected_language": detected_lang,
                     "lyrics": lyrics,
                     "count": len(lyrics)
                 }
@@ -178,11 +189,18 @@ def transcribe_audio(req: TranscribeRequest):
         def on_progress(pct, msg):
             update_transcribe_progress(pct, msg)
 
-        lyrics = transcriber_instance.transcribe(req.audio_path, language=req.language, progress_callback=on_progress)
-        update_transcribe_progress(100, "Lyrics successfully transcribed!")
+        target_lang = req.language
+        if target_lang in ("auto", "", "None"):
+            target_lang = None
+
+        lyrics = transcriber_instance.transcribe(req.audio_path, language=target_lang, progress_callback=on_progress)
+        detected_lang = getattr(transcriber_instance, "last_detected_language", target_lang or "en")
+        lang_str = str(detected_lang).upper() if detected_lang else "SYNCED"
+        update_transcribe_progress(100, f"Lyrics successfully transcribed ({lang_str})!")
         return {
             "status": "success",
             "source": "whisper",
+            "detected_language": detected_lang,
             "lyrics": lyrics,
             "count": len(lyrics)
         }
@@ -470,6 +488,9 @@ def _execute_render_job(job_id: str, req: RenderRequest):
             palette_name=req.palette,
             background_image=req.background_image,
             logo_image=req.logo_image,
+            center_text_primary=req.center_text_primary,
+            center_text_secondary=req.center_text_secondary,
+            show_center_text=req.show_center_text if req.show_center_text is not None else True,
             song_title=req.song_title,
             artist_name=req.artist_name,
             lyrics_data=req.lyrics_data or [],
@@ -707,6 +728,10 @@ async def get_sinisamut_demo():
 # Static Mounts
 app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
+if os.path.exists(os.path.join(FRONTEND_DIR, "assets")):
+    app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIR, "assets")), name="frontend_assets")
+
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="frontend_static")
 
 @app.get("/")
@@ -720,6 +745,24 @@ async def serve_index():
 @app.get("/favicon.ico")
 async def favicon():
     return Response(status_code=204)
+
+@app.get("/favicon.svg")
+async def favicon_svg():
+    path = os.path.join(FRONTEND_DIR, "favicon.svg")
+    if os.path.exists(path):
+        return FileResponse(path, media_type="image/svg+xml")
+    return Response(status_code=204)
+
+@app.get("/icons.svg")
+async def icons_svg():
+    path = os.path.join(FRONTEND_DIR, "icons.svg")
+    if os.path.exists(path):
+        return FileResponse(path, media_type="image/svg+xml")
+    return Response(status_code=204)
+
+@app.get("/.well-known/appspecific/com.chrome.devtools.json")
+async def chrome_devtools_config():
+    return Response(content="{}", media_type="application/json", status_code=200)
 
 @app.get("/api/dev/mtime")
 async def get_frontend_mtime():

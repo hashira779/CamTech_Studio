@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>VIDA Studio Pro — AI-Powered Audio-Visual DAW</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;900&family=Kantumruy+Pro:wght@400;600;700&family=Battambang:wght@400;700&family=Siemreap&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;900&family=Kantumruy+Pro:wght@400;600;700&family=Battambang:wght@400;700&family=Siemreap&family=Noto+Sans+SC:wght@500;700&family=Noto+Sans+JP:wght@500;700&family=Noto+Sans+KR:wght@500;700&family=Noto+Sans+Thai:wght@500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
   <!-- Tailwind CSS v4 Engine -->
   <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
@@ -151,11 +151,37 @@
 
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px;">
               <div>
-                <label style="font-size: 10px; color: var(--text-dim); display: block; margin-bottom: 2px;">Vocal Language</label>
-                <select id="select-vocal-lang" class="prop-select" style="font-size: 11px; padding: 4px 6px;">
-                  <option value="auto" selected>🌐 Auto Detect</option>
-                  <option value="km">🇰🇭 Khmer (km)</option>
-                  <option value="en">🇬🇧 English (en)</option>
+                <label style="font-size: 10px; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                  <span>Vocal Language</span>
+                  <span style="color: #34d399; font-weight: 600; font-size: 9px; background: rgba(16,185,129,0.18); padding: 1px 4px; border-radius: 3px; border: 1px solid rgba(16,185,129,0.3);">🇰🇭 Khmer Focus</span>
+                </label>
+                <select id="select-vocal-lang" class="prop-select" style="font-size: 11px; padding: 4px 6px; border-color: rgba(16, 185, 129, 0.45); background: rgba(16, 185, 129, 0.05);">
+                  <option value="km" selected>🇰🇭 Khmer (ខ្មែរ) — Core Studio Focus ⭐</option>
+                  <option value="auto">🌐 Auto Detect (Global)</option>
+                  <optgroup label="International Languages">
+                    <option value="en">🇬🇧 English (en)</option>
+                    <option value="zh">🇨🇳 Chinese (中文)</option>
+                    <option value="ja">🇯🇵 Japanese (日本語)</option>
+                    <option value="ko">🇰🇷 Korean (한국어)</option>
+                    <option value="th">🇹🇭 Thai (ไทย)</option>
+                    <option value="vi">🇻🇳 Vietnamese (Tiếng Việt)</option>
+                    <option value="id">🇮🇩 Indonesian (Bahasa)</option>
+                    <option value="tl">🇵🇭 Tagalog / Filipino</option>
+                    <option value="ms">🇲🇾 Malay (Melayu)</option>
+                    <option value="my">🇲🇲 Burmese (မြန်မာ)</option>
+                    <option value="lo">🇱🇦 Lao (ລາວ)</option>
+                    <option value="es">🇪🇸 Spanish (Español)</option>
+                    <option value="fr">🇫🇷 French (Français)</option>
+                    <option value="de">🇩🇪 German (Deutsch)</option>
+                    <option value="pt">🇵🇹 Portuguese (Português)</option>
+                    <option value="it">🇮🇹 Italian (Italiano)</option>
+                    <option value="ru">🇷🇺 Russian (Русский)</option>
+                    <option value="tr">🇹🇷 Turkish (Türkçe)</option>
+                    <option value="hi">🇮🇳 Hindi (हिन्दी)</option>
+                    <option value="ar">🇸🇦 Arabic (العربية)</option>
+                    <option value="ur">🇵🇰 Urdu (اردو)</option>
+                    <option value="bn">🇧🇩 Bengali (বাংলা)</option>
+                  </optgroup>
                 </select>
               </div>
               <div>
@@ -179,9 +205,9 @@
 
           <!-- Local LLM AI Assistant -->
           <div class="glass-card">
-            <div class="card-title">🤖 Local LLM Prompt</div>
-            <textarea placeholder="Ask AI to generate lyrics, translate, or analyze mood..." style="width: 100%; background: var(--bg-input); border: 1px solid var(--border-color); border-radius: 6px; color: #fff; padding: 8px; font-size: 11px; resize: none; height: 50px; outline: none;" class="llm-input"></textarea>
-            <button class="btn-ai-small w-full" style="background: linear-gradient(135deg, var(--accent-ai), #7e22ce); color: white; border: none; padding: 6px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer;">Ask Qwen 2.5</button>
+            <div class="card-title">🤖 Local LLM Prompt (Khmer / Multilingual)</div>
+            <textarea placeholder="Ask AI in Khmer or English (e.g. សរសេរទំនុកច្រៀងពីស្នេហា, translate, analyze mood)..." style="width: 100%; background: var(--bg-input); border: 1px solid var(--border-color); border-radius: 6px; color: #fff; padding: 8px; font-size: 11px; resize: none; height: 50px; outline: none;" class="llm-input"></textarea>
+            <button class="btn-ai-small w-full" style="background: linear-gradient(135deg, var(--accent-ai), #7e22ce); color: white; border: none; padding: 6px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer;">Ask SeaLLMs (Khmer Focus)</button>
           </div>
         </div>
       </div>
@@ -196,6 +222,9 @@
           <button>1:1 Square</button>
         </div>
         <div class="stage-actions">
+          <button id="btn-stage-center-badge" title="Customize Center Circle Badge / Logo (or click the circle directly!)" style="background: rgba(236, 72, 153, 0.15); border: 1px solid rgba(236, 72, 153, 0.4); color: #f472b6; border-radius: 4px; padding: 4px 9px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px; font-weight: 600; transition: all 0.2s;">
+            <span>🎯</span> <span>Center Badge</span>
+          </button>
           <button id="btn-toggle-lyrics-overlay" title="Toggle Lyrics Overlay on Video" style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #10b981; border-radius: 4px; padding: 4px 9px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px; font-weight: 500; transition: all 0.2s;">
             <span id="toggle-lyrics-icon">👁️</span> <span id="toggle-lyrics-text">Lyrics: ON</span>
           </button>
@@ -357,27 +386,48 @@
                 </div>
               </div>
 
-              <!-- Center Badge / Emblem Text -->
-              <div style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 8px;">
+              <!-- Center Badge / Emblem Text & Custom Artwork -->
+              <div id="section-center-badge" style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px; margin-top: 6px; border-radius: 6px; transition: all 0.3s ease;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                  <span style="font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Center Emblem Badge</span>
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <span style="font-size: 11px;">🎯</span>
+                    <span style="font-size: 11px; color: var(--text-primary); font-weight: 600;">Center Circle Badge & Logo</span>
+                  </div>
                   <div style="display: flex; align-items: center; gap: 8px;">
-                    <button id="btn-clear-center-text" style="background: transparent; border: none; color: #ef4444; font-size: 10px; cursor: pointer; padding: 0 2px; font-weight: 600;" title="Clear Center Badge Text">✕ Delete</button>
-                    <label class="switch toggle-switch" title="Toggle Center Badge Text">
+                    <button id="btn-clear-center-text" style="background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); border-radius: 4px; color: #ef4444; font-size: 10px; cursor: pointer; padding: 2px 6px; font-weight: 600;" title="Clear Center Badge Text">✕ Delete</button>
+                    <label class="switch toggle-switch" title="Toggle Center Badge Visibility">
                       <input type="checkbox" id="check-show-center-text" checked>
                       <span class="toggle-slider"></span>
                     </label>
                   </div>
                 </div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+
+                <!-- Status indicator -->
+                <div id="badge-status-pill" style="font-size: 10px; color: var(--text-dim); margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; background: rgba(0,0,0,0.25); padding: 4px 8px; border-radius: 4px;">
+                  <span id="badge-status-text">Status: 🔤 Custom Text Badge</span>
+                  <button id="btn-remove-logo" class="hidden" style="background: transparent; border: none; color: #f59e0b; font-size: 10px; cursor: pointer; text-decoration: underline;" title="Remove uploaded logo image and restore text badge">Revert to Text</button>
+                </div>
+
+                <!-- Text inputs -->
+                <div id="badge-text-inputs-container" style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px;">
                   <div>
-                    <span style="font-size: 9px; color: var(--text-dim); display: block; margin-bottom: 2px;">Line 1</span>
-                    <input type="text" id="input-center-primary" class="prop-input" placeholder="VIDA" value="VIDA" style="font-size: 11px; width: 100%;">
+                    <span style="font-size: 9px; color: var(--text-dim); display: block; margin-bottom: 2px;">Line 1 (Title / Name)</span>
+                    <input type="text" id="input-center-primary" class="prop-input" placeholder="VIDA (or ខ្មែរ / Any)" value="VIDA" style="font-size: 11px; width: 100%;">
                   </div>
                   <div>
-                    <span style="font-size: 9px; color: var(--text-dim); display: block; margin-bottom: 2px;">Line 2</span>
+                    <span style="font-size: 9px; color: var(--text-dim); display: block; margin-bottom: 2px;">Line 2 (Subtitle / Style)</span>
                     <input type="text" id="input-center-secondary" class="prop-input" placeholder="FLUID WAVE" value="FLUID WAVE" style="font-size: 11px; width: 100%;">
                   </div>
+                </div>
+
+                <!-- Quick Actions & Direct Upload -->
+                <div style="display: flex; gap: 6px;">
+                  <button id="btn-upload-logo-inline" class="btn-secondary" style="flex: 1; font-size: 10px; padding: 5px 8px; display: flex; align-items: center; justify-content: center; gap: 4px;" title="Upload custom circular logo or album artwork">
+                    <span>🖼️</span> <span>Upload Artwork</span>
+                  </button>
+                  <button id="btn-sync-titles-to-badge" class="btn-secondary" style="font-size: 10px; padding: 5px 8px; display: flex; align-items: center; gap: 4px;" title="Copy Song Title and Artist into Center Badge">
+                    <span>⚡</span> <span>Sync Song Info</span>
+                  </button>
                 </div>
               </div>
             </div>

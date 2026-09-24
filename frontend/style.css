@@ -1147,3 +1147,26 @@ body.daw-theme {
     display: none;
   }
 }
+
+/* ============ Center Badge Pulse Highlight ============ */
+@keyframes badge-focus-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(236, 72, 153, 0.8);
+    border-color: #ec4899 !important;
+    background: rgba(236, 72, 153, 0.12) !important;
+  }
+  50% {
+    box-shadow: 0 0 24px 6px rgba(236, 72, 153, 0.5);
+    border-color: #f472b6 !important;
+    background: rgba(236, 72, 153, 0.18) !important;
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(236, 72, 153, 0);
+    border-color: rgba(255, 255, 255, 0.08) !important;
+    background: transparent !important;
+  }
+}
+
+.badge-highlight-active {
+  animation: badge-focus-pulse 1.8s cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
