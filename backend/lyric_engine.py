@@ -901,6 +901,9 @@ def find_matching_subtitles(audio_path: str, target_lang: Optional[str] = None) 
                     priority += 4
                 elif f_lower.endswith(".srt"):
                     priority += 3
+                # Strict rejection of completely wrong language subtitles
+                if preferred_lang == "km" and file_lang in ["th", "lo", "my", "vi", "zh", "ja", "ko", "ar", "ru"]:
+                    continue # Skip this file completely if it's the wrong script
 
                 candidates.append((priority, full))
 
