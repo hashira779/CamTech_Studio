@@ -26,7 +26,10 @@ from backend.lyric_engine import (
     parse_subtitle_file,
     find_matching_subtitles,
     detect_text_language,
-    double_check_lyrics
+    double_check_lyrics,
+    export_lyrics_to_lrc,
+    is_khmer_text,
+    is_thai_text
 )
 from backend.renderer import VideoRenderer
 from backend.demo_audio import generate_demo_track, generate_khmer_60s_demo
@@ -191,19 +194,24 @@ def transcribe_audio(req: TranscribeRequest):
     sub_path = find_matching_subtitles(req.audio_path, target_lang=target_lang)
     if sub_path and os.path.exists(sub_path):
         try:
-            update_transcribe_progress(100, "Loaded from captions")
             lyrics = parse_subtitle_file(sub_path)
             if lyrics:
-                sample_text = " ".join([l.get("text", "") for l in lyrics[:5]])
+                sample_text = " ".join([l.get("text", "") for l in lyrics[:10]])
                 detected_lang = detect_text_language(sample_text)
-                return {
-                    "status": "success",
-                    "source": "subtitle",
-                    "file": os.path.basename(sub_path),
-                    "detected_language": detected_lang,
-                    "lyrics": lyrics,
-                    "count": len(lyrics)
-                }
+                # Guard against wrong-language subtitles (e.g. Thai subtitles for Khmer audio)
+                if (target_lang == "km" or is_khmer_text(req.audio_path)) and is_thai_text(sample_text) and not is_khmer_text(sample_text):
+                    print(f"[KMVM Lyrics] ⚠️ Discarded subtitle file with Thai script for Khmer audio: {os.path.basename(sub_path)}")
+                    lyrics = None
+                else:
+                    update_transcribe_progress(100, "Loaded from captions")
+                    return {
+                        "status": "success",
+                        "source": "subtitle",
+                        "file": os.path.basename(sub_path),
+                        "detected_language": detected_lang,
+                        "lyrics": lyrics,
+                        "count": len(lyrics)
+                    }
         except Exception as e:
             print(f"Subtitle parse warning: {e}")
 
@@ -224,6 +232,18 @@ def transcribe_audio(req: TranscribeRequest):
         lyrics = transcriber_instance.transcribe(req.audio_path, language=target_lang, progress_callback=on_progress)
         detected_lang = getattr(transcriber_instance, "last_detected_language", target_lang or "en")
         lang_str = str(detected_lang).upper() if detected_lang else "SYNCED"
+
+        # Auto-cache to matching .lrc file next to audio for instant 0s future loading
+        if lyrics and len(lyrics) > 0:
+            try:
+                base_audio, _ = os.path.splitext(req.audio_path)
+                lang_ext = f".{detected_lang}" if detected_lang else ".km"
+                lrc_dest = f"{base_audio}{lang_ext}.lrc"
+                export_lyrics_to_lrc(lyrics, lrc_dest)
+                print(f"[KMVM Lyrics] 💾 Cached synced lyrics to {os.path.basename(lrc_dest)}")
+            except Exception as cache_err:
+                print(f"[KMVM Lyrics] Note on LRC caching: {cache_err}")
+
         update_transcribe_progress(100, f"Lyrics successfully transcribed ({lang_str})!")
         return {
             "status": "success",
@@ -399,11 +419,19 @@ def download_youtube(req: YouTubeRequest):
 
     # Auto-detect subtitles / lyrics downloaded with the video
     lyrics = None
-    sub_path = find_matching_subtitles(saved_path)
+    target_pref = "km" if is_khmer_text(raw_title) else None
+    sub_path = find_matching_subtitles(saved_path, target_lang=target_pref)
     if sub_path and os.path.exists(sub_path):
         try:
             lyrics = parse_subtitle_file(sub_path)
-            print(f"[KMVM Lyrics] Automatically loaded subtitle for {filename}: {os.path.basename(sub_path)} ({len(lyrics)} lines)")
+            # Guard against YouTube's auto-generated Thai captions on Khmer songs
+            if lyrics and is_khmer_text(raw_title):
+                sample_text = " ".join([l.get("text", "") for l in lyrics[:10]])
+                if is_thai_text(sample_text) and not is_khmer_text(sample_text):
+                    print(f"[KMVM Lyrics] ⚠️ Discarded Thai auto-subtitles for Khmer song '{clean_title}'")
+                    lyrics = None
+            if lyrics:
+                print(f"[KMVM Lyrics] Automatically loaded subtitle for {filename}: {os.path.basename(sub_path)} ({len(lyrics)} lines)")
         except Exception as e:
             print(f"[KMVM Lyrics] Subtitle parse warning: {e}")
 

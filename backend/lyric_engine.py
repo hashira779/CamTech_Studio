@@ -244,13 +244,17 @@ def clean_khmer_hallucination_loops(text: str) -> str:
     pattern = r'([\u1780-\u17D3]{1,8}?)\1{2,}'
     cleaned = re.sub(pattern, r'\1\1', text)
 
+    cleaned = re.sub(r'[\s\u200B-\u200D\uFEFF]', '', cleaned)
+    
+    if len(cleaned) > 20:
+        if len(set(cleaned)) <= 3:
+            return ""
+        khmer_chars = [c for c in cleaned if '\u1780' <= c <= '\u17D3']
+        if len(khmer_chars) > 0 and len(set(khmer_chars)) <= 2 and len(khmer_chars) > len(cleaned) * 0.5:
+            return ""
+
     # Remove extreme vowel elongations common in singing ASR (e.g. ាាាា -> ា)
     cleaned = re.sub(r'([\u17B6-\u17C5])\1{2,}', r'\1', cleaned)
-
-    # If text is almost entirely repeating 1-2 distinct characters, discard as noise
-    unique_chars = set(c for c in cleaned if '\u1780' <= c <= '\u17D3')
-    if len(cleaned) > 20 and len(unique_chars) <= 2:
-        return ""
 
     return cleaned.strip()
 
@@ -833,6 +837,19 @@ def parse_subtitle_content(content: str) -> List[Dict[str, Any]]:
     return verified_results
 
 
+def export_lyrics_to_lrc(lyrics: List[Dict[str, Any]], output_path: str):
+    """Saves synchronized lyrics as standard UTF-8 LRC file for instant future loading."""
+    lines = []
+    for line in lyrics:
+        s = line.get("start", 0.0)
+        mins = int(s // 60)
+        secs = s % 60
+        time_tag = f"[{mins:02d}:{secs:05.2f}]"
+        lines.append(f"{time_tag}{line.get('text', '')}")
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
 def parse_subtitle_file(file_path: str) -> List[Dict[str, Any]]:
     """Loads and parses any subtitle or lyric file (.vtt, .srt, .lrc)."""
     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -876,12 +893,31 @@ def find_matching_subtitles(audio_path: str, target_lang: Optional[str] = None) 
                 priority = 0
 
                 file_lang = None
+                text_sample = ""
                 try:
                     with open(full, "r", encoding="utf-8", errors="ignore") as sub_f:
-                        preview = sub_f.read(1500)
-                        file_lang = detect_text_language(preview)
+                        # Read up to 10,000 characters to ensure we capture actual spoken lyrics beyond instrumental intros
+                        content_sample = sub_f.read(10000)
+                        # Strip WebVTT headers, cue tags, and numeric timestamps
+                        text_sample = re.sub(
+                            r'\d{2}:\d{2}[:\.]\d{2,3}|\bWEBVTT\b|\bKind:\s*\w+|\bLanguage:\s*[\w-]+|-->|position:\d+%|align:\w+|\[.*?\]',
+                            ' ',
+                            content_sample
+                        ).strip()
+                        file_lang = detect_text_language(text_sample)
                 except Exception:
                     pass
+
+                # Strict rejection of wrong-script or YouTube auto-translated Thai subtitles:
+                # 1. Skip if filename indicates Thai source/translation (.th-km., .th., _th-)
+                if preferred_lang == "km" and any(pat in f_lower for pat in [".th-", "_th-", ".th.", "_th.", "-th.", "-th-"]):
+                    continue
+                # 2. Skip if detected file_lang is explicitly wrong
+                if preferred_lang == "km" and file_lang in ["th", "lo", "my", "vi", "zh", "ja", "ko", "ar", "ru"]:
+                    continue
+                # 3. Skip if text contains Thai script and lacks Khmer script
+                if preferred_lang == "km" and is_thai_text(text_sample) and not is_khmer_text(text_sample):
+                    continue
 
                 # Priority matching
                 if preferred_lang:
@@ -901,9 +937,6 @@ def find_matching_subtitles(audio_path: str, target_lang: Optional[str] = None) 
                     priority += 4
                 elif f_lower.endswith(".srt"):
                     priority += 3
-                # Strict rejection of completely wrong language subtitles
-                if preferred_lang == "km" and file_lang in ["th", "lo", "my", "vi", "zh", "ja", "ko", "ar", "ru"]:
-                    continue # Skip this file completely if it's the wrong script
 
                 candidates.append((priority, full))
 
@@ -984,8 +1017,8 @@ class WhisperTranscriber:
         vad_params = dict(
             threshold=0.35,
             min_speech_duration_ms=100,
-            min_silence_duration_ms=500,
-            speech_pad_ms=400
+            min_silence_duration_ms=1000,
+            speech_pad_ms=600
         )
 
         lyrics = []
@@ -1018,7 +1051,7 @@ class WhisperTranscriber:
                 for s in segments_gen:
                     segments.append(s)
                     if progress_callback and dur > 0:
-                        pct = min(94, int(20 + 74 * (s.end / dur)))
+                        pct = min(88, int(20 + 68 * (s.end / dur)))
                         progress_callback(pct, f"Transcribing vocals ({pct}%)")
             except Exception as e:
                 print(f"Faster-whisper VAD error: {e}")
@@ -1033,13 +1066,13 @@ class WhisperTranscriber:
                     clean_audio,
                     word_timestamps=True,
                     language=language,
-                    beam_size=1,
+                    beam_size=beam_size,
                     best_of=1,
                     temperature=0.0,
                     condition_on_previous_text=False,
                     initial_prompt=prompt,
-                    compression_ratio_threshold=2.2,
-                    no_speech_threshold=0.85,
+                    compression_ratio_threshold=2.4,
+                    no_speech_threshold=0.95,
                     log_prob_threshold=None,
                     vad_filter=False
                 )
@@ -1050,11 +1083,14 @@ class WhisperTranscriber:
                 for s in segments_gen:
                     segments.append(s)
                     if progress_callback and dur > 0:
-                        pct = min(94, int(25 + 69 * (s.end / dur)))
+                        pct = min(88, int(25 + 63 * (s.end / dur)))
                         progress_callback(pct, f"Transcribing vocals ({pct}%)")
 
             if progress_callback:
-                progress_callback(95, "Aligning word timestamps...")
+                progress_callback(90, "Aligning word timestamps...")
+
+            if progress_callback and segments:
+                progress_callback(93, "Segmenting Khmer words & syllables...")
 
             for segment in segments:
                 # Suppress degenerate hallucination loops
@@ -1172,6 +1208,8 @@ class WhisperTranscriber:
                     "words": words_data
                 })
                 line_counter += 1
+        if progress_callback:
+            progress_callback(97, "Running double-check verification...")
         verified_lyrics, _ = double_check_lyrics(lyrics)
         return verified_lyrics
 

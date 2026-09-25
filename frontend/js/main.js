@@ -96,23 +96,50 @@ document.addEventListener('DOMContentLoaded', () => {
   // Initialize Studio Resizable Layout System
   initResizableLayout();
 
-  // Clear lyrics on startup
-  state.lyrics = [];
+  // ============ Restore Session & Lyrics Persistence ============
+  const cachedLyricsStr = localStorage.getItem('vida_lyrics');
+  const cachedTitle = localStorage.getItem('vida_song_title');
+  const cachedArtist = localStorage.getItem('vida_artist_name');
+  const cachedServerPath = localStorage.getItem('vida_audio_server_path');
 
-  // ============ Restore Session After Hot-Reload ============
-  const savedSrc = sessionStorage.getItem('vida_audio_src');
+  if (cachedTitle) {
+    state.songTitle = cachedTitle;
+    const titleInput = document.getElementById('input-song-title');
+    if (titleInput) titleInput.value = cachedTitle;
+  }
+  if (cachedArtist) {
+    state.artistName = cachedArtist;
+    const artistInput = document.getElementById('input-artist-name');
+    if (artistInput) artistInput.value = cachedArtist;
+  }
+  if (cachedServerPath) {
+    state.audioServerPath = cachedServerPath;
+    window.__VIDA_SERVER_PATH = cachedServerPath;
+  }
+
+  if (cachedLyricsStr) {
+    try {
+      const parsedLyrics = JSON.parse(cachedLyricsStr);
+      if (Array.isArray(parsedLyrics) && parsedLyrics.length > 0) {
+        state.lyrics = parsedLyrics;
+        renderLyricsTeleprompter(state.lyrics);
+        setStudioPipelineProgress(3, 100, `🎤 ${state.lyrics.length} lines restored (100%)`, 'Lyrics Synced');
+      }
+    } catch(e) {
+      state.lyrics = [];
+    }
+  } else {
+    state.lyrics = [];
+  }
+
+  const savedSrc = sessionStorage.getItem('vida_audio_src') || localStorage.getItem('vida_audio_src');
   const savedTime = parseFloat(sessionStorage.getItem('vida_audio_time') || '0');
-  const savedServerPath = sessionStorage.getItem('vida_audio_server_path');
 
   if (savedSrc && audioPlayer) {
     audioPlayer.src = savedSrc;
     state.audioUrl = savedSrc;
-    if (savedServerPath) {
-      state.audioServerPath = savedServerPath;
-      window.__VIDA_SERVER_PATH = savedServerPath;
-    }
     audioPlayer.currentTime = savedTime;
-    showToast('🔄 Session Restored', 'Audio resumed from where you left off', 'info', 2500);
+    showToast('🔄 Session Restored', 'Audio & lyrics resumed from where you left off', 'info', 2500);
     
     // Auto-play and init visualizer
     audioPlayer.play().then(() => {
@@ -120,16 +147,6 @@ document.addEventListener('DOMContentLoaded', () => {
       if (btnPlayPause) btnPlayPause.textContent = "⏸";
       initAudioContext(audioPlayer, () => startVisualizer());
     }).catch(() => {});
-    
-    // Clear storage after restore
-    sessionStorage.removeItem('vida_audio_src');
-    sessionStorage.removeItem('vida_audio_time');
-    sessionStorage.removeItem('vida_audio_server_path');
-    
-    // Re-run smart pipeline if we have a server path
-    if (savedServerPath) {
-      setTimeout(() => runSmartPipeline(), 1500);
-    }
   }
 
   // ============ Audio Play/Pause ============
@@ -1217,6 +1234,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       state.lyrics = [];
       renderLyricsTeleprompter([]);
+      try { localStorage.removeItem('vida_lyrics'); } catch(e) {}
       if (lyricsVerifiedBadge) lyricsVerifiedBadge.style.display = 'none';
       const btnTranscribe = document.getElementById('btn-transcribe-ai');
       if (btnTranscribe) clearButtonLoading(btnTranscribe, '🎤 Auto-Sync Lyrics (AI)');
@@ -2158,7 +2176,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let isFinished = false;
     let elapsed = 0;
 
-    // Active polling for real-time Whisper progress & smooth interpolation
+    // Active polling for real-time Whisper progress & synchronization
     const pollInterval = setInterval(async () => {
       if (isFinished) return;
       elapsed += 0.4;
@@ -2167,9 +2185,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const res = await fetch('/api/transcribe/progress');
         if (res.ok) {
           const data = await res.json();
-          if (data && typeof data.percent === 'number' && data.percent > 0) {
-            if (data.percent > currentPercent) {
-              currentPercent = data.percent;
+          if (data && typeof data.percent === 'number') {
+            // Strictly track real backend percentage so the bar and label never conflict
+            if (data.percent > 0) {
+              currentPercent = Math.max(currentPercent, data.percent);
             }
             if (data.stage && progressStatus) {
               progressStatus.textContent = data.stage;
@@ -2178,20 +2197,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       } catch (_) {}
 
-      // Smooth percentage crawl so the UI continuously moves and never appears frozen
-      if (currentPercent < 22) {
-        currentPercent = Math.min(22, Math.floor(elapsed * 1.5));
-        if (progressStatus && elapsed > 3 && currentPercent < 20) {
-          progressStatus.textContent = `Analyzing audio with AI (${Math.round(elapsed)}s)...`;
-        }
-      } else if (currentPercent < 94) {
-        currentPercent = Math.min(94, +(currentPercent + 0.25).toFixed(1));
-        if (progressStatus && currentPercent >= 93) {
-          progressStatus.textContent = 'AI is processing (may take a few minutes)...';
+      // Initial loading estimation only before backend emits its first progress
+      if (currentPercent < 18) {
+        currentPercent = Math.min(18, Math.floor(elapsed * 1.5));
+        if (progressStatus && elapsed > 2 && currentPercent < 18) {
+          progressStatus.textContent = `Analyzing audio & loading AI model (${Math.round(elapsed)}s)...`;
         }
       }
 
-      const displayPct = Math.floor(currentPercent);
+      const displayPct = Math.min(100, Math.floor(currentPercent));
       if (progressPct) progressPct.textContent = `${displayPct}%`;
       if (progressFill) progressFill.style.width = `${displayPct}%`;
       if (btnTranscribe) btnTranscribe.textContent = `⏳ AI ${displayPct}%`;
@@ -2222,6 +2236,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         state.lyrics = data.lyrics;
         renderLyricsTeleprompter(state.lyrics);
+        try {
+          localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics));
+          if (state.audioServerPath) localStorage.setItem('vida_audio_server_path', state.audioServerPath);
+          if (state.songTitle) localStorage.setItem('vida_song_title', state.songTitle);
+          if (state.artistName) localStorage.setItem('vida_artist_name', state.artistName);
+          if (state.audioUrl) localStorage.setItem('vida_audio_src', state.audioUrl);
+        } catch(e) {}
         const src = data.source === 'subtitle' ? 'Captions' : 'Whisper AI';
         const langTag = data.detected_language ? ` [${data.detected_language.toUpperCase()}]` : '';
         showToast('🎤 Lyrics Ready', `${data.count} lines synced from ${src}${langTag} (100%)`, 'success', 4000);

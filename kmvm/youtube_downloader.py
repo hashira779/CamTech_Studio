@@ -75,6 +75,46 @@ def _clean_url(url: str) -> str:
     return url
 
 
+def _sanitize_subtitles_for_audio(audio_path: str, title: Optional[str] = None):
+    """Removes invalid auto-translated subtitles (e.g. YouTube generating Thai ASR for Khmer songs)."""
+    try:
+        if not audio_path or not os.path.exists(audio_path):
+            return
+        directory = os.path.dirname(audio_path)
+        base = os.path.splitext(os.path.basename(audio_path))[0]
+        # Check if song is in Khmer script
+        is_khmer_song = any('\u1780' <= c <= '\u17FF' for c in (title or base))
+        if not is_khmer_song:
+            return
+        for f in os.listdir(directory):
+            if not f.lower().endswith(('.vtt', '.srt', '.lrc')):
+                continue
+            if base in f or f.startswith(base[:15]):
+                f_lower = f.lower()
+                full_path = os.path.join(directory, f)
+                # If YouTube gave Thai-origin auto subtitles (.th-km, .th., etc.)
+                if any(pat in f_lower for pat in [".th-", "_th-", ".th.", "_th.", "-th.", "-th-"]):
+                    try:
+                        os.remove(full_path)
+                        print(f"[KMVM Subtitles] Pruned Thai auto-subtitle artifact: {f}", flush=True)
+                    except Exception:
+                        pass
+                    continue
+                # Also check file content for Thai script
+                try:
+                    with open(full_path, "r", encoding="utf-8", errors="ignore") as sub_f:
+                        sample = sub_f.read(8000)
+                    has_thai = any('\u0E00' <= c <= '\u0E7F' for c in sample)
+                    has_khmer = any('\u1780' <= c <= '\u17FF' for c in sample)
+                    if has_thai and not has_khmer:
+                        os.remove(full_path)
+                        print(f"[KMVM Subtitles] Pruned subtitle with Thai content for Khmer song: {f}", flush=True)
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"[KMVM Subtitles] Sanitization error: {e}", flush=True)
+
+
 def download_youtube_audio(url: str, output_dir: str, on_progress=None) -> Tuple[Optional[str], Optional[dict]]:
     """
     Download audio from a YouTube URL as high-quality audio.
@@ -253,6 +293,7 @@ def download_youtube_audio(url: str, output_dir: str, on_progress=None) -> Tuple
                         ext = os.path.splitext(candidate)[1].lower()
                         if ext in {".mp3", ".wav", ".m4a", ".opus", ".webm", ".ogg", ".aac", ".flac"}:
                             audio_file = convert_to_mp3(candidate)
+                            _sanitize_subtitles_for_audio(audio_file, title=info.get("title") if info else None)
                             notify_progress(100, "Download complete!")
                             print(f"[KMVM] Downloaded (via yt-dlp output): {audio_file}", flush=True)
                             return audio_file, info
@@ -260,6 +301,7 @@ def download_youtube_audio(url: str, output_dir: str, on_progress=None) -> Tuple
             title_hint = info.get("title") if info else None
             audio_file = _find_latest_audio_file(output_dir, title_hint=title_hint)
             if audio_file:
+                _sanitize_subtitles_for_audio(audio_file, title=title_hint)
                 notify_progress(100, "Download complete!")
                 print(f"[KMVM] Downloaded (via directory scan): {audio_file}", flush=True)
                 return audio_file, info
