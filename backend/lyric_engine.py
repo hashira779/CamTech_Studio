@@ -163,8 +163,13 @@ def tokenize_line_words(text: str) -> List[str]:
 
 
 # Khmer Lyric Priming Prompts for Whisper AI (Budgeted strictly under 130 tokens to prevent position encoding overflow)
+# Expanded with common Khmer song words, melodic interjections, and romantic/traditional vocabulary
+# This helps Whisper recognize Khmer singing patterns across ballads, romvong, and modern pop
 KHMER_LYRICS_PRIMING_PROMPT = (
-    "បទចម្រៀងខ្មែរ ទំនុកច្រៀងពិរោះ ស្នេហា បេះដូង ស្រឡាញ់ អូន បង ជីវិត ទឹកភ្នែក សង្សារ រាត្រី ចន្ទ និស្ស័យ"
+    "បទចម្រៀងខ្មែរ ទំនុកច្រៀងពិរោះ ស្នេហា បេះដូង ស្រឡាញ់ អូន បង ជីវិត "
+    "ទឹកភ្នែក សង្សារ រាត្រី ចន្ទ និស្ស័យ វាសនា ក្តីស្រឡាញ់ "
+    "ចម្រៀង អារម្មណ៍ កម្សត់ អនុស្សាវរីយ៍ រំដួល កុលាប ផ្កា "
+    "ព្រលឹម សៀមរាប អង្គរ បាត់ដំបង ភ្នំពេញ មាតុភូមិ"
 )
 
 # Comprehensive Whisper Khmer singing misrecognitions & standardizations
@@ -1002,24 +1007,44 @@ class WhisperTranscriber:
             progress_callback(19, "Filtering vocals & audio frequencies...")
         clean_audio = preprocess_vocal_audio(audio_path)
 
-        # Khmer is the primary core studio focus
-        if language is None or language == "":
-            language = "km"
-        elif language in ("auto", "None"):
+        # Smart language detection: only force Khmer if explicitly requested or filename has Khmer script
+        if language in ("auto", "None"):
             if is_khmer_text(os.path.basename(audio_path)):
                 language = "km"
             else:
                 language = None  # Full multilingual auto-detection
+        elif language is None or language == "":
+            # Frontend sent null — check filename for Khmer characters as a hint
+            if is_khmer_text(os.path.basename(audio_path)):
+                language = "km"
+            else:
+                language = None  # Let Whisper auto-detect from audio content
 
         prompt = KHMER_LYRICS_PRIMING_PROMPT if language == "km" else None
-        beam_size = 2 if (language == "km" and "turbo" in str(self.model_size).lower()) else 1
+        # Khmer singing has complex tonal melodies — higher beam_size improves accuracy
+        if language == "km":
+            beam_size = 3 if "turbo" in str(self.model_size).lower() else 2
+        else:
+            beam_size = 2
 
-        vad_params = dict(
-            threshold=0.35,
-            min_speech_duration_ms=100,
-            min_silence_duration_ms=1000,
-            speech_pad_ms=600
-        )
+        # VAD parameters tuned for Khmer singing:
+        # - Lower threshold (0.28) catches soft/melodic vocals that 0.35 misses
+        # - Shorter min_silence (600ms) handles fast-tempo Khmer songs (romvong, saravane)
+        # - Longer speech_pad (800ms) keeps trailing syllables that Khmer songs hold
+        if language == "km":
+            vad_params = dict(
+                threshold=0.28,
+                min_speech_duration_ms=80,
+                min_silence_duration_ms=600,
+                speech_pad_ms=800
+            )
+        else:
+            vad_params = dict(
+                threshold=0.35,
+                min_speech_duration_ms=100,
+                min_silence_duration_ms=1000,
+                speech_pad_ms=600
+            )
 
         lyrics = []
         line_counter = 0
@@ -1030,6 +1055,7 @@ class WhisperTranscriber:
                 progress_callback(20, "Analyzing vocal tracks with AI...")
 
             try:
+                # Pass 1: VAD-filtered transcription (catches most singing)
                 segments_gen, info = self.model.transcribe(
                     clean_audio,
                     word_timestamps=True,
@@ -1039,8 +1065,8 @@ class WhisperTranscriber:
                     temperature=0.0,
                     condition_on_previous_text=False,
                     initial_prompt=prompt,
-                    compression_ratio_threshold=2.2,
-                    no_speech_threshold=0.75,
+                    compression_ratio_threshold=2.4 if language == "km" else 2.2,
+                    no_speech_threshold=0.6 if language == "km" else 0.75,
                     vad_filter=True,
                     vad_parameters=vad_params
                 )
@@ -1057,11 +1083,13 @@ class WhisperTranscriber:
                 print(f"Faster-whisper VAD error: {e}")
                 segments = []
 
-            # If VAD produced 0 segments (common with soft singing), retry with vad_filter=False
-            if not segments:
-                print("[Whisper AI] VAD produced 0 segments; retrying without VAD for subtle singing vocals...")
+            # Pass 2: If VAD produced too few segments, retry WITHOUT VAD
+            # This catches soft Khmer singing that VAD thinks is silence
+            min_expected = max(3, int(dur / 30)) if dur else 3  # Expect at least 1 line per 30s
+            if len(segments) < min_expected:
+                print(f"[Whisper AI] VAD produced only {len(segments)} segments (expected ≥{min_expected}); retrying without VAD...")
                 if progress_callback:
-                    progress_callback(25, "Transcribing full audio track...")
+                    progress_callback(25, "Deep scanning for soft vocals...")
                 segments_gen, info = self.model.transcribe(
                     clean_audio,
                     word_timestamps=True,
@@ -1071,20 +1099,57 @@ class WhisperTranscriber:
                     temperature=0.0,
                     condition_on_previous_text=False,
                     initial_prompt=prompt,
-                    compression_ratio_threshold=2.4,
-                    no_speech_threshold=0.95,
+                    compression_ratio_threshold=2.6 if language == "km" else 2.4,
+                    no_speech_threshold=0.9,
                     log_prob_threshold=None,
                     vad_filter=False
                 )
                 dur = getattr(info, "duration", 0) or 1.0
                 self.last_detected_language = getattr(info, "language", language or "en")
                 self.last_detected_probability = getattr(info, "language_probability", 1.0)
-                segments = []
+                pass2_segments = []
                 for s in segments_gen:
-                    segments.append(s)
+                    pass2_segments.append(s)
                     if progress_callback and dur > 0:
                         pct = min(88, int(25 + 63 * (s.end / dur)))
                         progress_callback(pct, f"Transcribing vocals ({pct}%)")
+                # Use whichever pass produced more segments
+                if len(pass2_segments) > len(segments):
+                    segments = pass2_segments
+                    print(f"[Whisper AI] Pass 2 captured {len(segments)} segments (better)")
+
+            # Pass 3 (Khmer only): Temperature fallback for melodic/tonal singing
+            # Khmer songs with many tunes can confuse greedy decoding
+            if language == "km" and len(segments) < min_expected:
+                print(f"[Whisper AI] Khmer melodic fallback: trying temperature sampling...")
+                if progress_callback:
+                    progress_callback(30, "Khmer melodic deep scan...")
+                try:
+                    segments_gen, info = self.model.transcribe(
+                        clean_audio,
+                        word_timestamps=True,
+                        language="km",
+                        beam_size=1,
+                        best_of=3,
+                        temperature=[0.0, 0.2, 0.4],
+                        condition_on_previous_text=True,
+                        initial_prompt=prompt,
+                        compression_ratio_threshold=2.8,
+                        no_speech_threshold=0.95,
+                        log_prob_threshold=None,
+                        vad_filter=False
+                    )
+                    pass3_segments = []
+                    for s in segments_gen:
+                        pass3_segments.append(s)
+                        if progress_callback and dur > 0:
+                            pct = min(88, int(30 + 58 * (s.end / dur)))
+                            progress_callback(pct, f"Khmer deep scan ({pct}%)")
+                    if len(pass3_segments) > len(segments):
+                        segments = pass3_segments
+                        print(f"[Whisper AI] Khmer melodic pass captured {len(segments)} segments")
+                except Exception as e:
+                    print(f"[Whisper AI] Khmer melodic fallback error: {e}")
 
             if progress_callback:
                 progress_callback(90, "Aligning word timestamps...")
@@ -1094,7 +1159,9 @@ class WhisperTranscriber:
 
             for segment in segments:
                 # Suppress degenerate hallucination loops
-                if getattr(segment, "compression_ratio", 1.0) > 2.4:
+                # Use higher threshold for Khmer (3.0) since Khmer script naturally has higher compression ratios
+                cr_limit = 3.0 if language == "km" else 2.4
+                if getattr(segment, "compression_ratio", 1.0) > cr_limit:
                     continue
 
                 line_text = clean_subtitle_text(segment.text)

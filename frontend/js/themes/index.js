@@ -8,6 +8,9 @@ import { drawNeuralSynapse } from './neural_synapse.js';
 import { drawHyperLiquid } from './hyper_liquid.js';
 import { drawAngkorMandala } from './angkor_mandala.js';
 import { drawHologramHUD } from './hologram_hud.js';
+import { drawAuroraBorealis } from './aurora_borealis.js';
+import { drawDNAHelix } from './dna_helix.js';
+import { drawSonicNebula } from './sonic_nebula.js';
 
 const THEME_RENDERERS = {
   trap_circle: drawTrapCircle,
@@ -19,7 +22,11 @@ const THEME_RENDERERS = {
   neural_synapse: drawNeuralSynapse,
   hyper_liquid: drawHyperLiquid,
   angkor_mandala: drawAngkorMandala,
-  hologram_hud: drawHologramHUD
+  hologram_hud: drawHologramHUD,
+  // 🌌 2026 Ultra-Premium Themes
+  aurora_borealis: drawAuroraBorealis,
+  dna_helix: drawDNAHelix,
+  sonic_nebula: drawSonicNebula
 };
 
 export function renderActiveTheme(ctx, width, height, bass, bars) {

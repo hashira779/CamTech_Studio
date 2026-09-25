@@ -1609,140 +1609,162 @@ document.addEventListener('DOMContentLoaded', () => {
     const selectTheme = document.getElementById('select-theme');
     const selectPalette = document.getElementById('select-palette');
 
-    // ── Step 1: Audio DNA Analysis with Live Percentage ──
-    const auditBox = document.getElementById('audit-progress-box');
-    const auditStatus = document.getElementById('audit-progress-status');
-    const auditPct = document.getElementById('audit-progress-pct');
-    const auditFill = document.getElementById('audit-progress-fill');
-
-    if (auditBox) {
-      auditBox.style.display = 'block';
-      if (auditPct) auditPct.textContent = '15%';
-      if (auditFill) auditFill.style.width = '15%';
-      if (auditStatus) auditStatus.textContent = 'FFT Spectrogram & Frequency Spectrum (15%)...';
-    }
-    setStudioPipelineProgress(2, 15, 'FFT Spectrogram & Frequency Spectrum (15%)...', 'Audio DNA Analysis');
-
-    showToast('🧠 Smart Studio', 'Step 1/3: Analyzing audio DNA (BPM, Key & Sections)...', 'info', 6000);
-    if (btnAnalyze) setButtonLoading(btnAnalyze, 'AI Scanning (20%)...');
-
-    let curAuditPct = 20;
-    const auditSimInterval = setInterval(() => {
-      if (curAuditPct < 85) {
-        curAuditPct += 15;
-        if (auditPct) auditPct.textContent = `${curAuditPct}%`;
-        if (auditFill) auditFill.style.width = `${curAuditPct}%`;
-        if (btnAnalyze) btnAnalyze.textContent = `AI Scanning (${curAuditPct}%)...`;
-
-        let stageDesc = `BPM & Harmonic Key Detection (${curAuditPct}%)...`;
-        if (curAuditPct >= 70) {
-          stageDesc = `Song Sections & Viral Hook Detection (${curAuditPct}%)...`;
-        }
-        if (auditStatus) auditStatus.textContent = stageDesc;
-        setStudioPipelineProgress(2, curAuditPct, stageDesc, 'Audio DNA Analysis');
-      }
-    }, 380);
-    
-    try {
-      const analyzeRes = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ audio_path: state.audioServerPath })
-      });
-      const analyzeData = await analyzeRes.json();
-      clearInterval(auditSimInterval);
-
-      if (auditPct) auditPct.textContent = '100%';
-      if (auditFill) auditFill.style.width = '100%';
-      if (auditStatus) auditStatus.textContent = `✅ Audio DNA Complete: BPM ${analyzeData.bpm} (100%)`;
-      setStudioPipelineProgress(2, 100, `✅ Audio DNA Complete: BPM ${analyzeData.bpm} (100%)`, 'Audio DNA Analysis');
-      setTimeout(() => {
-        if (auditBox) auditBox.style.display = 'none';
-      }, 2000);
-      
-      if (analyzeData.status === 'success' || analyzeData.status === 'fallback') {
-        // Update stats
-        const bpmEl = document.getElementById('stat-bpm');
-        const energyEl = document.getElementById('stat-energy');
-        if (bpmEl) bpmEl.textContent = analyzeData.bpm;
-        if (energyEl) {
-          let label = 'Medium';
-          if (analyzeData.energy >= 0.75) label = 'High';
-          if (analyzeData.energy <= 0.4) label = 'Low';
-          energyEl.textContent = label;
-        }
-        
-        // Update duration display from audio analysis if audioPlayer duration is not yet available
-        if (analyzeData.duration) {
-          state.audioDuration = analyzeData.duration;
-          if (durationEl) {
-            durationEl.textContent = `/ ${formatTime(analyzeData.duration)}`;
-          }
-        }
-
-        // Draw waveform
-        if (analyzeData.waveform_peaks && analyzeData.waveform_peaks.length > 0) {
-          drawWaveform(analyzeData.waveform_peaks);
-        }
-
-        // Save to state
-        state.bpm = analyzeData.bpm;
-        state.energy = analyzeData.energy;
-        state.mood = analyzeData.mood;
-        state.genre = analyzeData.genre;
-        state.sections = analyzeData.sections || [];
-        if (analyzeData.hook) {
-          state.hookStart = analyzeData.hook.start;
-          state.hookEnd = analyzeData.hook.end;
-          state.hookName = analyzeData.hook.name;
-        }
-        
-        if (btnAnalyze) clearButtonLoading(btnAnalyze, '✅ Analysis Complete (100%)');
-        showToast('✅ Audio DNA', `BPM: ${analyzeData.bpm} | Energy: ${Math.round(analyzeData.energy * 100)}% | Mood: ${analyzeData.mood}`, 'success', 4000);
-
-        // ── Step 2: Smart Theme & Palette ──
-        showToast('🧠 Smart Studio', 'Step 2/3: Selecting best visual style...', 'info', 3000);
-        const rec = getSmartRecommendation(analyzeData.mood, analyzeData.genre, analyzeData.energy);
-        state.theme = rec.theme;
-        state.palette = rec.palette;
-        if (selectTheme) selectTheme.value = rec.theme;
-        if (selectPalette) selectPalette.value = rec.palette;
-        
-        const themeName = selectTheme ? selectTheme.options[selectTheme.selectedIndex]?.text : rec.theme;
-        const paletteName = selectPalette ? selectPalette.options[selectPalette.selectedIndex]?.text : rec.palette;
-        setStudioPipelineProgress(2, 100, `🎨 Style Selected: ${themeName} (${paletteName})`, 'Style Auto-Matching');
-        showToast('🎨 Auto-Style', `Theme: ${themeName} | Palette: ${paletteName}`, 'success', 3000);
-      }
-    } catch (err) {
-      clearInterval(auditSimInterval);
-      console.error('Smart Pipeline - Analysis failed:', err);
-      if (btnAnalyze) clearButtonLoading(btnAnalyze, '🧠 SuperSmart Scan');
-      if (auditBox) auditBox.style.display = 'none';
-      setStudioPipelineProgress(2, 0, '❌ Analysis failed', 'Audio DNA Analysis', false);
-    }
-
-    // ── Step 3: Auto Lyrics with Live Percentage ──
-    if (state.lyrics && state.lyrics.length > 0) {
+    // ── Check if lyrics already loaded from YouTube subtitles ──
+    const hasSubtitleLyrics = state.lyrics && state.lyrics.length > 0;
+    if (hasSubtitleLyrics) {
+      renderLyricsTeleprompter(state.lyrics);
       if (btnTranscribe) clearButtonLoading(btnTranscribe, '✅ Lyrics Synced (100%)');
       setStudioPipelineProgress(3, 100, `🎤 ${state.lyrics.length} lines synced from captions (100%)`, 'Lyrics Synced');
-      showToast('🎤 Lyrics Ready', `${state.lyrics.length} lines synced from captions (100%)`, 'success', 4000);
-      renderLyricsTeleprompter(state.lyrics);
-    } else {
-      showToast('🧠 Smart Studio', 'Step 3/3: Transcribing vocals with Whisper AI...', 'info', 8000);
+      showToast('🎤 Lyrics Ready', `${state.lyrics.length} lines synced from captions instantly! ⚡`, 'success', 4000);
+    }
+
+    // ── Prepare Audio DNA Analysis (Step 1+2) ──
+    const analyzePromise = (async () => {
+      const auditBox = document.getElementById('audit-progress-box');
+      const auditStatus = document.getElementById('audit-progress-status');
+      const auditPct = document.getElementById('audit-progress-pct');
+      const auditFill = document.getElementById('audit-progress-fill');
+
+      if (auditBox) {
+        auditBox.style.display = 'block';
+        if (auditPct) auditPct.textContent = '15%';
+        if (auditFill) auditFill.style.width = '15%';
+        if (auditStatus) auditStatus.textContent = 'FFT Spectrogram & Frequency Spectrum (15%)...';
+      }
+      setStudioPipelineProgress(2, 15, 'FFT Spectrogram & Frequency Spectrum (15%)...', 'Audio DNA Analysis');
+
+      showToast('🧠 Smart Studio', 'Analyzing audio DNA (BPM, Key & Sections)...', 'info', 6000);
+      if (btnAnalyze) setButtonLoading(btnAnalyze, 'AI Scanning (20%)...');
+
+      let curAuditPct = 20;
+      const auditSimInterval = setInterval(() => {
+        if (curAuditPct < 85) {
+          curAuditPct += 15;
+          if (auditPct) auditPct.textContent = `${curAuditPct}%`;
+          if (auditFill) auditFill.style.width = `${curAuditPct}%`;
+          if (btnAnalyze) btnAnalyze.textContent = `AI Scanning (${curAuditPct}%)...`;
+
+          let stageDesc = `BPM & Harmonic Key Detection (${curAuditPct}%)...`;
+          if (curAuditPct >= 70) {
+            stageDesc = `Song Sections & Viral Hook Detection (${curAuditPct}%)...`;
+          }
+          if (auditStatus) auditStatus.textContent = stageDesc;
+          setStudioPipelineProgress(2, curAuditPct, stageDesc, 'Audio DNA Analysis');
+        }
+      }, 380);
+      
+      try {
+        const analyzeRes = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ audio_path: state.audioServerPath })
+        });
+        const analyzeData = await analyzeRes.json();
+        clearInterval(auditSimInterval);
+
+        if (auditPct) auditPct.textContent = '100%';
+        if (auditFill) auditFill.style.width = '100%';
+        if (auditStatus) auditStatus.textContent = `✅ Audio DNA Complete: BPM ${analyzeData.bpm} (100%)`;
+        setStudioPipelineProgress(2, 100, `✅ Audio DNA Complete: BPM ${analyzeData.bpm} (100%)`, 'Audio DNA Analysis');
+        setTimeout(() => {
+          if (auditBox) auditBox.style.display = 'none';
+        }, 2000);
+        
+        if (analyzeData.status === 'success' || analyzeData.status === 'fallback') {
+          // Update stats
+          const bpmEl = document.getElementById('stat-bpm');
+          const energyEl = document.getElementById('stat-energy');
+          if (bpmEl) bpmEl.textContent = analyzeData.bpm;
+          if (energyEl) {
+            let label = 'Medium';
+            if (analyzeData.energy >= 0.75) label = 'High';
+            if (analyzeData.energy <= 0.4) label = 'Low';
+            energyEl.textContent = label;
+          }
+          
+          // Update duration display from audio analysis if audioPlayer duration is not yet available
+          if (analyzeData.duration) {
+            state.audioDuration = analyzeData.duration;
+            if (durationEl) {
+              durationEl.textContent = `/ ${formatTime(analyzeData.duration)}`;
+            }
+          }
+
+          // Draw waveform
+          if (analyzeData.waveform_peaks && analyzeData.waveform_peaks.length > 0) {
+            drawWaveform(analyzeData.waveform_peaks);
+          }
+
+          // Save to state
+          state.bpm = analyzeData.bpm;
+          state.energy = analyzeData.energy;
+          state.mood = analyzeData.mood;
+          state.genre = analyzeData.genre;
+          state.sections = analyzeData.sections || [];
+          if (analyzeData.hook) {
+            state.hookStart = analyzeData.hook.start;
+            state.hookEnd = analyzeData.hook.end;
+            state.hookName = analyzeData.hook.name;
+          }
+          
+          if (btnAnalyze) clearButtonLoading(btnAnalyze, '✅ Analysis Complete (100%)');
+          showToast('✅ Audio DNA', `BPM: ${analyzeData.bpm} | Energy: ${Math.round(analyzeData.energy * 100)}% | Mood: ${analyzeData.mood}`, 'success', 4000);
+
+          // ── Step 2: Smart Theme & Palette ──
+          const rec = getSmartRecommendation(analyzeData.mood, analyzeData.genre, analyzeData.energy);
+          state.theme = rec.theme;
+          state.palette = rec.palette;
+          if (selectTheme) selectTheme.value = rec.theme;
+          if (selectPalette) selectPalette.value = rec.palette;
+          
+          const themeName = selectTheme ? selectTheme.options[selectTheme.selectedIndex]?.text : rec.theme;
+          const paletteName = selectPalette ? selectPalette.options[selectPalette.selectedIndex]?.text : rec.palette;
+          setStudioPipelineProgress(2, 100, `🎨 Style Selected: ${themeName} (${paletteName})`, 'Style Auto-Matching');
+          showToast('🎨 Auto-Style', `Theme: ${themeName} | Palette: ${paletteName}`, 'success', 3000);
+        }
+      } catch (err) {
+        clearInterval(auditSimInterval);
+        console.error('Smart Pipeline - Analysis failed:', err);
+        if (btnAnalyze) clearButtonLoading(btnAnalyze, '🧠 SuperSmart Scan');
+        if (auditBox) auditBox.style.display = 'none';
+        setStudioPipelineProgress(2, 0, '❌ Analysis failed', 'Audio DNA Analysis', false);
+      }
+    })();
+
+    // ── Prepare Lyrics Transcription (Step 3) — runs in PARALLEL with analysis ──
+    const lyricsPromise = (async () => {
+      if (hasSubtitleLyrics) return; // Already loaded from YouTube captions — skip Whisper entirely!
+
+      showToast('🧠 Smart Studio', 'Transcribing vocals with Whisper AI...', 'info', 8000);
       const langSelect = document.getElementById('select-vocal-lang');
       const modelSelect = document.getElementById('select-whisper-model');
-      let targetLang = langSelect ? langSelect.value : 'km';
-      if (!targetLang) targetLang = 'km';
+      let targetLang = langSelect ? langSelect.value : 'auto';
+      if (!targetLang) targetLang = 'auto';
+
+      // ── SMART LANGUAGE DETECTION ──
+      // Only force Khmer if user explicitly chose it in the dropdown.
+      // For "auto", let Whisper detect the actual language from the audio.
+      // This prevents English songs being transcribed as Khmer gibberish.
       if (targetLang === 'auto') {
-        targetLang = (/[\u1780-\u17FF]/.test(state.audioPath || '') || /[\u1780-\u17FF]/.test(state.audioServerPath || '')) ? 'km' : null;
+        // Check song title/filename for Khmer script as a hint
+        const titleText = (state.songTitle || '') + (state.audioPath || '') + (state.audioServerPath || '');
+        if (/[\u1780-\u17FF]/.test(titleText)) {
+          targetLang = 'km'; // Khmer title → force Khmer for accuracy
+        } else {
+          targetLang = null; // Let Whisper auto-detect from actual audio content
+        }
       }
+      
       const targetModel = modelSelect ? modelSelect.value : 'large-v3-turbo';
       try {
         await runAITranscription({ targetLang, targetModel });
       } catch (err) {
         console.error('Smart Pipeline - Lyrics failed:', err);
       }
-    }
+    })();
+
+    // ── Run BOTH in parallel — saves 3-5 seconds! ──
+    await Promise.allSettled([analyzePromise, lyricsPromise]);
 
     // ── Pipeline Complete ──
     window.__VIDA_PIPELINE_RUNNING = false;
@@ -1867,10 +1889,26 @@ document.addEventListener('DOMContentLoaded', () => {
         const text = await navigator.clipboard.readText();
         if (text) {
           inputYt.value = text.trim();
+          // Auto-trigger download if it's a valid YouTube URL
+          if (/youtu\.?be/.test(text.trim()) && btnDownloadYt) {
+            btnDownloadYt.click();
+          }
         }
       } catch (err) {
         showToast('Paste Failed', 'Clipboard access denied or empty.', 'error');
       }
+    });
+  }
+
+  // ── Magic Auto-Paste: paste a YouTube URL → auto-starts downloading ──
+  if (inputYt && btnDownloadYt) {
+    inputYt.addEventListener('paste', (e) => {
+      setTimeout(() => {
+        const url = inputYt.value.trim();
+        if (/youtu\.?be/.test(url) || /youtube\.com/.test(url)) {
+          btnDownloadYt.click();
+        }
+      }, 100); // Small delay to let paste value propagate
     });
   }
 

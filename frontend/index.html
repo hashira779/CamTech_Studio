@@ -232,7 +232,8 @@
         <!-- TAB 2: AI & Audio Tools -->
         <div id="tab-left-ai" class="tab-pane hidden">
           <div class="glass-card">
-            <button id="btn-run-deep-audit" class="btn-ai w-full">🧠 SuperSmart Scan (Local LLM)</button>
+            <!-- Audio DNA Analysis -->
+            <button id="btn-run-deep-audit" class="btn-ai w-full">🧠 SuperSmart Scan (BPM, Key, Mood)</button>
             
             <!-- Audio DNA Deep Scan Progress Bar -->
             <div id="audit-progress-box" class="studio-progress-box" style="display: none; margin-top: 8px;">
@@ -245,11 +246,14 @@
               </div>
             </div>
 
-            <div style="display: flex; gap: 6px; margin-top: 8px;">
-              <button id="btn-transcribe-ai" class="btn-ai" style="flex: 1; background: linear-gradient(135deg, #10b981, #047857);">🎤 Auto-Sync Lyrics (AI)</button>
-              <button id="btn-ai-auto-fix" class="btn-ai" style="flex: 1; background: linear-gradient(135deg, #8b5cf6, #5b21b6);" title="Use LLM to automatically fix phonetic spelling across the entire song without breaking timestamps">✨ AI Auto-Fix Spelling</button>
-              <button id="btn-upload-lrc" class="btn-secondary" style="font-size: 0.75rem; padding: 6px 8px; white-space: nowrap;" title="Import LRC, SRT, or VTT subtitle file">📄 Import Sub</button>
-              <input type="file" id="lrc-file-input" accept=".lrc,.srt,.vtt,.txt" class="hidden">
+            <!-- Lyrics Action Buttons — stacked for clarity -->
+            <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 10px;">
+              <button id="btn-transcribe-ai" class="btn-ai w-full" style="background: linear-gradient(135deg, #10b981, #047857); padding: 9px 12px; font-size: 12px;">🎤 Auto-Sync Lyrics (AI Whisper)</button>
+              <div style="display: flex; gap: 6px;">
+                <button id="btn-ai-auto-fix" class="btn-ai" style="flex: 1; background: linear-gradient(135deg, #8b5cf6, #5b21b6); font-size: 11px; padding: 7px 8px;" title="Use LLM to automatically fix phonetic spelling across the entire song without breaking timestamps">✨ AI Fix Spelling</button>
+                <button id="btn-upload-lrc" class="btn-secondary" style="flex: 0 0 auto; font-size: 11px; padding: 7px 12px; white-space: nowrap;" title="Import LRC, SRT, or VTT subtitle file">📄 Import Sub</button>
+                <input type="file" id="lrc-file-input" accept=".lrc,.srt,.vtt,.txt" class="hidden">
+              </div>
             </div>
 
             <!-- Real-Time AI Transcription Progress Bar -->
@@ -263,44 +267,42 @@
               </div>
             </div>
 
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px;">
+            <!-- Language & Model Settings -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.06);">
               <div>
-                <label style="font-size: 10px; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
-                  <span>Vocal Language</span>
-                  <span style="color: #34d399; font-weight: 600; font-size: 9px; background: rgba(16,185,129,0.18); padding: 1px 4px; border-radius: 3px; border: 1px solid rgba(16,185,129,0.3);">🇰🇭 Khmer Focus</span>
-                </label>
-                <select id="select-vocal-lang" class="prop-select" style="font-size: 11px; padding: 4px 6px; border-color: rgba(16, 185, 129, 0.45); background: rgba(16, 185, 129, 0.05);">
-                  <option value="auto" selected>🌐 Auto Detect (Global)</option>
-                  <option value="km">🇰🇭 Khmer (ខ្មែរ) — Core Studio Focus ⭐</option>
+                <label style="font-size: 10px; color: var(--text-dim); display: block; margin-bottom: 3px;">Vocal Language</label>
+                <select id="select-vocal-lang" class="prop-select" style="font-size: 11px; padding: 5px 6px;">
+                  <option value="auto" selected>🌐 Auto Detect</option>
+                  <option value="km">🇰🇭 Khmer (ខ្មែរ)</option>
                   <optgroup label="International Languages">
-                    <option value="en">🇬🇧 English (en)</option>
-                    <option value="zh">🇨🇳 Chinese (中文)</option>
-                    <option value="ja">🇯🇵 Japanese (日本語)</option>
-                    <option value="ko">🇰🇷 Korean (한국어)</option>
-                    <option value="th">🇹🇭 Thai (ไทย)</option>
-                    <option value="vi">🇻🇳 Vietnamese (Tiếng Việt)</option>
-                    <option value="id">🇮🇩 Indonesian (Bahasa)</option>
-                    <option value="tl">🇵🇭 Tagalog / Filipino</option>
-                    <option value="ms">🇲🇾 Malay (Melayu)</option>
-                    <option value="my">🇲🇲 Burmese (မြန်မာ)</option>
-                    <option value="lo">🇱🇦 Lao (ລາວ)</option>
-                    <option value="es">🇪🇸 Spanish (Español)</option>
-                    <option value="fr">🇫🇷 French (Français)</option>
-                    <option value="de">🇩🇪 German (Deutsch)</option>
-                    <option value="pt">🇵🇹 Portuguese (Português)</option>
-                    <option value="it">🇮🇹 Italian (Italiano)</option>
-                    <option value="ru">🇷🇺 Russian (Русский)</option>
-                    <option value="tr">🇹🇷 Turkish (Türkçe)</option>
-                    <option value="hi">🇮🇳 Hindi (हिन्दी)</option>
-                    <option value="ar">🇸🇦 Arabic (العربية)</option>
-                    <option value="ur">🇵🇰 Urdu (اردو)</option>
-                    <option value="bn">🇧🇩 Bengali (বাংলা)</option>
+                    <option value="en">🇬🇧 English</option>
+                    <option value="zh">🇨🇳 Chinese</option>
+                    <option value="ja">🇯🇵 Japanese</option>
+                    <option value="ko">🇰🇷 Korean</option>
+                    <option value="th">🇹🇭 Thai</option>
+                    <option value="vi">🇻🇳 Vietnamese</option>
+                    <option value="id">🇮🇩 Indonesian</option>
+                    <option value="tl">🇵🇭 Tagalog</option>
+                    <option value="ms">🇲🇾 Malay</option>
+                    <option value="my">🇲🇲 Burmese</option>
+                    <option value="lo">🇱🇦 Lao</option>
+                    <option value="es">🇪🇸 Spanish</option>
+                    <option value="fr">🇫🇷 French</option>
+                    <option value="de">🇩🇪 German</option>
+                    <option value="pt">🇵🇹 Portuguese</option>
+                    <option value="it">🇮🇹 Italian</option>
+                    <option value="ru">🇷🇺 Russian</option>
+                    <option value="tr">🇹🇷 Turkish</option>
+                    <option value="hi">🇮🇳 Hindi</option>
+                    <option value="ar">🇸🇦 Arabic</option>
+                    <option value="ur">🇵🇰 Urdu</option>
+                    <option value="bn">🇧🇩 Bengali</option>
                   </optgroup>
                 </select>
               </div>
               <div>
-                <label style="font-size: 10px; color: var(--text-dim); display: block; margin-bottom: 2px;">AI Model Engine</label>
-                <select id="select-whisper-model" class="prop-select" style="font-size: 11px; padding: 4px 6px;">
+                <label style="font-size: 10px; color: var(--text-dim); display: block; margin-bottom: 3px;">AI Model</label>
+                <select id="select-whisper-model" class="prop-select" style="font-size: 11px; padding: 5px 6px;">
                   <option value="large-v3-turbo" selected>👑 Large-v3 Turbo</option>
                   <option value="distil-large-v3">🚀 Distil-Large-v3</option>
                   <option value="medium">⭐ Medium</option>
@@ -310,10 +312,20 @@
               </div>
             </div>
 
-            <div style="background: rgba(0,0,0,0.3); border-radius: 6px; padding: 8px; margin-top: 8px; display: flex; flex-direction: column; gap: 4px; font-size: 11px;">
-              <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-dim);">BPM</span><span id="stat-bpm" style="font-family: var(--font-mono); color: var(--accent); font-weight: 700;">--</span></div>
-              <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-dim);">Key</span><span id="stat-key" style="font-family: var(--font-mono); color: var(--text-secondary);">C Minor</span></div>
-              <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-dim);">Energy</span><span id="stat-energy" style="font-family: var(--font-mono); color: var(--accent); font-weight: 700;">--</span></div>
+            <!-- Stats Display -->
+            <div style="background: rgba(0,0,0,0.25); border-radius: 6px; padding: 8px 10px; margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; font-size: 11px;">
+              <div style="text-align: center;">
+                <div style="color: var(--text-dim); font-size: 9px; margin-bottom: 2px;">BPM</div>
+                <div id="stat-bpm" style="font-family: var(--font-mono); color: var(--accent); font-weight: 700;">--</div>
+              </div>
+              <div style="text-align: center; border-left: 1px solid rgba(255,255,255,0.06); border-right: 1px solid rgba(255,255,255,0.06);">
+                <div style="color: var(--text-dim); font-size: 9px; margin-bottom: 2px;">Key</div>
+                <div id="stat-key" style="font-family: var(--font-mono); color: var(--text-secondary);">C Minor</div>
+              </div>
+              <div style="text-align: center;">
+                <div style="color: var(--text-dim); font-size: 9px; margin-bottom: 2px;">Energy</div>
+                <div id="stat-energy" style="font-family: var(--font-mono); color: var(--accent); font-weight: 700;">--</div>
+              </div>
             </div>
           </div>
 
@@ -462,6 +474,11 @@
                 <option value="hyper_liquid">🌊 2028 Hyper-Liquid Chromatic Wave</option>
                 <option value="angkor_mandala">🇰🇭 2029 Cyber-Angkor Sacred Mandala</option>
                 <option value="hologram_hud">🎛️ 2029 Cyberpunk Hologram HUD</option>
+              </optgroup>
+              <optgroup label="🌌 Ultra-Premium Cinematic">
+                <option value="aurora_borealis">🌌 Aurora Borealis Silk</option>
+                <option value="dna_helix">🧬 DNA Helix Waveform</option>
+                <option value="sonic_nebula">🪐 Sonic Nebula Galaxy</option>
               </optgroup>
               <optgroup label="Classic Visualizers">
                 <option value="trap_circle">Trap Nation Pulse</option>
