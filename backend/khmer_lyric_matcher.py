@@ -263,10 +263,83 @@ Return ONLY a valid JSON object in this exact schema:
     return None
 
 
+def transcribe_audio_with_gemini(audio_path: str, title: str = "", artist: str = "") -> Optional[List[str]]:
+    """
+    Transcribes actual audio file using Gemini Multimodal Audio.
+    Listens directly to the singer's voice so it NEVER hallucinates fake lyrics.
+    """
+    api_key = get_gemini_api_key()
+    if not api_key or not audio_path or not os.path.exists(audio_path):
+        return None
+
+    import base64
+    import urllib.request
+
+    try:
+        file_size = os.path.getsize(audio_path)
+        # Limit to 15MB for inline REST payload
+        if file_size > 15 * 1024 * 1024:
+            log.warning(f"[Gemini Audio] File {audio_path} is {file_size/1024/1024:.1f}MB, too large for direct inline audio")
+            return None
+
+        mime_type = "audio/mp3" if audio_path.lower().endswith(".mp3") else "audio/wav"
+        with open(audio_path, "rb") as f:
+            audio_bytes = f.read()
+
+        b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
+        prompt = (
+            f"Listen carefully to this Cambodian song audio.\n"
+            f"Song title: {title}\nArtist: {artist}\n"
+            f"Transcribe the exact lyrics in Khmer script line by line as sung by the singer.\n"
+            f"Rules:\n"
+            f"1. Transcribe ONLY the actual words sung in the audio.\n"
+            f"2. Output only the Khmer lyrics lines, one line per singing phrase.\n"
+            f"3. Do not include markdown headers, chords, English translations, or conversational filler."
+        )
+
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"text": prompt},
+                    {"inline_data": {"mime_type": mime_type, "data": b64_audio}}
+                ]
+            }]
+        }
+        data_bytes = json.dumps(payload).encode("utf-8")
+
+        models = ["gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-3.5-flash"]
+        for model in models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+            req = urllib.request.Request(url, data=data_bytes, headers={"Content-Type": "application/json"}, method="POST")
+            for attempt in range(2):
+                try:
+                    with urllib.request.urlopen(req, timeout=45) as resp:
+                        res = json.loads(resp.read().decode("utf-8"))
+                        text = res["candidates"][0]["content"]["parts"][0]["text"]
+                        lines = [l.strip() for l in text.splitlines() if l.strip()]
+                        khmer_lines = [
+                            l for l in lines
+                            if any('\u1780' <= c <= '\u17FF' for c in l)
+                            and not l.startswith(('#', '*', '- ', '==='))
+                        ]
+                        if len(khmer_lines) >= 4:
+                            log.info(f"[Gemini Audio ASR] Successfully transcribed {len(khmer_lines)} authentic lines via {model}")
+                            if title:
+                                save_to_local_lyrics_db(title, artist, khmer_lines)
+                            return khmer_lines
+                except Exception as e:
+                    log.warning(f"[Gemini Audio ASR] {model} attempt {attempt+1} error: {e}")
+                    import time
+                    time.sleep(1)
+    except Exception as ex:
+        log.error(f"[Gemini Audio ASR] Unexpected error: {ex}")
+
+    return None
+
+
 def fetch_lyrics_with_gemini(title: str, artist: str = "", description: str = "") -> Optional[List[str]]:
     """
-    Leverages Gemini to retrieve authentic Khmer lyrics instantly (2-3 seconds).
-    Bypasses slow CPU Demucs/ASR completely!
+    Fallback text lookup via Gemini when no audio file is available.
     """
     api_key = get_gemini_api_key()
     if not api_key:
@@ -280,9 +353,10 @@ def fetch_lyrics_with_gemini(title: str, artist: str = "", description: str = ""
         f"You are an expert in Cambodian and international song lyrics. Provide the exact, authentic Khmer lyrics for the song '{title}' "
         f"{f'sung by {artist}' if artist else ''}{desc_hint}.\n"
         f"Rules:\n"
-        f"1. Return ONLY the Khmer lyrics, one singing line per line.\n"
-        f"2. Do not include introductory notes, chat greetings, or explanations.\n"
-        f"3. Ensure traditional correct Khmer spelling."
+        f"1. Return ONLY the authentic Khmer lyrics, one singing line per line.\n"
+        f"2. If you are not 100% certain of the real lyrics, do NOT invent fake lyrics.\n"
+        f"3. Do not include introductory notes, chat greetings, or explanations.\n"
+        f"4. Ensure traditional correct Khmer spelling."
     )
 
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -324,23 +398,31 @@ def match_or_fetch_khmer_lyrics(
 ) -> Optional[Tuple[str, List[Dict[str, Any]]]]:
     """
     Main orchestration entry point:
-    Attempts to match authentic lyrics before falling back to ASR.
-    Returns (lrc_file_path, parsed_lyrics_list) or None.
+    1. Checks local verified DB for instant hit.
+    2. Checks YouTube description if authentic lyrics were pasted.
+    3. Uses Gemini Multimodal Audio to LISTEN to the actual song and transcribe real words.
+    4. Falls back to text search if no audio file is accessible.
     """
     raw_lines = None
 
-    # Step 1: Check YouTube description
-    if description:
-        raw_lines = extract_lyrics_from_description(description)
-
-    # Step 2: Check local verified DB
-    if not raw_lines and title:
+    # Step 1: Check local verified DB (instant 0.01s cache)
+    if title:
         raw_lines = search_local_lyrics_db(title, artist)
 
-    # Step 3: Fetch via Gemini Cloud AI (instant 2-3s, authentic)
+    # Step 2: Check YouTube description if uploader pasted authentic lyrics
+    if not raw_lines and description:
+        raw_lines = extract_lyrics_from_description(description)
+
+    # Step 3: Listen directly to actual audio using Gemini Multimodal Audio (GROUND TRUTH - NEVER HALLUCINATES)
+    if not raw_lines and audio_path and os.path.exists(audio_path):
+        log.info(f"[Khmer Lyric Matcher] Listening to audio file: {audio_path} via Gemini Audio...")
+        raw_lines = transcribe_audio_with_gemini(audio_path, title=title, artist=artist)
+
+    # Step 4: Fallback to text prompt only if audio is missing
     if not raw_lines and title:
+        log.info(f"[Khmer Lyric Matcher] Fallback to Gemini text prompt for: {title}")
         raw_lines = fetch_lyrics_with_gemini(title, artist, description=description)
-        
+
     if not raw_lines:
         return None
         
