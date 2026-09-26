@@ -270,7 +270,16 @@ def upload_audio_to_gemini_files_api(api_key: str, file_path: str, mime_type: st
 
 
 def parse_lrc_to_aligned(lrc_text: str, total_duration: float = 180.0) -> List[Dict[str, Any]]:
-    """Parses timestamped [mm:ss.xx] LRC text into structured aligned lines."""
+    """Parses timestamped [mm:ss.xx] LRC text into structured aligned lines with orthographic normalization."""
+    try:
+        from backend.lyric_engine import normalize_khmer_orthography, clean_subtitle_text
+    except ImportError:
+        try:
+            from lyric_engine import normalize_khmer_orthography, clean_subtitle_text
+        except ImportError:
+            normalize_khmer_orthography = lambda x: x
+            clean_subtitle_text = lambda x: x
+
     pattern = re.compile(r'\[(\d{1,2}):(\d{2}(?:\.\d+)?)\](.*)')
     raw_parsed = []
     for line in lrc_text.strip().splitlines():
@@ -280,6 +289,14 @@ def parse_lrc_to_aligned(lrc_text: str, total_duration: float = 180.0) -> List[D
             secs = float(m.group(2))
             lyric = m.group(3).strip()
             if lyric and any('\u1780' <= c <= '\u17FF' for c in lyric):
+                # Clean speaker labels and metadata
+                lyric = clean_subtitle_text(lyric)
+                # Repair artificial syllable-separated spacing (e.g., "ដក ចិត្ត ស្នេហ៍" -> "ដកចិត្តស្នេហ៍")
+                words = lyric.split()
+                if len(words) >= 4 and all(len(w) <= 4 for w in words):
+                    lyric = "".join(words)
+                # Orthographic correction (including ត្រានត្រង់ -> ត្រានត្រើយ)
+                lyric = normalize_khmer_orthography(lyric)
                 start_sec = round(mins * 60 + secs, 2)
                 raw_parsed.append((start_sec, lyric))
     
@@ -336,7 +353,9 @@ def transcribe_audio_with_gemini(
         f"Rules:\n"
         f"1. Timestamps MUST accurately reflect when the singer begins singing each phrase.\n"
         f"2. Transcribe ONLY the authentic words sung. Do NOT invent, loop, or hallucinate lyrics during instrumental solos.\n"
-        f"3. Output only valid LRC lines, one phrase per line."
+        f"3. Output only valid LRC lines, one phrase per line.\n"
+        f"4. Natural Khmer phrasing: Do NOT split every syllable with spaces (write natural continuous words like 'ដកចិត្តស្នេហ៍វិញទៅត្រានត្រើយ', NEVER 'ដក ចិត្ត ស្នេហ៍').\n"
+        f"5. Rhyme integrity (កាព្យចុងចួន): Cambodian song lyrics strictly follow poetic end-rhymes. Words rhyming with 'ឡើយ' or 'ហើយ' must use 'ត្រានត្រើយ' (or 'ត្រាណត្រើយ'), NEVER 'ត្រង់'."
     )
 
     models = ["gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-flash-latest", "gemini-3.5-flash"]
