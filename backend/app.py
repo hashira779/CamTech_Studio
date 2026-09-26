@@ -5,7 +5,11 @@ LRC subtitle parsing, asynchronous video rendering jobs, and studio UI serving.
 """
 
 import os
+import sys
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
 import re
 import time
 import uuid
@@ -122,6 +126,8 @@ class TranscribeRequest(BaseModel):
     audio_path: str
     model_size: str = "large-v3-turbo"
     language: Optional[str] = "km"
+    use_demucs: Optional[bool] = False
+    force_ai: Optional[bool] = False
 
 class GenerateLyricsRequest(BaseModel):
     prompt: Optional[str] = ""
@@ -190,8 +196,10 @@ def transcribe_audio(req: TranscribeRequest):
     if target_lang in ("auto", "", "None"):
         target_lang = None
 
-    # 1. Fast check: matching subtitle file (.vtt, .srt, .lrc)
-    sub_path = find_matching_subtitles(req.audio_path, target_lang=target_lang)
+    # 1. Fast check: matching subtitle file (.vtt, .srt, .lrc) (skipped if force_ai is requested)
+    sub_path = None
+    if not req.force_ai:
+        sub_path = find_matching_subtitles(req.audio_path, target_lang=target_lang)
     if sub_path and os.path.exists(sub_path):
         try:
             lyrics = parse_subtitle_file(sub_path)
@@ -215,22 +223,51 @@ def transcribe_audio(req: TranscribeRequest):
         except Exception as e:
             print(f"Subtitle parse warning: {e}")
 
-    # 2. Whisper transcription
+    # 2. Vocal Separation (Demucs) if enabled or requested
+    transcribe_path = req.audio_path
+    if req.use_demucs or req.model_size == "qwen3-khmer":
+        try:
+            try:
+                from backend.vocal_separator import separate_vocals_demucs
+            except ImportError:
+                from vocal_separator import separate_vocals_demucs
+            update_transcribe_progress(10, "Demucs: Isolating singing vocals from instruments...")
+            sep_result = separate_vocals_demucs(req.audio_path, progress_callback=update_transcribe_progress)
+            if sep_result.get("vocals") and os.path.exists(sep_result["vocals"]):
+                transcribe_path = sep_result["vocals"]
+                print(f"[Demucs] Using isolated vocals for transcription: {transcribe_path}")
+        except Exception as demucs_err:
+            print(f"[Demucs] Notice: {demucs_err}. Continuing with original audio.")
+
+    # 3. Model transcription (Qwen3-ASR-0.6B-Khmer vs Whisper)
     try:
-        update_transcribe_progress(5, "Preparing Whisper AI engine...")
-        if transcriber_instance is None or transcriber_instance.model_size != req.model_size:
-            update_transcribe_progress(10, f"Loading Whisper {req.model_size} model...")
-            transcriber_instance = WhisperTranscriber(model_size=req.model_size)
+        if req.model_size == "qwen3-khmer":
+            update_transcribe_progress(40, "Preparing Qwen3-ASR 0.6B Khmer AI...")
+            try:
+                from backend.qwen_khmer_engine import QwenKhmerTranscriber
+            except ImportError:
+                from qwen_khmer_engine import QwenKhmerTranscriber
+            qwen_instance = QwenKhmerTranscriber()
+            lyrics = qwen_instance.transcribe(transcribe_path, progress_callback=update_transcribe_progress)
+            detected_lang = "km"
+            source_type = "qwen3-asr"
+        else:
+            update_transcribe_progress(5, "Preparing Whisper AI engine...")
+            if transcriber_instance is None or transcriber_instance.model_size != req.model_size:
+                update_transcribe_progress(10, f"Loading Whisper {req.model_size} model...")
+                transcriber_instance = WhisperTranscriber(model_size=req.model_size)
 
-        def on_progress(pct, msg):
-            update_transcribe_progress(pct, msg)
+            def on_progress(pct, msg):
+                update_transcribe_progress(pct, msg)
 
-        target_lang = req.language
-        if target_lang in ("auto", "", "None"):
-            target_lang = None
+            target_lang = req.language
+            if target_lang in ("auto", "", "None"):
+                target_lang = None
 
-        lyrics = transcriber_instance.transcribe(req.audio_path, language=target_lang, progress_callback=on_progress)
-        detected_lang = getattr(transcriber_instance, "last_detected_language", target_lang or "en")
+            lyrics = transcriber_instance.transcribe(transcribe_path, language=target_lang, progress_callback=on_progress)
+            detected_lang = getattr(transcriber_instance, "last_detected_language", target_lang or "en")
+            source_type = "whisper"
+
         lang_str = str(detected_lang).upper() if detected_lang else "SYNCED"
 
         # Auto-cache to matching .lrc file next to audio for instant 0s future loading
@@ -247,14 +284,14 @@ def transcribe_audio(req: TranscribeRequest):
         update_transcribe_progress(100, f"Lyrics successfully transcribed ({lang_str})!")
         return {
             "status": "success",
-            "source": "whisper",
+            "source": source_type,
             "detected_language": detected_lang,
             "lyrics": lyrics,
             "count": len(lyrics)
         }
     except Exception as e:
         update_transcribe_progress(0, f"Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Whisper transcription failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 @app.post("/api/parse-lrc")
 async def parse_lrc(req: LrcParseRequest):
@@ -342,15 +379,16 @@ def clean_youtube_title_and_artist(raw_title: str, uploader: Optional[str] = Non
         if cand_title and cand_artist:
             return cand_title, cand_artist
 
-    # 2. Strip bracketed noise keywords
+    # 2. Strip bracketed noise keywords and trailing video labels (e.g. I Video Animation, | Official MV)
     bracket_keywords = r'official|video|mv|audio|lyric|lyrics|hd|4k|remix|slowed|reverb|full|clip|cover|dance|version|ost|teaser|visualizer|original'
     t = re.sub(r'\[[^\]]*(?:' + bracket_keywords + r')[^\]]*\]', '', t, flags=re.IGNORECASE).strip()
     t = re.sub(r'\([^\)]*(?:' + bracket_keywords + r')[^\)]*\)', '', t, flags=re.IGNORECASE).strip()
     t = re.sub(r'【[^】]*(?:' + bracket_keywords + r')[^】]*】', '', t, flags=re.IGNORECASE).strip()
+    t = re.sub(r'[\s|I]+(?:Video\s*Animation|Official.*|MV|Audio|Visualizer|Full\s*Song|Remix).*$', '', t, flags=re.IGNORECASE).strip()
     t = re.sub(r'\|\s*[^|]*(?:' + bracket_keywords + r')[^|]*$', '', t, flags=re.IGNORECASE).strip()
     t = t.strip(' -–—|:~#_')
 
-    # 3. Delimiter split into (Artist, Title)
+    # 3. Delimiter split into (Artist, Title) with Khmer-aware Title - Artist support
     split_match = re.split(r'\s*[-–—|~]\s*', t, maxsplit=1)
     
     artist = ""
@@ -362,6 +400,24 @@ def clean_youtube_title_and_artist(raw_title: str, uploader: Optional[str] = Non
         if quote_match:
             artist = part1
             title = quote_match.group(1).strip()
+        elif is_khmer_text(part1) or is_khmer_text(part2):
+            # In Khmer music, standard YouTube upload convention is [Song Title] - [Singer / Artist]
+            known_singers = [
+                "សុីន សុីសាមុត", "ស៊ីន ស៊ីសាមុត", "ស៊ីន​ ស៊ីសាមុត", "សុីន​ សុីសាមុត", "ស៊ិន ស៊ីសាមុត",
+                "រស់ សេរីសុទ្ធា", "ប៉ែន រ៉ន", "ហួយ មាស", "អ៊ឹង ណារី", "មាស សាម៉ន", "ព្រាប សុវត្ថិ",
+                "ខេមរៈ សិរីមន្ត", "មាស សុខសោភា", "តន់ ចន្ទសីម៉ា", "ខេម", "G-Devith", "VannDa", "វ៉ាន់ដា",
+                "យឿន ពិសី", "ឱក សុគន្ធកញ្ញា", "ឆន សុវណ្ណារាជ", "សុគន្ធ និសា", "ពេជ្រ សោភា", "កែវ វាសនា",
+                "គូម៉ា", "កែវ សារ៉ាត់", "សាមុត", "សេរីសុទ្ធា"
+            ]
+            p2_is_singer = any(s.lower() in part2.lower() for s in known_singers) or bool(re.search(r'ច្រៀងដោយ|ដោយ|feat|ft\.', part2, re.IGNORECASE))
+            p1_is_singer = any(s.lower() in part1.lower() for s in known_singers)
+            
+            if p2_is_singer or (not p1_is_singer):
+                title = part1
+                artist = re.sub(r'^(?:ច្រៀងដោយ|ដោយ|singer|artist)[\s:៖]+', '', part2, flags=re.IGNORECASE).strip()
+            else:
+                artist = part1
+                title = part2
         else:
             artist = part1
             title = part2
@@ -434,6 +490,28 @@ def download_youtube(req: YouTubeRequest):
                 print(f"[KMVM Lyrics] Automatically loaded subtitle for {filename}: {os.path.basename(sub_path)} ({len(lyrics)} lines)")
         except Exception as e:
             print(f"[KMVM Lyrics] Subtitle parse warning: {e}")
+
+    # Fallback to authentic Khmer Lyric Matcher if no subtitle found
+    if not lyrics and is_khmer_text(raw_title + " " + clean_title):
+        try:
+            try:
+                from backend.khmer_lyric_matcher import match_or_fetch_khmer_lyrics
+            except ImportError:
+                from khmer_lyric_matcher import match_or_fetch_khmer_lyrics
+            desc = info.get("description", "") if info else ""
+            matcher_res = match_or_fetch_khmer_lyrics(
+                audio_path=saved_path,
+                title=clean_title,
+                artist=clean_artist,
+                duration=duration,
+                description=desc
+            )
+            if matcher_res:
+                lrc_path, aligned = matcher_res
+                lyrics = parse_subtitle_file(lrc_path)
+                print(f"[Khmer Lyric Matcher] ✅ Auto-matched authentic lyrics for '{clean_title}': {len(lyrics)} lines")
+        except Exception as match_err:
+            print(f"[Khmer Lyric Matcher] Warning: {match_err}")
 
     update_youtube_progress(100, f"Ready: {clean_title}")
 

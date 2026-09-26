@@ -419,7 +419,8 @@ def clean_subtitle_text(text: str) -> str:
     sfx_keywords = (
         r'music|applause|laughter|cheering|instrumental|singing|chuckle|giggle|screams?|'
         r'sigh|silence|beats|intro|outro|chorus|verse|hook|bridge|vocalizing|inaudible|'
-        r'តន្ត្រី|ភ្លេង|សើច|ទះដៃ|ច្រៀង|ស្រែក|âm nhạc|tiếng cười|tiếng vỗ tay|tiếng hát'
+        r'តន្ត្រី|ភ្លេង|សើច|សំណើច|ទះដៃ|ការ\u200b?ទះដៃ|សំឡេង\u200b?ហ៊ោកញ្ជ្រៀវ|ច្រៀង|ស្រែក|សម្រែក|ដកដង្ហើមធំ|'
+        r'âm nhạc|tiếng cười|tiếng vỗ tay|tiếng hát'
     )
     text = re.sub(r'\[\s*(?:' + sfx_keywords + r').*?\]', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\(\s*(?:' + sfx_keywords + r').*?\)', '', text, flags=re.IGNORECASE)
@@ -433,6 +434,11 @@ def clean_subtitle_text(text: str) -> str:
     text = re.sub(r'\{.*?\}', '', text)
     text = re.sub(r'^\s*[-–—:]\s*', '', text)  # Strip leading speaker hyphen
     text = re.sub(r'\s+', ' ', text).strip()
+
+    # Filter out stray single Khmer vowel diacritics or non-word debris (e.g. ាើ, single consonants)
+    if is_khmer_text(text) and len(text) <= 2:
+        if all(('\u17B4' <= c <= '\u17D3') or c == '\u17D2' for c in text):
+            return ""
 
     # Apply authentic Khmer vocal spelling standardizations
     if is_khmer_text(text):
@@ -924,7 +930,14 @@ def find_matching_subtitles(audio_path: str, target_lang: Optional[str] = None) 
                 if preferred_lang == "km" and is_thai_text(text_sample) and not is_khmer_text(text_sample):
                     continue
 
-                # Priority matching
+                # 4. Heavily deprioritize YouTube auto-generated speech recognition for Khmer
+                is_yt_auto_caption = (
+                    ("Kind: captions" in content_sample) or
+                    (".km-orig." in f_lower or "-orig." in f_lower) or
+                    ("align:start position:0%" in content_sample and "[តន្ត្រី]" in content_sample)
+                )
+                if (preferred_lang == "km" or title_lang == "km") and is_yt_auto_caption:
+                    priority -= 40  # Machine auto-captions for Khmer singing are low quality
                 if preferred_lang:
                     if file_lang == preferred_lang:
                         priority += 30  # Actual content matches desired language!

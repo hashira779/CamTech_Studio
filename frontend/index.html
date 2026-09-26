@@ -303,13 +303,24 @@
               <div>
                 <label style="font-size: 10px; color: var(--text-dim); display: block; margin-bottom: 3px;">AI Model</label>
                 <select id="select-whisper-model" class="prop-select" style="font-size: 11px; padding: 5px 6px;">
-                  <option value="large-v3-turbo" selected>👑 Large-v3 Turbo</option>
-                  <option value="distil-large-v3">🚀 Distil-Large-v3</option>
-                  <option value="medium">⭐ Medium</option>
-                  <option value="small">⚡ Small</option>
-                  <option value="base">💨 Base</option>
+                  <option value="qwen3-khmer" selected>🇰🇭 Qwen3-ASR 0.6B (Dedicated Khmer SOTA)</option>
+                  <option value="small">⚡ Whisper Small (Fast & Balanced)</option>
+                  <option value="base">💨 Whisper Base (Ultra Fast)</option>
+                  <option value="tiny">🚀 Whisper Tiny (Instant)</option>
+                  <option value="large-v3-turbo">👑 Whisper Large-v3 Turbo (Studio)</option>
+                  <option value="medium">⭐ Whisper Medium</option>
+                  <option value="distil-large-v3">🚀 Distil-Large-v3 (English Only)</option>
                 </select>
               </div>
+            </div>
+
+            <!-- Demucs Vocal Separation Switch -->
+            <div style="margin-top: 8px; display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.03); padding: 6px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.06);">
+              <label for="check-use-demucs" style="font-size: 11px; color: var(--text-main); display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                <span>🎧 Demucs Vocal Isolation</span>
+                <span style="font-size: 9px; color: #10b981; font-weight: 600; background: rgba(16,185,129,0.15); padding: 1px 5px; border-radius: 4px;">Clean Vocals</span>
+              </label>
+              <input type="checkbox" id="check-use-demucs" checked style="cursor: pointer; accent-color: var(--accent);">
             </div>
 
             <!-- Stats Display -->

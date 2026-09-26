@@ -1755,9 +1755,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
       
-      const targetModel = modelSelect ? modelSelect.value : 'large-v3-turbo';
+      const useDemucsCheck = document.getElementById('check-use-demucs');
+      const useDemucs = useDemucsCheck ? useDemucsCheck.checked : true;
+      const targetModel = modelSelect ? modelSelect.value : (targetLang === 'km' ? 'qwen3-khmer' : 'small');
       try {
-        await runAITranscription({ targetLang, targetModel });
+        await runAITranscription({ targetLang, targetModel, useDemucs });
       } catch (err) {
         console.error('Smart Pipeline - Lyrics failed:', err);
       }
@@ -2197,7 +2199,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ============ 🎤 AI Transcription Engine with Real-Time Percentage ============
-  async function runAITranscription({ targetLang, targetModel }) {
+  async function runAITranscription({ targetLang, targetModel, useDemucs = true, forceAI = false }) {
     const btnTranscribe = document.getElementById('btn-transcribe-ai');
     const progressBox = document.getElementById('transcribe-progress-box');
     const progressStatus = document.getElementById('transcribe-progress-status');
@@ -2207,14 +2209,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (progressBox) progressBox.style.display = 'block';
     if (progressFill) progressFill.style.width = '0%';
     if (progressPct) progressPct.textContent = '0%';
-    if (progressStatus) progressStatus.textContent = 'Initializing Whisper AI...';
+    if (progressStatus) progressStatus.textContent = targetModel === 'qwen3-khmer' ? 'Initializing Qwen3-ASR & Demucs...' : 'Initializing Whisper AI...';
     if (btnTranscribe) setButtonLoading(btnTranscribe, '⏳ AI 0%');
 
     let currentPercent = 0;
     let isFinished = false;
     let elapsed = 0;
 
-    // Active polling for real-time Whisper progress & synchronization
+    // Active polling for real-time progress & synchronization
     const pollInterval = setInterval(async () => {
       if (isFinished) return;
       elapsed += 0.4;
@@ -2224,7 +2226,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (res.ok) {
           const data = await res.json();
           if (data && typeof data.percent === 'number') {
-            // Strictly track real backend percentage so the bar and label never conflict
             if (data.percent > 0) {
               currentPercent = Math.max(currentPercent, data.percent);
             }
@@ -2235,11 +2236,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       } catch (_) {}
 
-      // Initial loading estimation only before backend emits its first progress
       if (currentPercent < 18) {
         currentPercent = Math.min(18, Math.floor(elapsed * 1.5));
         if (progressStatus && elapsed > 2 && currentPercent < 18) {
-          progressStatus.textContent = `Analyzing audio & loading AI model (${Math.round(elapsed)}s)...`;
+          progressStatus.textContent = `Analyzing audio & preparing AI (${Math.round(elapsed)}s)...`;
         }
       }
 
@@ -2247,7 +2247,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (progressPct) progressPct.textContent = `${displayPct}%`;
       if (progressFill) progressFill.style.width = `${displayPct}%`;
       if (btnTranscribe) btnTranscribe.textContent = `⏳ AI ${displayPct}%`;
-      setStudioPipelineProgress(3, displayPct, progressStatus ? progressStatus.textContent : `Whisper AI (${displayPct}%)...`, 'AI Whisper Lyrics');
+      setStudioPipelineProgress(3, displayPct, progressStatus ? progressStatus.textContent : `AI Lyrics (${displayPct}%)...`, 'AI Lyrics Engine');
     }, 400);
 
     try {
@@ -2257,7 +2257,9 @@ document.addEventListener('DOMContentLoaded', () => {
         body: JSON.stringify({
           audio_path: state.audioServerPath,
           model_size: targetModel,
-          language: targetLang
+          language: targetLang,
+          use_demucs: !!useDemucs,
+          force_ai: !!forceAI
         })
       });
       const data = await res.json();
@@ -2328,9 +2330,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (targetLang === 'auto') {
         targetLang = (/[\u1780-\u17FF]/.test(state.audioPath || '') || /[\u1780-\u17FF]/.test(state.audioServerPath || '')) ? 'km' : null;
       }
-      const targetModel = modelSelect ? modelSelect.value : 'large-v3-turbo';
+      const useDemucsCheck = document.getElementById('check-use-demucs');
+      const useDemucs = useDemucsCheck ? useDemucsCheck.checked : true;
+      const targetModel = modelSelect ? modelSelect.value : (targetLang === 'km' ? 'qwen3-khmer' : 'small');
       try {
-        await runAITranscription({ targetLang, targetModel });
+        await runAITranscription({ targetLang, targetModel, useDemucs, forceAI: true });
       } catch (err) {
         console.error('Manual transcription failed:', err);
       }

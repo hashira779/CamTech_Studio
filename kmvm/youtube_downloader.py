@@ -92,15 +92,16 @@ def _sanitize_subtitles_for_audio(audio_path: str, title: Optional[str] = None):
             if base in f or f.startswith(base[:15]):
                 f_lower = f.lower()
                 full_path = os.path.join(directory, f)
-                # If YouTube gave Thai-origin auto subtitles (.th-km, .th., etc.)
-                if any(pat in f_lower for pat in [".th-", "_th-", ".th.", "_th.", "-th.", "-th-"]):
+                # 1. Prune raw auto-caption artifact files (.km-orig.vtt, -orig.vtt)
+                if any(pat in f_lower for pat in [".km-orig.", "-orig.", ".th-", "_th-", ".th.", "_th.", "-th.", "-th-"]):
                     try:
                         os.remove(full_path)
-                        print(f"[KMVM Subtitles] Pruned Thai auto-subtitle artifact: {f}", flush=True)
+                        print(f"[KMVM Subtitles] Pruned auto-caption artifact: {f}", flush=True)
                     except Exception:
                         pass
                     continue
-                # Also check file content for Thai script
+
+                # 2. Check file content for Thai script or YouTube Khmer machine auto-captions
                 try:
                     with open(full_path, "r", encoding="utf-8", errors="ignore") as sub_f:
                         sample = sub_f.read(8000)
@@ -109,6 +110,11 @@ def _sanitize_subtitles_for_audio(audio_path: str, title: Optional[str] = None):
                     if has_thai and not has_khmer:
                         os.remove(full_path)
                         print(f"[KMVM Subtitles] Pruned subtitle with Thai content for Khmer song: {f}", flush=True)
+                        continue
+                    # Prune YouTube auto-captions with machine noise tags if not human uploaded
+                    if "Kind: captions" in sample and "[តន្ត្រី]" in sample and "align:start position:0%" in sample:
+                        os.remove(full_path)
+                        print(f"[KMVM Subtitles] Pruned low-quality YouTube Khmer auto-captions: {f}", flush=True)
                 except Exception:
                     pass
     except Exception as e:
