@@ -12,6 +12,10 @@ import re
 import json
 import logging
 from typing import List, Dict, Any, Optional, Tuple
+try:
+    from backend.vocal_align import force_align_lyrics_to_audio
+except ImportError:
+    from vocal_align import force_align_lyrics_to_audio
 
 log = logging.getLogger(__name__)
 
@@ -117,8 +121,13 @@ def save_to_local_lyrics_db(title: str, artist: str, lyrics: List[str]):
         except Exception:
             db = {}
             
-    db[title.strip()] = {
-        "title": title.strip(),
+    # Protect existing curated lyrics from being overwritten by raw ASR
+    key = title.strip()
+    if key in db and db[key].get("lyrics") and len(db[key].get("lyrics", [])) >= 4:
+        return
+
+    db[key] = {
+        "title": key,
         "artist": artist.strip() if artist else "Unknown",
         "lyrics": lyrics
     }
@@ -131,46 +140,6 @@ def save_to_local_lyrics_db(title: str, artist: str, lyrics: List[str]):
         log.warning(f"[Khmer Lyric Matcher] Could not save to DB: {e}")
 
 
-def align_lyrics_to_audio_duration(
-    lyrics: List[str],
-    duration: float,
-    intro_lead: float = 16.0,
-    outro_tail: float = 12.0
-) -> List[Dict[str, Any]]:
-    """
-    Intelligently spaces out authentic lyric lines across audio duration.
-    Calculates start and end timestamps proportionally to line length.
-    """
-    if not lyrics:
-        return []
-        
-    if duration <= 30.0:
-        intro_lead = 2.0
-        outro_tail = 2.0
-        
-    singing_duration = max(10.0, duration - intro_lead - outro_tail)
-    
-    # Calculate relative weights based on character lengths
-    lengths = [max(4, len(line.replace(" ", ""))) for line in lyrics]
-    total_length = sum(lengths)
-    
-    aligned_lines = []
-    current_time = intro_lead
-    
-    for idx, (line, length) in enumerate(zip(lyrics, lengths)):
-        line_duration = max(2.5, (length / total_length) * singing_duration)
-        start_time = round(current_time, 2)
-        end_time = round(current_time + line_duration, 2)
-        
-        aligned_lines.append({
-            "line_id": idx,
-            "start": start_time,
-            "end": end_time,
-            "text": line
-        })
-        current_time = end_time
-        
-    return aligned_lines
 
 
 def generate_lrc_content(aligned_lines: List[Dict[str, Any]]) -> str:
@@ -370,7 +339,7 @@ def transcribe_audio_with_gemini(
         f"3. Output only valid LRC lines, one phrase per line."
     )
 
-    models = ["gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-3.5-flash"]
+    models = ["gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-flash-latest", "gemini-3.5-flash"]
 
     for model in models:
         try:
@@ -514,39 +483,69 @@ def match_or_fetch_khmer_lyrics(
     raw_lines = None
     true_aligned = None
 
-    # Step 1: Check local verified DB (instant 0.01s cache)
+    # Step 1: ALWAYS listen directly to actual audio using Gemini Multimodal Audio for TRUE timestamps
+    if audio_path and os.path.exists(audio_path):
+        log.info(f"[Khmer Lyric Matcher] Listening to audio file: {audio_path} via Gemini Audio for true timestamps...")
+        transcribe_result = transcribe_audio_with_gemini(audio_path, title=title, artist=artist, duration=duration)
+        if transcribe_result:
+            _, true_aligned = transcribe_result
+
+    # Step 2: Check local verified DB or description for authentic golden spelling
     if title:
         raw_lines = search_local_lyrics_db(title, artist)
 
-    # Step 2: Check YouTube description if uploader pasted authentic lyrics
     if not raw_lines and description:
         raw_lines = extract_lyrics_from_description(description)
 
-    # Step 3: Listen directly to actual audio using Gemini Multimodal Audio (GROUND TRUTH TIMESTAMPS)
-    if not raw_lines and audio_path and os.path.exists(audio_path):
-        log.info(f"[Khmer Lyric Matcher] Listening to audio file: {audio_path} via Gemini Audio...")
-        transcribe_result = transcribe_audio_with_gemini(audio_path, title=title, artist=artist, duration=duration)
-        if transcribe_result:
-            raw_lines, true_aligned = transcribe_result
-
-    # Step 4: Fallback to text prompt only if audio is missing
-    if not raw_lines and title:
+    # Step 3: Fallback to text prompt only if we have neither true audio timestamps nor verified DB text
+    if not raw_lines and not true_aligned and title:
         log.info(f"[Khmer Lyric Matcher] Fallback to Gemini text prompt for: {title}")
         raw_lines = fetch_lyrics_with_gemini(title, artist, description=description)
 
-    if not raw_lines:
-        return None
-
-    # Step 5: Align lines (use true timestamps if available from Gemini ASR)
-    if true_aligned:
+    # Step 4: Align lines using ground-truth timestamps whenever available
+    if true_aligned and raw_lines:
+        log.info(f"[Khmer Lyric Matcher] Merging {len(raw_lines)} curated lines with {len(true_aligned)} true audio timestamps")
+        merged_aligned = []
+        for idx, a in enumerate(true_aligned):
+            text_to_use = raw_lines[idx] if idx < len(raw_lines) else a["text"]
+            merged_aligned.append({
+                "line_id": idx,
+                "start": a["start"],
+                "end": a["end"],
+                "text": text_to_use
+            })
+        # If DB had extra trailing lines, append them gracefully
+        if len(raw_lines) > len(true_aligned):
+            last_end = true_aligned[-1]["end"]
+            rem_lines = raw_lines[len(true_aligned):]
+            avail_dur = max(3.0, duration - last_end)
+            step_dur = avail_dur / max(1, len(rem_lines))
+            for r_i, r_text in enumerate(rem_lines):
+                s = round(last_end + r_i * step_dur, 2)
+                e = round(min(duration, s + step_dur), 2)
+                merged_aligned.append({
+                    "line_id": len(merged_aligned),
+                    "start": s,
+                    "end": e,
+                    "text": r_text
+                })
+        aligned = merged_aligned
+    elif true_aligned:
         aligned = true_aligned
+    elif raw_lines:
+        if audio_path and os.path.exists(audio_path):
+            log.info("[Khmer Lyric Matcher] Using Dynamic Vocal Alignment Engine...")
+            aligned = force_align_lyrics_to_audio(raw_lines, audio_path, duration)
+        else:
+            log.warning("[Khmer Lyric Matcher] No audio file; using force_align fallback.")
+            aligned = force_align_lyrics_to_audio(raw_lines, audio_path or "", duration)
     else:
-        aligned = align_lyrics_to_audio_duration(raw_lines, duration)
+        return None
 
     if not aligned:
         return None
 
-    # Step 6: Write .LRC file alongside audio
+    # Step 5: Write synchronized .LRC file alongside audio
     lrc_content = generate_lrc_content(aligned)
     base_no_ext = os.path.splitext(audio_path)[0]
     lrc_path = base_no_ext + ".lrc"
@@ -555,6 +554,24 @@ def match_or_fetch_khmer_lyrics(
         with open(lrc_path, "w", encoding="utf-8") as f:
             f.write(lrc_content)
         log.info(f"[Khmer Lyric Matcher] Successfully saved authentic synced LRC: {lrc_path}")
+
+        # Also update any existing .vtt or .km.vtt file to ensure perfect sync across all formats
+        for vtt_cand in [base_no_ext + ".km.vtt", base_no_ext + ".vtt"]:
+            if os.path.exists(vtt_cand):
+                try:
+                    vtt_lines = ["WEBVTT\nKind: captions\nLanguage: km\n"]
+                    for line in aligned:
+                        s = line["start"]
+                        e = line["end"]
+                        s_h, s_m, s_s = int(s // 3600), int((s % 3600) // 60), s % 60
+                        e_h, e_m, e_s = int(e // 3600), int((e % 3600) // 60), e % 60
+                        vtt_lines.append(f"{s_h:02d}:{s_m:02d}:{s_s:06.3f} --> {e_h:02d}:{e_m:02d}:{e_s:06.3f}\n{line['text']}\n")
+                    with open(vtt_cand, "w", encoding="utf-8") as vf:
+                        vf.write("\n".join(vtt_lines))
+                    log.info(f"[Khmer Lyric Matcher] Updated existing VTT with true audio timestamps: {vtt_cand}")
+                except Exception as ve:
+                    log.warning(f"[Khmer Lyric Matcher] Could not update VTT: {ve}")
+
         return lrc_path, aligned
     except Exception as e:
         log.error(f"[Khmer Lyric Matcher] Failed to write LRC: {e}")

@@ -425,6 +425,10 @@ def clean_subtitle_text(text: str) -> str:
     text = re.sub(r'\[\s*(?:' + sfx_keywords + r').*?\]', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\(\s*(?:' + sfx_keywords + r').*?\)', '', text, flags=re.IGNORECASE)
 
+    # Strip leading speaker cues in brackets or parentheses (e.g. (ស្រី), (ប្រុស), (រួមគ្នា))
+    speaker_tag_pat = r'^\s*[\(\[]\s*(?:ស្រី|ប្រុស|ស្រីនិងប្រុស|ប្រុសនិងស្រី|រួមគ្នា|ស្រី/ប្រុស|ប្រុស/ស្រី|F|M|Male|Female|Singer)\s*[\)\]]\s*'
+    text = re.sub(speaker_tag_pat, '', text, flags=re.IGNORECASE)
+
     # Preserve any vocal lyrics in parentheses/brackets by peeling off just the symbols
     text = re.sub(r'[\[\]\(\)]', ' ', text)
 

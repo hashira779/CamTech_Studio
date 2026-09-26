@@ -209,13 +209,13 @@ class DoubleCheckLyricsVerifier:
             prev_end = start
             for w_i, w in enumerate(words):
                 w_start = max(prev_end, w.get("start", prev_end))
-                w_end = max(w_start + 0.15, w.get("end", w_start + 0.3))
+                w_end = max(w_start + 0.05, w.get("end", w_start + 0.1))
                 conf = w.get("confidence", 0.92)
 
                 # Flag words with low confidence or audio drift
                 if w_start < start or w_end > end + 0.5:
-                    w_start = max(start, min(w_start, end - 0.2))
-                    w_end = min(end, w_start + 0.4)
+                    w_start = max(start, min(w_start, end - 0.05))
+                    w_end = min(max(end, w_start + 0.05), w_end)
                     conf = max(0.65, conf * 0.9)
                     corrections.append(f"Line {idx+1}, Word '{w['word']}': Realigned timing drift")
 
@@ -235,9 +235,9 @@ class DoubleCheckLyricsVerifier:
                 avg_word_dur = line_dur / len(fixed_words)
                 for fw in fixed_words:
                     w_dur = fw["end"] - fw["start"]
-                    # If a word is unrealistically long or short, redistribute smoothly
-                    if w_dur > avg_word_dur * 2.8:
-                        fw["end"] = fw["start"] + avg_word_dur * 2.0
+                    # If a word is unrealistically long, redistribute smoothly but don't break sync
+                    if w_dur > avg_word_dur * 4.0:
+                        fw["end"] = fw["start"] + avg_word_dur * 3.0
                         corrections.append(f"Line {idx+1}, Word '{fw['word']}': Compensated long vowel hold")
 
             corrected_lyrics.append({

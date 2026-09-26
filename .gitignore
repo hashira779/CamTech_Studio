@@ -44,3 +44,6 @@ Thumbs.db
 .app_profile/
 *.log
 scratch/
+.env
+.env.*
+*.env
