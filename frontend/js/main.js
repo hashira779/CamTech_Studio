@@ -1268,8 +1268,12 @@ document.addEventListener('DOMContentLoaded', () => {
       item.dataset.index = index;
       item.dataset.start = line.start;
       item.dataset.end = line.end;
-      item.style.cssText = 'display: flex; align-items: baseline; gap: 8px; padding: 5px 8px; border-radius: 4px; cursor: pointer; transition: all 0.15s ease; border-left: 2px solid transparent; user-select: none;';
-      item.innerHTML = `<span style="font-family: monospace; font-size: 10px; color: var(--accent); opacity: 0.85; white-space: nowrap; pointer-events: none;">[${formatTime(line.start)}]</span> <span class="editable-lyric" contenteditable="true" spellcheck="false" style="flex: 1; line-height: 1.4; font-family: 'Outfit', 'Inter', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Thai', 'Noto Sans Khmer', 'Kantumruy Pro', 'Khmer OS Battambang', 'Microsoft YaHei', 'PingFang SC', 'Meiryo', 'Malgun Gothic', 'Leelawadee UI', 'Khmer UI', 'Segoe UI', sans-serif; outline: none; border-bottom: 1px dashed transparent; transition: border-color 0.2s;">${line.text}</span>`;
+
+      const isKhmer = /[\u1780-\u17FF]/.test(line.text);
+      const font = isKhmer ? "'Kantumruy Pro', 'Battambang', 'Siemreap', sans-serif" : "'Outfit', 'Inter', sans-serif";
+
+      item.style.cssText = 'display: flex; align-items: baseline; gap: 8px; padding: 6px 10px; border-radius: 6px; cursor: pointer; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1); border-left: 3px solid transparent; user-select: none; margin-bottom: 2px;';
+      item.innerHTML = `<span style="font-family: monospace; font-size: 10px; color: var(--accent); opacity: 0.85; white-space: nowrap; pointer-events: none; font-weight: 600;">[${formatTime(line.start)}]</span> <span class="editable-lyric" contenteditable="true" spellcheck="false" style="flex: 1; line-height: 1.5; font-size: 12px; font-family: ${font}; outline: none; border-bottom: 1px dashed transparent; transition: border-color 0.2s; color: rgba(255, 255, 255, 0.78);">${line.text}</span>`;
       
       const textSpan = item.querySelector('.editable-lyric');
       textSpan.addEventListener('click', (e) => {
@@ -1289,7 +1293,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       item.addEventListener('mouseenter', () => {
         if (!item.classList.contains('active')) {
-          item.style.background = 'rgba(255, 255, 255, 0.06)';
+          item.style.background = 'rgba(255, 255, 255, 0.05)';
         }
       });
       item.addEventListener('mouseleave', () => {
@@ -1329,9 +1333,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (currentTime >= start - 0.25 && currentTime <= end + 0.35) {
         if (!item.classList.contains('active')) {
           item.classList.add('active');
-          item.style.background = 'rgba(14, 165, 233, 0.2)';
-          item.style.borderLeft = '3px solid var(--accent)';
-          item.style.color = '#ffffff';
+          item.style.background = 'linear-gradient(90deg, rgba(14, 165, 233, 0.24), rgba(168, 85, 247, 0.12))';
+          item.style.borderLeft = '3px solid #38bdf8';
+          item.style.boxShadow = '0 0 16px rgba(14, 165, 233, 0.25)';
+          const textEl = item.querySelector('.editable-lyric');
+          if (textEl) textEl.style.color = '#ffffff';
           item.style.fontWeight = '600';
           item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
@@ -1339,8 +1345,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (item.classList.contains('active')) {
           item.classList.remove('active');
           item.style.background = 'transparent';
-          item.style.borderLeft = '2px solid transparent';
-          item.style.color = '';
+          item.style.borderLeft = '3px solid transparent';
+          item.style.boxShadow = 'none';
+          const textEl = item.querySelector('.editable-lyric');
+          if (textEl) textEl.style.color = 'rgba(255, 255, 255, 0.78)';
           item.style.fontWeight = 'normal';
         }
       }

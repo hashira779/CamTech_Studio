@@ -38,37 +38,32 @@ function splitLineIntoWords(text, lineStart, lineEnd) {
   const locale = detectLanguageLocale(clean);
   let tokens = [];
 
-  // 1. Universal modern Intl.Segmenter
-  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
-    try {
-      const segmenter = new Intl.Segmenter(locale, { granularity: 'word' });
-      tokens = Array.from(segmenter.segment(clean))
-        .map(s => s.segment.trim())
-        .filter(t => t.length > 0 && !/^[\s\p{P}]+$/u.test(t));
-    } catch(e) {}
-  }
+  // If text already has natural spaces (common in Khmer lyrics, English, etc.), respect phrase boundaries!
+  if (/\s+/.test(clean)) {
+    tokens = clean.split(/\s+/).filter(Boolean);
+  } else {
+    // Unspaced continuous script: use Intl.Segmenter
+    if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+      try {
+        const segmenter = new Intl.Segmenter(locale, { granularity: 'word' });
+        tokens = Array.from(segmenter.segment(clean))
+          .map(s => s.segment.trim())
+          .filter(t => t.length > 0 && !/^[\s\p{P}]+$/u.test(t));
+      } catch(e) {}
+    }
 
-  // 2. Fallback regex segmentation for unspaced scripts if Intl.Segmenter is absent or returned 1 lump
-  if (!tokens || tokens.length <= 1) {
-    if (/[\u4E00-\u9FFF\u3040-\u30FF]/.test(clean)) {
-      // CJK characters: split into characters / kana clusters while keeping Latin words intact
-      tokens = clean.match(/[a-zA-Z0-9_\'-]+|[\u4e00-\u9fff]|[\u3040-\u309f]+|[\u30a0-\u30ff]+|[^\s]/g) || [];
-      tokens = tokens.map(t => t.trim()).filter(Boolean);
-    } else if (/[\u1780-\u17FF]/.test(clean)) {
-      // Khmer syllable cluster fallback: Consonant + Coeng + Vowels/Diacritics
-      tokens = clean.match(/[\u1780-\u17A2][\u17D2][\u1780-\u17A2][\u17B6-\u17D3]*|[\u1780-\u17A2][\u17B6-\u17D3]*|[a-zA-Z0-9_\'-]+|[^\s]/g) || [];
-      tokens = tokens.map(t => t.trim()).filter(Boolean);
-    } else if (/[\u0E00-\u0E7F]/.test(clean)) {
-      // Thai cluster fallback
-      tokens = clean.match(/[\u0E01-\u0E2E][\u0E30-\u0E3A\u0E47-\u0E4E]*|[\u0E2F-\u0E5B]|[a-zA-Z0-9_\'-]+/g) || [];
-      tokens = tokens.map(t => t.trim()).filter(Boolean);
+    // Fallback if Intl.Segmenter didn't segment
+    if (!tokens || tokens.length <= 1) {
+      if (/[\u4E00-\u9FFF\u3040-\u30FF]/.test(clean)) {
+        tokens = clean.match(/[a-zA-Z0-9_\'-]+|[\u4e00-\u9fff]|[\u3040-\u309f]+|[\u30a0-\u30ff]+|[^\s]/g) || [];
+        tokens = tokens.map(t => t.trim()).filter(Boolean);
+      } else if (/[\u1780-\u17FF]/.test(clean)) {
+        tokens = clean.match(/[\u1780-\u17A2][\u17D2][\u1780-\u17A2][\u17B6-\u17D3]*|[\u1780-\u17A2][\u17B6-\u17D3]*|[a-zA-Z0-9_\'-]+|[^\s]/g) || [];
+        tokens = tokens.map(t => t.trim()).filter(Boolean);
+      }
     }
   }
 
-  // 3. Standard whitespace splitting fallback for spaced languages
-  if (!tokens || tokens.length === 0) {
-    tokens = clean.split(/\s+/).filter(Boolean);
-  }
   if (!tokens || tokens.length === 0) {
     tokens = [clean];
   }
@@ -117,7 +112,7 @@ export function updateLyricState(currentTime) {
     return;
   }
 
-  // Ensure words are always populated (especially for Khmer / imported subtitles)
+  // Ensure words are populated
   if (!activeLine.words || activeLine.words.length === 0) {
     activeLine.words = splitLineIntoWords(activeLine.text, activeLine.start, activeLine.end);
   }
@@ -162,13 +157,13 @@ export function drawLyrics(ctx, w, h) {
   const style = state.lyricStyle || 'karaoke';
   const pal = PALETTES[state.palette] || PALETTES['cyberpunk'];
 
-  // Handle instrumental breaks gracefully
+  // Handle instrumental breaks gracefully with glassmorphism
   if (activeLyricState.isInstrumental) {
     if (!state.lyrics || state.lyrics.length === 0) return;
     const next = activeLyricState.nextLine;
     ctx.save();
-    let fontSize = Math.max(13, Math.floor(h * 0.032));
-    ctx.font = `600 ${fontSize}px 'Outfit', 'Inter', sans-serif`;
+    let fontSize = Math.max(13, Math.floor(h * 0.030));
+    ctx.font = `600 ${fontSize}px 'Outfit', 'Inter', 'Kantumruy Pro', sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
@@ -186,44 +181,58 @@ export function drawLyrics(ctx, w, h) {
       text = "♪ Instrumental Outro ♪";
     }
 
-    const textY = h * 0.88;
-    const textWidth = ctx.measureText(text).width + 36;
+    const textY = h * 0.86;
+    const textWidth = ctx.measureText(text).width + 44;
+    const padY = fontSize * 0.85;
 
-    ctx.fillStyle = 'rgba(10, 15, 25, 0.78)';
-    ctx.strokeStyle = `rgba(${pal.primary.join(',')}, 0.45)`;
+    // Premium glassmorphic badge
+    const grad = ctx.createLinearGradient(0, textY - padY, 0, textY + padY);
+    grad.addColorStop(0, 'rgba(15, 23, 42, 0.85)');
+    grad.addColorStop(1, 'rgba(6, 9, 18, 0.92)');
+    ctx.fillStyle = grad;
+    ctx.strokeStyle = `rgba(${pal.primary.join(',')}, 0.50)`;
     ctx.lineWidth = 1.5;
+    ctx.shadowColor = `rgba(${pal.primary.join(',')}, 0.35)`;
+    ctx.shadowBlur = 16;
     ctx.beginPath();
-    ctx.roundRect(w / 2 - textWidth / 2, textY - fontSize * 0.9, textWidth, fontSize * 1.8, fontSize * 0.9);
+    ctx.roundRect(w / 2 - textWidth / 2, textY - padY, textWidth, padY * 2, padY);
     ctx.fill();
     ctx.stroke();
 
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
     ctx.fillText(text, w / 2, textY);
     ctx.restore();
     return;
   }
 
-  const { line, activeWordIndex, wordProgress, alpha } = activeLyricState;
+  const { line, nextLine, activeWordIndex, wordProgress, alpha } = activeLyricState;
   if (!line) return;
 
   ctx.save();
   ctx.globalAlpha = alpha;
 
-  let fontSize = Math.floor(h * 0.052);
-  const fontFamilies = "'Outfit', 'Inter', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Thai', 'Noto Sans Khmer', 'Kantumruy Pro', 'Khmer OS Battambang', 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans', 'Meiryo', 'Malgun Gothic', 'Leelawadee UI', 'Khmer UI', 'Segoe UI', sans-serif";
+  const isKhmer = /[\u1780-\u17FF]/.test(line.text || '');
+  let fontSize = Math.floor(h * 0.054);
+
+  // Khmer-first typography stack for breathtaking rendering
+  const fontFamilies = isKhmer
+    ? "'Kantumruy Pro', 'Battambang', 'Siemreap', 'Noto Sans Khmer', 'Outfit', 'Inter', sans-serif"
+    : "'Outfit', 'Inter', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Segoe UI', sans-serif";
+
   ctx.font = `700 ${fontSize}px ${fontFamilies}`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
 
-  const textY = h * 0.88; // Pill box bottom
+  const textY = h * 0.85;
 
   let words = line.words || [];
   if (words.length === 0 && line.text) {
     words = splitLineIntoWords(line.text, line.start, line.end);
   }
 
-  const isUnspaced = /[\u1780-\u17FF\u4E00-\u9FFF\u3040-\u30FF\u0E00-\u0E7F\u0E80-\u0EFF\u1000-\u109F]/.test(line.text || '');
-  const spaceWidth = isUnspaced ? Math.round(fontSize * 0.08) : ctx.measureText(" ").width;
+  // Natural space width
+  const spaceWidth = ctx.measureText(" ").width * 0.85;
 
   // Calculate total width of the line to center it properly
   let totalWidth = 0;
@@ -235,10 +244,10 @@ export function drawLyrics(ctx, w, h) {
     totalWidth += width + (i < words.length - 1 ? spaceWidth : 0);
   }
 
-  // Auto-scale if text exceeds 88% of screen width
-  if (totalWidth > w * 0.88) {
-    const scale = (w * 0.88) / totalWidth;
-    fontSize = Math.max(14, Math.floor(fontSize * scale));
+  // Auto-scale if text exceeds 86% of screen width
+  if (totalWidth > w * 0.86) {
+    const scale = (w * 0.86) / totalWidth;
+    fontSize = Math.max(15, Math.floor(fontSize * scale));
     ctx.font = `700 ${fontSize}px ${fontFamilies}`;
     totalWidth = 0;
     wordWidths = [];
@@ -249,36 +258,62 @@ export function drawLyrics(ctx, w, h) {
     }
   }
 
-  let startX = Math.max(20, (w - totalWidth) / 2);
-  const paddingX = fontSize * 0.65;
-  const paddingY = fontSize * 0.70;
+  let startX = Math.max(24, (w - totalWidth) / 2);
+  const paddingX = fontSize * 0.80;
+  const paddingY = fontSize * 0.72;
 
-  // Render background according to style
+  // ============ Render Glassmorphism Container ============
   if (style !== 'cinematic') {
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.75)';
-    ctx.shadowBlur = 12;
-    if (style === 'pop') {
-      ctx.fillStyle = 'rgba(15, 15, 25, 0.88)';
-      ctx.strokeStyle = pal.highlight;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.roundRect(startX - paddingX, textY - paddingY, totalWidth + paddingX * 2, paddingY * 2, paddingY);
-      ctx.fill();
-      ctx.stroke();
-    } else {
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
-      ctx.beginPath();
-      ctx.roundRect(startX - paddingX, textY - paddingY, totalWidth + paddingX * 2, paddingY * 2, paddingY);
-      ctx.fill();
-    }
-    ctx.shadowBlur = 0;
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+    ctx.shadowBlur = 24;
+    ctx.shadowOffsetY = 6;
+
+    // Multi-stop glass gradient
+    const pillGrad = ctx.createLinearGradient(0, textY - paddingY, 0, textY + paddingY);
+    pillGrad.addColorStop(0, 'rgba(15, 23, 42, 0.86)');
+    pillGrad.addColorStop(1, 'rgba(5, 8, 16, 0.94)');
+    ctx.fillStyle = pillGrad;
+
+    const cornerRadius = paddingY;
+    ctx.beginPath();
+    ctx.roundRect(startX - paddingX, textY - paddingY, totalWidth + paddingX * 2, paddingY * 2, cornerRadius);
+    ctx.fill();
+
+    // Luminescent neon border with palette color
+    ctx.strokeStyle = `rgba(${pal.primary.join(',')}, 0.42)`;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Specular top highlight sheen
+    ctx.beginPath();
+    ctx.roundRect(startX - paddingX + 2, textY - paddingY + 1, totalWidth + paddingX * 2 - 4, paddingY * 0.65, cornerRadius - 1);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.fill();
+
+    ctx.restore();
   } else {
-    // Cinematic: deep text drop shadow, no pill
+    // Cinematic style: deep drop shadow
     ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
-    ctx.shadowBlur = 12;
+    ctx.shadowBlur = 14;
+    ctx.shadowOffsetY = 3;
   }
 
-  // Draw Words with style-specific kinetic effects
+  // ============ Draw Next Line Preview (Floating Above/Below) ============
+  if (nextLine && nextLine.text) {
+    ctx.save();
+    const nextFontSize = Math.max(12, Math.floor(fontSize * 0.58));
+    ctx.font = `600 ${nextFontSize}px ${fontFamilies}`;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.42)';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+    ctx.shadowBlur = 8;
+    const nextY = textY - paddingY - nextFontSize * 0.9;
+    ctx.fillText(nextLine.text, w / 2, nextY);
+    ctx.restore();
+  }
+
+  // ============ Draw Active Words with Kinetic Effects ============
   let currentX = startX;
   for (let i = 0; i < words.length; i++) {
     const wordText = words[i].word;
@@ -299,52 +334,55 @@ export function drawLyrics(ctx, w, h) {
       const partialText = wordText.substring(0, charCount);
       ctx.fillStyle = pal.highlight;
       ctx.shadowColor = pal.glow;
-      ctx.shadowBlur = 10;
+      ctx.shadowBlur = 12;
       ctx.fillText(partialText, currentX, wordY);
     } else if (style === 'highlight' && isCurrent) {
-      ctx.fillStyle = `rgba(${pal.primary.join(',')}, 0.30)`;
+      // Glow pill around current word
+      ctx.fillStyle = `rgba(${pal.primary.join(',')}, 0.35)`;
       ctx.beginPath();
-      ctx.roundRect(currentX - 2, wordY - fontSize * 0.65, wordW + 4, fontSize * 1.3, 4);
+      ctx.roundRect(currentX - 4, wordY - fontSize * 0.65, wordW + 8, fontSize * 1.3, 6);
       ctx.fill();
 
       ctx.fillStyle = pal.highlight;
       ctx.shadowColor = pal.glow;
-      ctx.shadowBlur = 14;
+      ctx.shadowBlur = 16;
       ctx.fillText(wordText, currentX, wordY);
     } else if (style === 'glow' && isCurrent) {
       ctx.fillStyle = '#ffffff';
       ctx.shadowColor = pal.glow;
-      ctx.shadowBlur = 16 + Math.sin(wordProgress * Math.PI) * 8;
+      ctx.shadowBlur = 18 + Math.sin(wordProgress * Math.PI) * 10;
       ctx.fillText(wordText, currentX, wordY);
     } else if (style === 'cinematic') {
       if (isPast || isCurrent) {
         ctx.fillStyle = '#ffd700'; // Gold
-        ctx.shadowColor = 'rgba(255, 215, 0, 0.6)';
-        ctx.shadowBlur = 10;
+        ctx.shadowColor = 'rgba(255, 215, 0, 0.7)';
+        ctx.shadowBlur = 12;
       } else {
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.78)';
       }
       ctx.fillText(wordText, currentX, wordY);
     } else {
-      // Default: Karaoke fill-sweep with left alignment
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.88)';
+      // Default: Karaoke fill-sweep with leading edge glow
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
       if (isPast) {
         ctx.fillStyle = pal.highlight;
         ctx.shadowColor = pal.glow;
-        ctx.shadowBlur = 8;
+        ctx.shadowBlur = 10;
         ctx.fillText(wordText, currentX, wordY);
       } else if (isCurrent) {
         // Base muted word
         ctx.fillText(wordText, currentX, wordY);
 
-        // Sweeping highlight overlay
+        // Sweeping highlight overlay with smooth gradient leading edge
         ctx.save();
         ctx.beginPath();
-        ctx.rect(currentX, wordY - fontSize * 1.1, wordW * wordProgress, fontSize * 2.2);
+        const sweepW = wordW * wordProgress;
+        ctx.rect(currentX, wordY - fontSize * 1.2, sweepW, fontSize * 2.4);
         ctx.clip();
+
         ctx.fillStyle = pal.highlight;
         ctx.shadowColor = pal.glow;
-        ctx.shadowBlur = 14;
+        ctx.shadowBlur = 16;
         ctx.fillText(wordText, currentX, wordY);
         ctx.restore();
       } else {

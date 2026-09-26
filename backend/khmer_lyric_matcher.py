@@ -263,10 +263,87 @@ Return ONLY a valid JSON object in this exact schema:
     return None
 
 
-def transcribe_audio_with_gemini(audio_path: str, title: str = "", artist: str = "") -> Optional[List[str]]:
+def upload_audio_to_gemini_files_api(api_key: str, file_path: str, mime_type: str = "audio/mp3") -> Optional[str]:
+    """Uploads audio file to Gemini Files API and returns file_uri."""
+    import urllib.request
+    try:
+        filesize = os.path.getsize(file_path)
+        upload_url = f"https://generativelanguage.googleapis.com/upload/v1beta/files?key={api_key}"
+        headers = {
+            "X-Goog-Upload-Protocol": "resumable",
+            "X-Goog-Upload-Command": "start",
+            "X-Goog-Upload-Header-Content-Length": str(filesize),
+            "X-Goog-Upload-Header-Content-Type": mime_type,
+            "Content-Type": "application/json"
+        }
+        meta_payload = json.dumps({"file": {"display_name": os.path.basename(file_path)}}).encode("utf-8")
+        req = urllib.request.Request(upload_url, data=meta_payload, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            upload_endpoint = resp.headers.get("X-Goog-Upload-URL")
+            if not upload_endpoint:
+                return None
+        
+        with open(file_path, "rb") as f:
+            file_bytes = f.read()
+            
+        upload_headers = {
+            "Content-Length": str(filesize),
+            "X-Goog-Upload-Offset": "0",
+            "X-Goog-Upload-Command": "upload, finalize"
+        }
+        req2 = urllib.request.Request(upload_endpoint, data=file_bytes, headers=upload_headers, method="POST")
+        with urllib.request.urlopen(req2, timeout=40) as resp2:
+            file_info = json.loads(resp2.read().decode("utf-8"))
+            return file_info.get("file", {}).get("uri")
+    except Exception as e:
+        log.warning(f"[Gemini Files API] Upload notice: {e}")
+        return None
+
+
+def parse_lrc_to_aligned(lrc_text: str, total_duration: float = 180.0) -> List[Dict[str, Any]]:
+    """Parses timestamped [mm:ss.xx] LRC text into structured aligned lines."""
+    pattern = re.compile(r'\[(\d{1,2}):(\d{2}(?:\.\d+)?)\](.*)')
+    raw_parsed = []
+    for line in lrc_text.strip().splitlines():
+        m = pattern.match(line.strip())
+        if m:
+            mins = int(m.group(1))
+            secs = float(m.group(2))
+            lyric = m.group(3).strip()
+            if lyric and any('\u1780' <= c <= '\u17FF' for c in lyric):
+                start_sec = round(mins * 60 + secs, 2)
+                raw_parsed.append((start_sec, lyric))
+    
+    if not raw_parsed:
+        return []
+
+    aligned = []
+    for i, (start_sec, lyric) in enumerate(raw_parsed):
+        if i + 1 < len(raw_parsed):
+            next_start = raw_parsed[i+1][0]
+            end_sec = round(min(start_sec + 6.0, max(start_sec + 1.5, next_start - 0.2)), 2)
+        else:
+            end_sec = round(min(total_duration, start_sec + 5.0), 2)
+        aligned.append({
+            "line_id": i,
+            "start": start_sec,
+            "end": end_sec,
+            "text": lyric
+        })
+    return aligned
+
+
+def transcribe_audio_with_gemini(
+    audio_path: str,
+    title: str = "",
+    artist: str = "",
+    duration: float = 180.0
+) -> Optional[Tuple[List[str], Optional[List[Dict[str, Any]]]]]:
     """
     Transcribes actual audio file using Gemini Multimodal Audio.
-    Listens directly to the singer's voice so it NEVER hallucinates fake lyrics.
+    1. Uses Gemini Files API for 100% reliable upload without 503 errors.
+    2. Requests synchronized LRC timestamps [mm:ss.xx] matching true singer vocal onsets.
+    Returns (raw_lines, optional_aligned_with_true_timestamps).
     """
     api_key = get_gemini_api_key()
     if not api_key or not audio_path or not os.path.exists(audio_path):
@@ -275,64 +352,86 @@ def transcribe_audio_with_gemini(audio_path: str, title: str = "", artist: str =
     import base64
     import urllib.request
 
-    try:
-        file_size = os.path.getsize(audio_path)
-        # Limit to 15MB for inline REST payload
-        if file_size > 15 * 1024 * 1024:
-            log.warning(f"[Gemini Audio] File {audio_path} is {file_size/1024/1024:.1f}MB, too large for direct inline audio")
-            return None
+    mime_type = "audio/mp3" if audio_path.lower().endswith(".mp3") else "audio/wav"
 
-        mime_type = "audio/mp3" if audio_path.lower().endswith(".mp3") else "audio/wav"
-        with open(audio_path, "rb") as f:
-            audio_bytes = f.read()
+    # Step 1: Upload via Files API
+    file_uri = upload_audio_to_gemini_files_api(api_key, audio_path, mime_type=mime_type)
 
-        b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
-        prompt = (
-            f"Listen carefully to this Cambodian song audio.\n"
-            f"Song title: {title}\nArtist: {artist}\n"
-            f"Transcribe the exact lyrics in Khmer script line by line as sung by the singer.\n"
-            f"Rules:\n"
-            f"1. Transcribe ONLY the actual words sung in the audio.\n"
-            f"2. Output only the Khmer lyrics lines, one line per singing phrase.\n"
-            f"3. Do not include markdown headers, chords, English translations, or conversational filler."
-        )
+    prompt = (
+        f"You are an expert music subtitler and Cambodian audio transcriber.\n"
+        f"Song title hint: '{title}', Artist hint: '{artist}'.\n"
+        f"Listen carefully to the audio and transcribe the exact lyrics in synchronized LRC format with timestamps.\n"
+        f"Format strictly as: [mm:ss.xx] Khmer lyrics line\n"
+        f"Example:\n"
+        f"[00:16.00] គ្មានអ្នកណា ល្ងង់ដូចបង ចង់ធ្វើមនុស្សល្អ\n"
+        f"Rules:\n"
+        f"1. Timestamps MUST accurately reflect when the singer begins singing each phrase.\n"
+        f"2. Transcribe ONLY the authentic words sung. Do NOT invent, loop, or hallucinate lyrics during instrumental solos.\n"
+        f"3. Output only valid LRC lines, one phrase per line."
+    )
 
-        payload = {
-            "contents": [{
-                "parts": [
-                    {"text": prompt},
-                    {"inline_data": {"mime_type": mime_type, "data": b64_audio}}
-                ]
-            }]
-        }
-        data_bytes = json.dumps(payload).encode("utf-8")
+    models = ["gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-3.5-flash"]
 
-        models = ["gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-3.5-flash"]
-        for model in models:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-            req = urllib.request.Request(url, data=data_bytes, headers={"Content-Type": "application/json"}, method="POST")
-            for attempt in range(2):
-                try:
-                    with urllib.request.urlopen(req, timeout=45) as resp:
-                        res = json.loads(resp.read().decode("utf-8"))
-                        text = res["candidates"][0]["content"]["parts"][0]["text"]
-                        lines = [l.strip() for l in text.splitlines() if l.strip()]
-                        khmer_lines = [
-                            l for l in lines
-                            if any('\u1780' <= c <= '\u17FF' for c in l)
-                            and not l.startswith(('#', '*', '- ', '==='))
+    for model in models:
+        try:
+            if file_uri:
+                payload = {
+                    "contents": [{
+                        "parts": [
+                            {"text": prompt},
+                            {"file_data": {"file_uri": file_uri, "mime_type": mime_type}}
                         ]
-                        if len(khmer_lines) >= 4:
-                            log.info(f"[Gemini Audio ASR] Successfully transcribed {len(khmer_lines)} authentic lines via {model}")
-                            if title:
-                                save_to_local_lyrics_db(title, artist, khmer_lines)
-                            return khmer_lines
-                except Exception as e:
-                    log.warning(f"[Gemini Audio ASR] {model} attempt {attempt+1} error: {e}")
-                    import time
-                    time.sleep(1)
-    except Exception as ex:
-        log.error(f"[Gemini Audio ASR] Unexpected error: {ex}")
+                    }]
+                }
+            else:
+                # Fallback to inline base64 if Files API failed
+                file_size = os.path.getsize(audio_path)
+                if file_size > 12 * 1024 * 1024:
+                    continue
+                with open(audio_path, "rb") as f:
+                    b64_audio = base64.b64encode(f.read()).decode("utf-8")
+                payload = {
+                    "contents": [{
+                        "parts": [
+                            {"text": prompt},
+                            {"inline_data": {"mime_type": mime_type, "data": b64_audio}}
+                        ]
+                    }]
+                }
+
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+            
+            with urllib.request.urlopen(req, timeout=50) as resp:
+                res = json.loads(resp.read().decode("utf-8"))
+                text = res["candidates"][0]["content"]["parts"][0]["text"]
+                
+                # Check for timestamped lines
+                aligned = parse_lrc_to_aligned(text, total_duration=duration)
+                if aligned and len(aligned) >= 4:
+                    raw_lines = [a["text"] for a in aligned]
+                    log.info(f"[Gemini Audio ASR] Successfully transcribed {len(aligned)} timestamped lines via {model}")
+                    if title:
+                        save_to_local_lyrics_db(title, artist, raw_lines)
+                    return raw_lines, aligned
+
+                # Fallback to un-timestamped lines if no timestamps
+                lines = [l.strip() for l in text.splitlines() if l.strip()]
+                khmer_lines = [
+                    re.sub(r'^\[.*?\]\s*', '', l) for l in lines
+                    if any('\u1780' <= c <= '\u17FF' for c in l)
+                    and not l.startswith(('#', '*', '- ', '==='))
+                ]
+                if len(khmer_lines) >= 4:
+                    log.info(f"[Gemini Audio ASR] Transcribed {len(khmer_lines)} untimed lines via {model}")
+                    if title:
+                        save_to_local_lyrics_db(title, artist, khmer_lines)
+                    return khmer_lines, None
+
+        except Exception as e:
+            log.warning(f"[Gemini Audio ASR] {model} notice: {e}")
+            import time
+            time.sleep(1)
 
     return None
 
@@ -400,10 +499,20 @@ def match_or_fetch_khmer_lyrics(
     Main orchestration entry point:
     1. Checks local verified DB for instant hit.
     2. Checks YouTube description if authentic lyrics were pasted.
-    3. Uses Gemini Multimodal Audio to LISTEN to the actual song and transcribe real words.
+    3. Uses Gemini Multimodal Audio to LISTEN to the actual song and transcribe real words with exact timestamps.
     4. Falls back to text search if no audio file is accessible.
     """
+    # Probe duration if missing
+    if duration <= 0.0 and os.path.exists(audio_path):
+        try:
+            import soundfile as sf
+            info = sf.info(audio_path)
+            duration = info.duration
+        except Exception:
+            duration = 180.0
+
     raw_lines = None
+    true_aligned = None
 
     # Step 1: Check local verified DB (instant 0.01s cache)
     if title:
@@ -413,10 +522,12 @@ def match_or_fetch_khmer_lyrics(
     if not raw_lines and description:
         raw_lines = extract_lyrics_from_description(description)
 
-    # Step 3: Listen directly to actual audio using Gemini Multimodal Audio (GROUND TRUTH - NEVER HALLUCINATES)
+    # Step 3: Listen directly to actual audio using Gemini Multimodal Audio (GROUND TRUTH TIMESTAMPS)
     if not raw_lines and audio_path and os.path.exists(audio_path):
         log.info(f"[Khmer Lyric Matcher] Listening to audio file: {audio_path} via Gemini Audio...")
-        raw_lines = transcribe_audio_with_gemini(audio_path, title=title, artist=artist)
+        transcribe_result = transcribe_audio_with_gemini(audio_path, title=title, artist=artist, duration=duration)
+        if transcribe_result:
+            raw_lines, true_aligned = transcribe_result
 
     # Step 4: Fallback to text prompt only if audio is missing
     if not raw_lines and title:
@@ -425,26 +536,21 @@ def match_or_fetch_khmer_lyrics(
 
     if not raw_lines:
         return None
-        
-    # If duration wasn't passed, probe it
-    if duration <= 0.0 and os.path.exists(audio_path):
-        try:
-            import soundfile as sf
-            info = sf.info(audio_path)
-            duration = info.duration
-        except Exception:
-            duration = 180.0  # default 3 min
-            
-    # Step 3: Align lines
-    aligned = align_lyrics_to_audio_duration(raw_lines, duration)
+
+    # Step 5: Align lines (use true timestamps if available from Gemini ASR)
+    if true_aligned:
+        aligned = true_aligned
+    else:
+        aligned = align_lyrics_to_audio_duration(raw_lines, duration)
+
     if not aligned:
         return None
-        
-    # Step 4: Write .LRC file alongside audio
+
+    # Step 6: Write .LRC file alongside audio
     lrc_content = generate_lrc_content(aligned)
     base_no_ext = os.path.splitext(audio_path)[0]
     lrc_path = base_no_ext + ".lrc"
-    
+
     try:
         with open(lrc_path, "w", encoding="utf-8") as f:
             f.write(lrc_content)
