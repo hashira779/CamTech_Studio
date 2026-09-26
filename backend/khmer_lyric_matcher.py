@@ -184,6 +184,137 @@ def generate_lrc_content(aligned_lines: List[Dict[str, Any]]) -> str:
     return "\n".join(out)
 
 
+def get_gemini_api_key() -> str:
+    """Retrieves Gemini API key from environment or .env file."""
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+        if os.path.exists(env_path):
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip().startswith("GEMINI_API_KEY="):
+                            api_key = line.strip().split("=", 1)[1].strip(' "\'')
+                            break
+            except Exception:
+                pass
+    return api_key
+
+
+def gemini_clean_youtube_metadata(
+    raw_title: str,
+    uploader: str = "",
+    description: str = ""
+) -> Optional[Tuple[str, str, str]]:
+    """
+    Uses Gemini AI to cleanly extract (Song Title, Singer/Artist, Language) from a YouTube title & channel.
+    Strips noise like [Official MV], (Lyrics), 4K, HD, Video Animation, Official Audio, Remix.
+    Ensures title and singer are NOT flipped (especially for Khmer YouTube conventions).
+    Returns (clean_title, clean_artist, detected_language) or None.
+    """
+    api_key = get_gemini_api_key()
+    if not api_key or not raw_title:
+        return None
+
+    import urllib.request
+    models_to_try = ["gemini-3.1-flash-lite", "gemini-flash-latest", "gemini-3.5-flash"]
+
+    prompt = f"""Given this YouTube music video:
+Title: "{raw_title}"
+Uploader/Channel: "{uploader}"
+
+Extract the true Song Title and Singer/Artist name.
+Rules:
+1. Strip all noise like [Official MV], (Lyrics Video), 4K, HD, Video Animation, Official Audio, Remix.
+2. Identify the true song title in the original language (Khmer, English, Vietnamese, etc.).
+3. Identify the true singer / performing artist name.
+4. If this is a Khmer song, ensure the song title and singer are NOT swapped (e.g. ស៊ីន ស៊ីសាមុត / Sinn Sisamouth is the singer, ផាត់ជាយបណ្តូលចិត្ត is the song title).
+Return ONLY a valid JSON object in this exact schema:
+{{"title": "Clean Song Title", "artist": "Clean Artist Name", "language": "km/en/vi/th"}}"""
+
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"response_mime_type": "application/json"}
+    }
+    data_bytes = json.dumps(payload).encode("utf-8")
+
+    for model in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        headers = {
+            "Content-Type": "application/json",
+            "X-goog-api-key": api_key
+        }
+        try:
+            req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=6) as response:
+                result = json.loads(response.read().decode("utf-8"))
+                text = result["candidates"][0]["content"]["parts"][0]["text"]
+                parsed = json.loads(text)
+                t = parsed.get("title", "").strip()
+                a = parsed.get("artist", "").strip()
+                lang = parsed.get("language", "km").strip()
+                if t and a:
+                    log.info(f"[Gemini Metadata] Cleaned via {model}: Title='{t}', Artist='{a}', Lang='{lang}'")
+                    return t, a, lang
+        except Exception as e:
+            log.debug(f"[Gemini Metadata] {model} notice: {e}")
+            continue
+
+    return None
+
+
+def fetch_lyrics_with_gemini(title: str, artist: str = "", description: str = "") -> Optional[List[str]]:
+    """
+    Leverages Gemini to retrieve authentic Khmer lyrics instantly (2-3 seconds).
+    Bypasses slow CPU Demucs/ASR completely!
+    """
+    api_key = get_gemini_api_key()
+    if not api_key:
+        return None
+
+    import urllib.request
+    models_to_try = ["gemini-3.1-flash-lite", "gemini-flash-latest", "gemini-3.5-flash"]
+
+    desc_hint = f" (Context: {description[:150]})" if description else ""
+    prompt = (
+        f"You are an expert in Cambodian and international song lyrics. Provide the exact, authentic Khmer lyrics for the song '{title}' "
+        f"{f'sung by {artist}' if artist else ''}{desc_hint}.\n"
+        f"Rules:\n"
+        f"1. Return ONLY the Khmer lyrics, one singing line per line.\n"
+        f"2. Do not include introductory notes, chat greetings, or explanations.\n"
+        f"3. Ensure traditional correct Khmer spelling."
+    )
+
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    data_bytes = json.dumps(payload).encode("utf-8")
+
+    for model in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        headers = {
+            "Content-Type": "application/json",
+            "X-goog-api-key": api_key
+        }
+        try:
+            req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=12) as response:
+                result = json.loads(response.read().decode("utf-8"))
+                text = result["candidates"][0]["content"]["parts"][0]["text"]
+                lines = [
+                    line.strip() for line in text.splitlines()
+                    if line.strip() and not line.strip().startswith(("#", "===", "ទំនុកច្រៀង", "បទ៖", "Here", "Sure", "```"))
+                ]
+                # Filter out pure English chatter lines
+                khmer_lines = [l for l in lines if any('\u1780' <= c <= '\u17FF' for c in l)]
+                if len(khmer_lines) >= 6:
+                    log.info(f"[Gemini Lyrics] Retrieved {len(khmer_lines)} lines for '{title}' via {model}")
+                    return khmer_lines
+        except Exception as e:
+            log.warning(f"[Gemini Lyrics] {model} attempt failed: {e}")
+            continue
+
+    return None
+
+
 def match_or_fetch_khmer_lyrics(
     audio_path: str,
     title: str,
@@ -197,14 +328,18 @@ def match_or_fetch_khmer_lyrics(
     Returns (lrc_file_path, parsed_lyrics_list) or None.
     """
     raw_lines = None
-    
+
     # Step 1: Check YouTube description
     if description:
         raw_lines = extract_lyrics_from_description(description)
-        
+
     # Step 2: Check local verified DB
     if not raw_lines and title:
         raw_lines = search_local_lyrics_db(title, artist)
+
+    # Step 3: Fetch via Gemini Cloud AI (instant 2-3s, authentic)
+    if not raw_lines and title:
+        raw_lines = fetch_lyrics_with_gemini(title, artist, description=description)
         
     if not raw_lines:
         return None

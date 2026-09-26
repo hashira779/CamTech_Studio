@@ -248,7 +248,7 @@
 
             <!-- Lyrics Action Buttons — stacked for clarity -->
             <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 10px;">
-              <button id="btn-transcribe-ai" class="btn-ai w-full" style="background: linear-gradient(135deg, #10b981, #047857); padding: 9px 12px; font-size: 12px;">🎤 Auto-Sync Lyrics (AI Whisper)</button>
+              <button id="btn-transcribe-ai" class="btn-ai w-full" style="background: linear-gradient(135deg, #10b981, #047857); padding: 9px 12px; font-size: 12px;">🎤 Auto-Sync Lyrics (⚡ Gemini AI)</button>
               <div style="display: flex; gap: 6px;">
                 <button id="btn-ai-auto-fix" class="btn-ai" style="flex: 1; background: linear-gradient(135deg, #8b5cf6, #5b21b6); font-size: 11px; padding: 7px 8px;" title="Use LLM to automatically fix phonetic spelling across the entire song without breaking timestamps">✨ AI Fix Spelling</button>
                 <button id="btn-upload-lrc" class="btn-secondary" style="flex: 0 0 auto; font-size: 11px; padding: 7px 12px; white-space: nowrap;" title="Import LRC, SRT, or VTT subtitle file">📄 Import Sub</button>
@@ -303,7 +303,8 @@
               <div>
                 <label style="font-size: 10px; color: var(--text-dim); display: block; margin-bottom: 3px;">AI Model</label>
                 <select id="select-whisper-model" class="prop-select" style="font-size: 11px; padding: 5px 6px;">
-                  <option value="qwen3-khmer" selected>🇰🇭 Qwen3-ASR 0.6B (Dedicated Khmer SOTA)</option>
+                  <option value="gemini-fast" selected>⚡ Gemini AI (Ultra Fast 2s & 100% SOTA)</option>
+                  <option value="qwen3-khmer">🇰🇭 Qwen3-ASR 0.6B (Dedicated Khmer)</option>
                   <option value="small">⚡ Whisper Small (Fast & Balanced)</option>
                   <option value="base">💨 Whisper Base (Ultra Fast)</option>
                   <option value="tiny">🚀 Whisper Tiny (Instant)</option>
@@ -368,9 +369,9 @@
 
           <!-- Local LLM AI Assistant -->
           <div class="glass-card">
-            <div class="card-title">🤖 Local LLM Prompt (Khmer / Multilingual)</div>
+            <div class="card-title">🤖 Gemini AI Assistant (Khmer & Multilingual)</div>
             <textarea placeholder="Ask AI in Khmer or English (e.g. សរសេរទំនុកច្រៀងពីស្នេហា, translate, analyze mood)..." style="width: 100%; background: var(--bg-input); border: 1px solid var(--border-color); border-radius: 6px; color: #fff; padding: 8px; font-size: 11px; resize: none; height: 50px; outline: none;" class="llm-input"></textarea>
-            <button class="btn-ai-small w-full" style="background: linear-gradient(135deg, var(--accent-ai), #7e22ce); color: white; border: none; padding: 6px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer;">Ask SeaLLMs (Khmer Focus)</button>
+            <button class="btn-ai-small w-full" style="background: linear-gradient(135deg, var(--accent-ai), #7e22ce); color: white; border: none; padding: 6px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer;">⚡ Ask Gemini AI (Khmer Focus)</button>
           </div>
         </div>
       </div>

@@ -414,7 +414,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!text) return;
       
       try {
-        setButtonLoading(llmBtn, 'Thinking...');
+        setButtonLoading(llmBtn, '⚡ Asking Gemini...');
         const res = await fetch('/api/ai/llm/analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -424,15 +424,15 @@ document.addEventListener('DOMContentLoaded', () => {
         
         if (data.analysis) {
           llmInput.value = data.analysis;
-          showToast('🤖 AI Response', data.analysis.substring(0, 80) + '...', 'success');
+          showToast('⚡ Gemini AI Response', data.analysis.substring(0, 80) + '...', 'success');
         } else if (data.status === 'error') {
-          llmInput.value = data.analysis || 'Model not loaded. Run: pip install llama-cpp-python';
-          showToast('LLM Error', 'Model not installed or loaded', 'error');
+          llmInput.value = data.analysis || 'Gemini AI notice: Unable to process request.';
+          showToast('AI Error', 'Could not get response', 'error');
         }
       } catch (err) {
-        showToast('LLM Error', err.message, 'error');
+        showToast('AI Error', err.message, 'error');
       } finally {
-        clearButtonLoading(llmBtn, 'Ask SeaLLMs');
+        clearButtonLoading(llmBtn, '⚡ Ask Gemini AI (Khmer Focus)');
       }
     });
   }
@@ -1976,6 +1976,9 @@ document.addEventListener('DOMContentLoaded', () => {
           setStudioPipelineProgress(1, 100, `✅ Ready: "${data.title}" (100%)`, 'YouTube Stream');
           setGlobalProgress(100, true, 'YouTube Stream');
           showToast('Download Complete', `"${data.title}" loaded successfully (100%)`, 'success');
+          if (data.lyrics && data.lyrics.length > 0) {
+            showToast('🤖 Gemini AI Synced', `${data.lyrics.length} authentic lyric lines loaded automatically!`, 'success', 5000);
+          }
 
           loadAudioTrack({
             src: data.audio_url,
@@ -2241,6 +2244,13 @@ document.addEventListener('DOMContentLoaded', () => {
         if (progressStatus && elapsed > 2 && currentPercent < 18) {
           progressStatus.textContent = `Analyzing audio & preparing AI (${Math.round(elapsed)}s)...`;
         }
+      } else if (currentPercent >= 20 && currentPercent < 42) {
+        // Demucs vocal isolation running on CPU
+        const demucsTicks = Math.min(21, Math.floor(elapsed * 0.18));
+        currentPercent = Math.min(41, 20 + demucsTicks);
+        if (progressStatus) {
+          progressStatus.textContent = `Separating vocals from instruments (Demucs CPU)... (${Math.round(elapsed)}s)`;
+        }
       }
 
       const displayPct = Math.min(100, Math.floor(currentPercent));
@@ -2331,8 +2341,12 @@ document.addEventListener('DOMContentLoaded', () => {
         targetLang = (/[\u1780-\u17FF]/.test(state.audioPath || '') || /[\u1780-\u17FF]/.test(state.audioServerPath || '')) ? 'km' : null;
       }
       const useDemucsCheck = document.getElementById('check-use-demucs');
-      const useDemucs = useDemucsCheck ? useDemucsCheck.checked : true;
-      const targetModel = modelSelect ? modelSelect.value : (targetLang === 'km' ? 'qwen3-khmer' : 'small');
+      let useDemucs = useDemucsCheck ? useDemucsCheck.checked : true;
+      const targetModel = modelSelect ? modelSelect.value : 'gemini-fast';
+      // Auto-skip Demucs if Gemini Cloud AI is chosen to prevent 3-minute CPU freeze!
+      if (targetModel === 'gemini-fast') {
+        useDemucs = false;
+      }
       try {
         await runAITranscription({ targetLang, targetModel, useDemucs, forceAI: true });
       } catch (err) {

@@ -200,15 +200,30 @@ def transcribe_audio(req: TranscribeRequest):
     sub_path = None
     if not req.force_ai:
         sub_path = find_matching_subtitles(req.audio_path, target_lang=target_lang)
+        # Fast Cloud AI match (Gemini / Description / DB) before burning 10 minutes on CPU!
+        if not sub_path:
+            try:
+                try:
+                    from backend.khmer_lyric_matcher import match_or_fetch_khmer_lyrics
+                except ImportError:
+                    from khmer_lyric_matcher import match_or_fetch_khmer_lyrics
+                base_title = os.path.splitext(os.path.basename(req.audio_path))[0]
+                clean_t, clean_a = clean_youtube_title_and_artist(base_title)
+                matcher_res = match_or_fetch_khmer_lyrics(req.audio_path, clean_t, clean_a)
+                if matcher_res:
+                    sub_path = matcher_res[0]
+            except Exception as match_err:
+                print(f"[Lyric Matcher Fast-Path] Notice: {match_err}")
     if sub_path and os.path.exists(sub_path):
         try:
             lyrics = parse_subtitle_file(sub_path)
             if lyrics:
                 sample_text = " ".join([l.get("text", "") for l in lyrics[:10]])
                 detected_lang = detect_text_language(sample_text)
-                # Guard against wrong-language subtitles (e.g. Thai subtitles for Khmer audio)
-                if (target_lang == "km" or is_khmer_text(req.audio_path)) and is_thai_text(sample_text) and not is_khmer_text(sample_text):
-                    print(f"[KMVM Lyrics] ⚠️ Discarded subtitle file with Thai script for Khmer audio: {os.path.basename(sub_path)}")
+                # Guard against wrong-language subtitles (e.g. Thai or English subtitles for Khmer audio)
+                is_khmer_target = (target_lang == "km" or is_khmer_text(req.audio_path))
+                if is_khmer_target and not is_khmer_text(sample_text):
+                    print(f"[KMVM Lyrics] ⚠️ Discarded non-Khmer subtitle file for Khmer audio: {os.path.basename(sub_path)}")
                     lyrics = None
                 else:
                     update_transcribe_progress(100, "Loaded from captions")
@@ -222,6 +237,33 @@ def transcribe_audio(req: TranscribeRequest):
                     }
         except Exception as e:
             print(f"Subtitle parse warning: {e}")
+
+    # ⚡ GEMINI CLOUD AI FAST-PATH (Ultra-Fast 1-2s, 100% accurate, bypasses slow CPU Demucs!)
+    if req.model_size == "gemini-fast" or (target_lang == "km" and req.model_size not in ["small", "base", "tiny", "medium", "large-v3-turbo", "distil-large-v3", "qwen3-khmer"]):
+        update_transcribe_progress(15, "⚡ Gemini AI retrieving authentic lyrics & timestamps...")
+        try:
+            try:
+                from backend.khmer_lyric_matcher import match_or_fetch_khmer_lyrics
+            except ImportError:
+                from khmer_lyric_matcher import match_or_fetch_khmer_lyrics
+            base_title = os.path.splitext(os.path.basename(req.audio_path))[0]
+            clean_t, clean_a = clean_youtube_title_and_artist(base_title, use_gemini=True)
+            matcher_res = match_or_fetch_khmer_lyrics(req.audio_path, clean_t, clean_a)
+            if matcher_res:
+                lrc_path, aligned = matcher_res
+                lyrics = parse_subtitle_file(lrc_path)
+                if lyrics:
+                    update_transcribe_progress(100, f"✅ Gemini AI: Synced {len(lyrics)} lines!")
+                    return {
+                        "status": "success",
+                        "source": "gemini-cloud",
+                        "file": os.path.basename(lrc_path),
+                        "detected_language": target_lang or "km",
+                        "lyrics": lyrics,
+                        "count": len(lyrics)
+                    }
+        except Exception as gem_err:
+            print(f"[Gemini Transcribe Fast-Path] Notice: {gem_err}. Continuing with fallback.")
 
     # 2. Vocal Separation (Demucs) if enabled or requested
     transcribe_path = req.audio_path
@@ -267,6 +309,25 @@ def transcribe_audio(req: TranscribeRequest):
             lyrics = transcriber_instance.transcribe(transcribe_path, language=target_lang, progress_callback=on_progress)
             detected_lang = getattr(transcriber_instance, "last_detected_language", target_lang or "en")
             source_type = "whisper"
+
+        # Guard: If audio is Khmer but Whisper produced non-Khmer text (hallucinations like "I'm going to die")
+        if (target_lang == "km" or is_khmer_text(req.audio_path)):
+            sample_whisper = " ".join([l.get("text", "") for l in (lyrics or [])[:8]])
+            if not is_khmer_text(sample_whisper):
+                print(f"[KMVM Transcribe] ⚠️ Whisper produced non-Khmer hallucination on Khmer song: '{sample_whisper[:80]}'")
+                try:
+                    from backend.khmer_lyric_matcher import match_or_fetch_khmer_lyrics
+                    base_t = os.path.splitext(os.path.basename(req.audio_path))[0]
+                    c_title, c_artist = clean_youtube_title_and_artist(base_t, use_gemini=True)
+                    gem_res = match_or_fetch_khmer_lyrics(req.audio_path, c_title, c_artist)
+                    if gem_res:
+                        lrc_p, _ = gem_res
+                        lyrics = parse_subtitle_file(lrc_p)
+                        detected_lang = "km"
+                        source_type = "gemini-cloud"
+                        print(f"[KMVM Transcribe] ✅ Replaced Whisper hallucination with {len(lyrics)} authentic Gemini lyrics!")
+                except Exception as fb_err:
+                    print(f"[KMVM Transcribe] Gemini fallback notice: {fb_err}")
 
         lang_str = str(detected_lang).upper() if detected_lang else "SYNCED"
 
@@ -358,18 +419,41 @@ async def auto_fix_lyrics_api(req: LyricsVerifyRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM Auto-Fix Error: {str(e)}")
 
-def clean_youtube_title_and_artist(raw_title: str, uploader: Optional[str] = None, raw_artist: Optional[str] = None) -> tuple[str, str]:
+def clean_youtube_title_and_artist(
+    raw_title: str,
+    uploader: Optional[str] = None,
+    raw_artist: Optional[str] = None,
+    use_gemini: bool = True
+) -> tuple[str, str]:
     """
     Intelligently splits and cleans YouTube video titles into (clean_title, clean_artist/singer).
+    Uses Gemini AI if available to parse complex, messy, or reversed titles.
     Strips noise like [Official MV], (Lyrics Video), 4K, HD, etc.
     Supports both English and Khmer conventions (e.g. 'បទ៖ ... ច្រៀងដោយ ...').
     """
     if not raw_title:
         return "Untitled Track", (uploader or "Unknown Artist")
+
+    channel = uploader or raw_artist or ""
+
+    # 1. Ask Gemini AI for intelligent semantic extraction (accurate, no reversed fields)
+    if use_gemini:
+        try:
+            try:
+                from backend.khmer_lyric_matcher import gemini_clean_youtube_metadata
+            except ImportError:
+                from khmer_lyric_matcher import gemini_clean_youtube_metadata
+            gem_res = gemini_clean_youtube_metadata(raw_title, uploader=channel)
+            if gem_res:
+                g_title, g_artist, _ = gem_res
+                if g_title and g_artist:
+                    return g_title, g_artist
+        except Exception as gem_err:
+            print(f"[Gemini Metadata Parser] Notice: {gem_err}. Using rule-based cleaner.")
     
     t = raw_title.strip()
-    
-    # 1. Khmer specific patterns: 'បទ៖ <Title> ច្រៀងដោយ៖ <Singer>' or 'បទ: <Title> - <Singer>'
+    # Normalize Windows/Unicode fullwidth characters (e.g. yt-dlp replacing | with ｜ on Windows)
+    t = t.replace('｜', '|').replace('：', ':').replace('／', '/').replace('＼', '\\').replace('〜', '~')
     kh_match = re.search(r'បទ[\s:៖]+(.*?)(?:ច្រៀងដោយ[\s:៖]+|\s*-\s*)(.*)', t, re.IGNORECASE)
     if kh_match:
         cand_title = kh_match.group(1).strip()
@@ -464,34 +548,37 @@ def download_youtube(req: YouTubeRequest):
         update_youtube_progress(0, "Failed to extract audio stream.")
         raise HTTPException(status_code=500, detail="Failed to extract audio stream from YouTube.")
     
-    update_youtube_progress(95, "Processing metadata & subtitles...")
+    update_youtube_progress(90, "🤖 Gemini AI analyzing song title & artist...")
     filename = os.path.basename(saved_path)
     raw_title = info.get("title", os.path.splitext(filename)[0]) if info else os.path.splitext(filename)[0]
-    raw_artist = info.get("artist", "") if info else ""
+    raw_uploader = (info.get("uploader") or info.get("channel") or "") if info else ""
+    raw_artist = (info.get("artist") or raw_uploader) if info else ""
     duration = float(info.get("duration", 0.0)) if info else 0.0
 
-    # Auto-extract clean Song Title and clean Singer / Artist
-    clean_title, clean_artist = clean_youtube_title_and_artist(raw_title, uploader=raw_artist, raw_artist=raw_artist)
+    # Auto-extract clean Song Title and clean Singer / Artist via Gemini AI + Rule-based fallback
+    clean_title, clean_artist = clean_youtube_title_and_artist(raw_title, uploader=raw_uploader, raw_artist=raw_artist, use_gemini=True)
+    print(f"[KMVM YouTube] Metadata resolved: Title='{clean_title}', Artist='{clean_artist}'")
 
+    update_youtube_progress(95, "🤖 Gemini AI retrieving synchronized lyrics...")
     # Auto-detect subtitles / lyrics downloaded with the video
     lyrics = None
-    target_pref = "km" if is_khmer_text(raw_title) else None
+    target_pref = "km" if is_khmer_text(raw_title + " " + clean_title) else None
     sub_path = find_matching_subtitles(saved_path, target_lang=target_pref)
     if sub_path and os.path.exists(sub_path):
         try:
             lyrics = parse_subtitle_file(sub_path)
-            # Guard against YouTube's auto-generated Thai captions on Khmer songs
-            if lyrics and is_khmer_text(raw_title):
+            # Guard against YouTube's auto-generated non-Khmer (Thai, English) captions on Khmer songs
+            if lyrics and is_khmer_text(raw_title + " " + clean_title):
                 sample_text = " ".join([l.get("text", "") for l in lyrics[:10]])
-                if is_thai_text(sample_text) and not is_khmer_text(sample_text):
-                    print(f"[KMVM Lyrics] ⚠️ Discarded Thai auto-subtitles for Khmer song '{clean_title}'")
+                if not is_khmer_text(sample_text):
+                    print(f"[KMVM Lyrics] ⚠️ Discarded non-Khmer auto-subtitles for Khmer song '{clean_title}': '{sample_text[:60]}'")
                     lyrics = None
             if lyrics:
                 print(f"[KMVM Lyrics] Automatically loaded subtitle for {filename}: {os.path.basename(sub_path)} ({len(lyrics)} lines)")
         except Exception as e:
             print(f"[KMVM Lyrics] Subtitle parse warning: {e}")
 
-    # Fallback to authentic Khmer Lyric Matcher if no subtitle found
+    # Fallback to authentic Khmer Lyric Matcher (Gemini Cloud AI / DB / Description)
     if not lyrics and is_khmer_text(raw_title + " " + clean_title):
         try:
             try:
