@@ -202,63 +202,56 @@ def force_align_lyrics_to_audio(
           f"total vocal time: {total_vocal_duration:.1f}s / {duration:.1f}s")
 
     # Step 2: Weight lyrics by character count
-    char_weights = [max(4, len(line.replace(" ", ""))) for line in lyrics_lines]
+    clean_lines = [line.replace(" ", "") for line in lyrics_lines]
+    char_weights = [max(4, len(l)) for l in clean_lines]
     total_weight = sum(char_weights)
 
-    # Step 3: Map lyrics to vocal segments proportionally
+    # Helper function to map a 'vocal time' to actual 'audio time'
+    def vocal_time_to_audio_time(vt: float) -> float:
+        vt = max(0.0, min(vt, total_vocal_duration - 0.001))
+        accum = 0.0
+        for s, e in vocal_segments:
+            dur = e - s
+            if accum + dur >= vt:
+                return s + (vt - accum)
+            accum += dur
+        return vocal_segments[-1][1]
+
     aligned = []
-    line_idx = 0
+    current_weight = 0
 
-    for seg_start, seg_end in vocal_segments:
-        if line_idx >= len(lyrics_lines):
-            break
+    for i, (line, weight) in enumerate(zip(lyrics_lines, char_weights)):
+        start_vocal = (current_weight / total_weight) * total_vocal_duration
+        current_weight += weight
+        end_vocal = (current_weight / total_weight) * total_vocal_duration
 
-        seg_dur = seg_end - seg_start
-        seg_proportion = seg_dur / total_vocal_duration
-        n_lines_for_seg = max(1, round(seg_proportion * len(lyrics_lines)))
-        remaining_lines = len(lyrics_lines) - line_idx
-        n_lines_for_seg = min(n_lines_for_seg, remaining_lines)
+        start_audio = vocal_time_to_audio_time(start_vocal)
+        end_audio = vocal_time_to_audio_time(end_vocal)
 
-        seg_lines = lyrics_lines[line_idx:line_idx + n_lines_for_seg]
-        seg_weights = char_weights[line_idx:line_idx + n_lines_for_seg]
-        seg_total_weight = sum(seg_weights)
+        # Ensure the line isn't stretched insanely long across a huge gap
+        line_dur = end_audio - start_audio
+        if line_dur > 8.0:
+            end_audio = start_audio + 4.0
 
-        t = seg_start
-        for i, (line, weight) in enumerate(zip(seg_lines, seg_weights)):
-            line_dur = max(1.5, (weight / seg_total_weight) * seg_dur)
-            line_end = min(seg_end, t + line_dur)
-            if i == len(seg_lines) - 1:
-                line_end = seg_end
+        # Prevent overlap
+        if aligned and start_audio < aligned[-1]["end"]:
+            start_audio = aligned[-1]["end"] + 0.1
+            if end_audio <= start_audio:
+                end_audio = start_audio + min(2.0, line_dur)
 
-            aligned.append({
-                "line_id": len(aligned),
-                "start": round(t, 2),
-                "end": round(line_end, 2),
-                "text": line,
-                "words": _interpolate_words_simple(line, round(t, 2), round(line_end, 2))
-            })
-            t = line_end
+        line_words = _interpolate_words_simple(line, round(start_audio, 2), round(end_audio, 2))
+        
+        aligned.append({
+            "line_id": i,
+            "start": round(start_audio, 2),
+            "end": round(end_audio, 2),
+            "text": line,
+            "words": line_words
+        })
 
-        line_idx += n_lines_for_seg
-
-    # Handle remaining lyrics if we ran out of vocal segments
-    if line_idx < len(lyrics_lines):
-        last_end = aligned[-1]["end"] if aligned else vocal_segments[-1][1]
-        remaining = lyrics_lines[line_idx:]
-        rem_weights = char_weights[line_idx:]
-        rem_total = sum(rem_weights)
-        avail = max(5.0, duration - last_end - 2.0)
-        t = last_end + 0.5
-        for line, w in zip(remaining, rem_weights):
-            d = max(1.5, (w / rem_total) * avail)
-            aligned.append({
-                "line_id": len(aligned),
-                "start": round(t, 2),
-                "end": round(min(duration, t + d), 2),
-                "text": line,
-                "words": _interpolate_words_simple(line, round(t, 2), round(min(duration, t + d), 2))
-            })
-            t += d
-
-    print(f"[Force Align] Mapped {len(aligned)} lyrics lines to vocal segments")
+    print(f"[Force Align] Mapped {len(aligned)} lyrics lines to continuous vocal timeline")
     return aligned
+
+
+
+

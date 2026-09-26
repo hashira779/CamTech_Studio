@@ -502,57 +502,30 @@ def match_or_fetch_khmer_lyrics(
     raw_lines = None
     true_aligned = None
 
-    # Step 1: ALWAYS listen directly to actual audio using Gemini Multimodal Audio for TRUE timestamps
-    if audio_path and os.path.exists(audio_path):
-        log.info(f"[Khmer Lyric Matcher] Listening to audio file: {audio_path} via Gemini Audio for true timestamps...")
-        transcribe_result = transcribe_audio_with_gemini(audio_path, title=title, artist=artist, duration=duration)
-        if transcribe_result:
-            _, true_aligned = transcribe_result
-
-    # Step 2: Check local verified DB or description for authentic golden spelling
+    # Step 1: Check local verified DB or description for authentic golden spelling
     if title:
         raw_lines = search_local_lyrics_db(title, artist)
 
     if not raw_lines and description:
         raw_lines = extract_lyrics_from_description(description)
 
-    # Step 3: Fallback to text prompt only if we have neither true audio timestamps nor verified DB text
-    if not raw_lines and not true_aligned and title:
+    # Step 2: Uses Gemini Multimodal Audio to LISTEN to the actual song and transcribe real words
+    if not raw_lines and audio_path and os.path.exists(audio_path):
+        log.info(f"[Khmer Lyric Matcher] Listening to audio with Gemini for: {title}")
+        res = transcribe_audio_with_gemini(audio_path, title, artist, duration)
+        if res:
+            raw_lines, true_aligned = res
+
+    # Step 3: Fallback to Gemini text prompt for text extraction if not found locally and no audio transcribed
+    if not raw_lines and title:
         log.info(f"[Khmer Lyric Matcher] Fallback to Gemini text prompt for: {title}")
         raw_lines = fetch_lyrics_with_gemini(title, artist, description=description)
 
-    # Step 4: Align lines using ground-truth timestamps whenever available
-    if true_aligned and raw_lines:
-        log.info(f"[Khmer Lyric Matcher] Merging {len(raw_lines)} curated lines with {len(true_aligned)} true audio timestamps")
-        merged_aligned = []
-        for idx, a in enumerate(true_aligned):
-            text_to_use = raw_lines[idx] if idx < len(raw_lines) else a["text"]
-            merged_aligned.append({
-                "line_id": idx,
-                "start": a["start"],
-                "end": a["end"],
-                "text": text_to_use
-            })
-        # If DB had extra trailing lines, append them gracefully
-        if len(raw_lines) > len(true_aligned):
-            last_end = true_aligned[-1]["end"]
-            rem_lines = raw_lines[len(true_aligned):]
-            avail_dur = max(3.0, duration - last_end)
-            step_dur = avail_dur / max(1, len(rem_lines))
-            for r_i, r_text in enumerate(rem_lines):
-                s = round(last_end + r_i * step_dur, 2)
-                e = round(min(duration, s + step_dur), 2)
-                merged_aligned.append({
-                    "line_id": len(merged_aligned),
-                    "start": s,
-                    "end": e,
-                    "text": r_text
-                })
-        aligned = merged_aligned
-    elif true_aligned:
-        aligned = true_aligned
-    elif raw_lines:
-        if audio_path and os.path.exists(audio_path):
+    # Step 4: Align lines using Whisper Magic
+    if raw_lines:
+        if true_aligned:
+            aligned = true_aligned
+        elif audio_path and os.path.exists(audio_path):
             log.info("[Khmer Lyric Matcher] Using Dynamic Vocal Alignment Engine...")
             aligned = force_align_lyrics_to_audio(raw_lines, audio_path, duration)
         else:

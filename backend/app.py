@@ -281,8 +281,49 @@ def transcribe_audio(req: TranscribeRequest):
         except Exception as demucs_err:
             print(f"[Demucs] Notice: {demucs_err}. Continuing with original audio.")
 
-    # 3. Model transcription (Qwen3-ASR-0.6B-Khmer vs Whisper)
+    # 3. Model transcription (Khmer Magic DB vs Qwen3-ASR vs Whisper)
     try:
+        target_lang = req.language
+        if target_lang in ("auto", "", "None"):
+            target_lang = None
+
+        # --- NEW: ALWAYS TRY MAGIC KHMER LYRIC MATCHER FIRST FOR KHMER SONGS ---
+        if target_lang == "km" or is_khmer_text(req.audio_path):
+            update_transcribe_progress(20, "Searching Verified Khmer Lyrics Database...")
+            try:
+                from backend.khmer_lyric_matcher import match_or_fetch_khmer_lyrics
+                base_t = os.path.splitext(os.path.basename(req.audio_path))[0]
+                c_title, c_artist = clean_youtube_title_and_artist(base_t, use_gemini=True)
+                
+                gem_res = match_or_fetch_khmer_lyrics(req.audio_path, c_title, c_artist)
+                if gem_res:
+                    lrc_p, _ = gem_res
+                    from backend.app import parse_subtitle_file # local import just in case
+                    lyrics = parse_subtitle_file(lrc_p)
+                    detected_lang = "km"
+                    source_type = "magic-db-vad"
+                    print(f"[KMVM Transcribe] ✅ Found {len(lyrics)} perfectly synced authentic lyrics in DB!")
+                    
+                    # Skip the rest of the acoustic transcription if we found magic DB lyrics
+                    if lyrics and len(lyrics) > 0:
+                        lang_str = "KHMER SYNC"
+                        try:
+                            base_audio, _ = os.path.splitext(req.audio_path)
+                            lrc_dest = f"{base_audio}.km.lrc"
+                            export_lyrics_to_lrc(lyrics, lrc_dest)
+                        except: pass
+                        
+                        update_transcribe_progress(100, f"Lyrics successfully loaded from Magic DB!")
+                        return {
+                            "status": "success",
+                            "source": source_type,
+                            "detected_language": detected_lang,
+                            "lyrics": lyrics,
+                            "count": len(lyrics)
+                        }
+            except Exception as e:
+                print(f"[KMVM Transcribe] Magic Khmer Fallback failed: {e}. Proceeding to ASR...")
+
         if req.model_size == "qwen3-khmer":
             update_transcribe_progress(40, "Preparing Qwen3-ASR 0.6B Khmer AI...")
             try:
@@ -311,6 +352,7 @@ def transcribe_audio(req: TranscribeRequest):
             source_type = "whisper"
 
         # Guard: If audio is Khmer but Whisper produced non-Khmer text (hallucinations like "I'm going to die")
+        # and somehow the Magic DB failed earlier, we try to use text-only Gemini fallback.
         if (target_lang == "km" or is_khmer_text(req.audio_path)):
             sample_whisper = " ".join([l.get("text", "") for l in (lyrics or [])[:8]])
             if not is_khmer_text(sample_whisper):
