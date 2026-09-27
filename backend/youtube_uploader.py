@@ -1,4 +1,5 @@
 import os
+import json
 import pickle
 import threading
 from typing import Optional, Dict, Any
@@ -15,6 +16,85 @@ SCOPES = [
 
 TOKEN_PATH = os.path.join(os.path.dirname(__file__), 'token.pickle')
 CLIENT_SECRET_PATH = os.path.join(os.path.dirname(__file__), 'client_secret.json')
+DEFAULTS_JSON_PATH = os.path.join(os.path.dirname(__file__), 'data', 'youtube_defaults.json')
+
+
+def load_youtube_defaults() -> Dict[str, Any]:
+    """Loads standard YouTube default metadata settings from backend/data/youtube_defaults.json."""
+    if os.path.exists(DEFAULTS_JSON_PATH):
+        try:
+            with open(DEFAULTS_JSON_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[YouTube Defaults JSON] Warning: {e}")
+
+    # Fallback structure
+    return {
+        "brand": {
+            "channel_name": "VibeTunes",
+            "tagline": "Visual Intelligent Dynamic Audio-Video",
+            "studio_name": "VIDA Studio"
+        },
+        "title_templates": {
+            "khmer": "{artist} - {title} | ចម្រៀងកាយវិការ [Official 4K 60FPS Video]",
+            "international": "{artist} - {title} | Official Audio Visualizer (60 FPS)",
+            "no_artist_khmer": "{title} | ចម្រៀងកាយវិការ [Official 4K 60FPS Video]",
+            "no_artist_international": "{title} | Official Audio Visualizer (60 FPS)"
+        },
+        "description_template": {
+            "header_lines": [
+                "🎵 Song Title: {title}",
+                "🎙️ Artist / Singer: {artist}",
+                "✨ Visualizer: {theme} (60 FPS Ultra-HD)",
+                "📐 Format: {format}",
+                "⚡ Visual Production: {studio_name} — {tagline}"
+            ],
+            "lyrics_section": {
+                "include_lyrics": True,
+                "include_timestamps": True,
+                "khmer_header": "📝 FULL SYNCHRONIZED LYRICS / ទំនុកច្រៀង:",
+                "default_header": "📝 FULL SYNCHRONIZED LYRICS:"
+            },
+            "call_to_action": [
+                "🔔 Don't forget to Like, Share, and Subscribe to {channel_name} for more high-fidelity visualizer tracks!"
+            ]
+        },
+        "default_hashtags": [
+            "#VibeTunes",
+            "#VibeTunesMusic",
+            "#AudioVisualizer",
+            "#MusicVideo",
+            "#60FPS",
+            "#KaraokeLyrics"
+        ],
+        "language_hashtags": {
+            "khmer": ["#KhmerMusic", "#KhmerSong", "#ចម្រៀងខ្មែរ", "#ចម្រៀងថ្មីៗ"],
+            "vietnamese": ["#NhacViet", "#Vpop", "#NhacTre", "#LyricsVideo"],
+            "international": ["#NewMusic", "#TopHits", "#ViralSong"]
+        },
+        "default_tags": [
+            "VibeTunes",
+            "VibeTunes Music",
+            "VIDA Studio",
+            "Music Video",
+            "Audio Visualizer",
+            "60 FPS",
+            "Karaoke",
+            "Lyrics"
+        ]
+    }
+
+
+def save_youtube_defaults(data: Dict[str, Any]) -> bool:
+    """Saves updated YouTube default metadata settings into backend/data/youtube_defaults.json."""
+    try:
+        os.makedirs(os.path.dirname(DEFAULTS_JSON_PATH), exist_ok=True)
+        with open(DEFAULTS_JSON_PATH, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        print(f"[YouTube Defaults JSON] Error saving: {e}")
+        return False
 
 
 def get_credentials(allow_interactive: bool = False):
@@ -126,8 +206,17 @@ def build_youtube_metadata(
     custom_desc: Optional[str] = None,
     custom_tags: Optional[list] = None
 ) -> Dict[str, Any]:
-    """Generates viral, perfectly formatted YouTube title, rich description with lyrics and timestamps, and SEO tags."""
+    """Generates viral, perfectly formatted YouTube title, rich description with lyrics and timestamps, and SEO tags from JSON template."""
     import re
+
+    cfg = load_youtube_defaults()
+    brand_cfg = cfg.get("brand", {})
+    channel_name = brand_cfg.get("channel_name", "VibeTunes")
+    studio_name = brand_cfg.get("studio_name", "VIDA Studio")
+    tagline = brand_cfg.get("tagline", "Visual Intelligent Dynamic Audio-Video")
+    title_tpls = cfg.get("title_templates", {})
+    desc_cfg = cfg.get("description_template", {})
+    lyrics_cfg = desc_cfg.get("lyrics_section", {})
 
     clean_title = (song_title or "VIDA Official Track").strip()
     clean_artist = (artist_name or "").strip()
@@ -136,76 +225,75 @@ def build_youtube_metadata(
 
     # Detect Khmer script
     is_khmer = any('\u1780' <= c <= '\u17FF' for c in (clean_title + " " + clean_artist))
+    is_vietnamese = any(c in "àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ" for c in (clean_title + " " + clean_artist))
 
-    # 1. Perfectly Formatted YouTube Title (Max 100 characters)
+    # 1. Perfectly Formatted YouTube Title (Max 100 characters from JSON template)
     if custom_title and custom_title.strip():
         final_title = custom_title.strip()[:100]
     else:
         if is_khmer:
-            tagline = " | ចម្រៀងកាយវិការ [Official 4K 60FPS Video]"
-            alt_tagline = " [Official Lyrics Video]"
+            tpl = title_tpls.get("khmer", "{artist} - {title} | ចម្រៀងកាយវិការ [Official 4K 60FPS Video]") if clean_artist else title_tpls.get("no_artist_khmer", "{title} | ចម្រៀងកាយវិការ [Official 4K 60FPS Video]")
         else:
-            tagline = " | Official Audio Visualizer (60 FPS)"
-            alt_tagline = " [Official Video]"
+            tpl = title_tpls.get("international", "{artist} - {title} | Official Audio Visualizer (60 FPS)") if clean_artist else title_tpls.get("no_artist_international", "{title} | Official Audio Visualizer (60 FPS)")
+        
+        cand = tpl.format(artist=clean_artist, title=clean_title, channel_name=channel_name)
+        final_title = cand[:100]
 
-        if clean_artist:
-            lead = f"{clean_artist} - {clean_title}"
-        else:
-            lead = clean_title
-
-        if len(lead + tagline) <= 100:
-            final_title = lead + tagline
-        elif len(lead + alt_tagline) <= 100:
-            final_title = lead + alt_tagline
-        else:
-            final_title = lead[:100]
-
-    # 2. Rich, High-Converting YouTube Description
+    # 2. Rich, High-Converting YouTube Description from JSON template
     if custom_desc and custom_desc.strip():
         final_desc = custom_desc.strip()[:5000]
     else:
         desc_lines = []
-        if clean_artist:
-            desc_lines.append(f"🎵 Song Title: {clean_title}")
-            desc_lines.append(f"🎙️ Artist / Singer: {clean_artist}")
-        else:
-            desc_lines.append(f"🎵 Song Title: {clean_title}")
-
         theme_name = theme.replace("_", " ").title() if theme else "Fluid Wave"
-        desc_lines.append(f"✨ Visualizer: {theme_name} (60 FPS Ultra-HD)")
-        desc_lines.append(f"📐 Format: {'Vertical (9:16 Shorts/Reels)' if aspect_ratio == '9:16' else 'Cinematic (16:9 4K)'}")
-        desc_lines.append("⚡ Visual Production: VIDA Studio — Visual Intelligent Dynamic Audio-Video")
+        fmt_name = 'Vertical (9:16 Shorts/Reels)' if aspect_ratio == '9:16' else 'Cinematic (16:9 4K)'
+        
+        header_lines = desc_cfg.get("header_lines", [])
+        for hl in header_lines:
+            if "{artist}" in hl and not clean_artist:
+                continue
+            desc_lines.append(hl.format(
+                title=clean_title,
+                artist=clean_artist,
+                theme=theme_name,
+                format=fmt_name,
+                studio_name=studio_name,
+                tagline=tagline,
+                channel_name=channel_name
+            ))
         desc_lines.append("")
         desc_lines.append("═" * 40)
 
         # Include Timed Synchronized Lyrics if available
-        if lyrics_data and len(lyrics_data) > 0:
-            desc_lines.append("📝 FULL SYNCHRONIZED LYRICS / ទំនុកច្រៀង:")
+        if lyrics_cfg.get("include_lyrics", True) and lyrics_data and len(lyrics_data) > 0:
+            header_txt = lyrics_cfg.get("khmer_header", "📝 FULL SYNCHRONIZED LYRICS / ទំនុកច្រៀង:") if is_khmer else lyrics_cfg.get("default_header", "📝 FULL SYNCHRONIZED LYRICS:")
+            desc_lines.append(header_txt)
             desc_lines.append("═" * 40)
             for item in lyrics_data:
                 txt = item.get("text", "").strip() if isinstance(item, dict) else str(item).strip()
                 s = float(item.get("start", 0)) if isinstance(item, dict) else 0.0
                 if txt:
-                    mm = int(s // 60)
-                    ss = int(s % 60)
-                    desc_lines.append(f"[{mm:02d}:{ss:02d}] {txt}")
+                    if lyrics_cfg.get("include_timestamps", True):
+                        mm = int(s // 60)
+                        ss = int(s % 60)
+                        desc_lines.append(f"[{mm:02d}:{ss:02d}] {txt}")
+                    else:
+                        desc_lines.append(txt)
             desc_lines.append("═" * 40)
             desc_lines.append("")
 
-        # SEO Call to Action
-        desc_lines.append("🔔 Don't forget to Like, Share, and Subscribe for more high-fidelity visualizer tracks!")
+        for cta in desc_cfg.get("call_to_action", []):
+            desc_lines.append(cta.format(channel_name=channel_name))
         desc_lines.append("")
 
-        # SEO Hashtags with VibeTunes brand
-        is_vietnamese = any(c in "àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ" for c in (clean_title + " " + clean_artist))
-        
-        hashtags = ["#VibeTunes", "#VibeTunesMusic", "#AudioVisualizer", "#MusicVideo", "#60FPS", "#KaraokeLyrics"]
+        # SEO Hashtags from JSON
+        lang_hashtags = cfg.get("language_hashtags", {})
+        hashtags = list(cfg.get("default_hashtags", ["#VibeTunes", "#AudioVisualizer", "#MusicVideo", "#60FPS"]))
         if is_khmer:
-            hashtags.extend(["#KhmerMusic", "#KhmerSong", "#ចម្រៀងខ្មែរ", "#ចម្រៀងថ្មីៗ"])
+            hashtags.extend(lang_hashtags.get("khmer", ["#KhmerMusic", "#KhmerSong", "#ចម្រៀងខ្មែរ", "#ចម្រៀងថ្មីៗ"]))
         elif is_vietnamese:
-            hashtags.extend(["#NhacViet", "#Vpop", "#NhacTre", "#LyricsVideo"])
+            hashtags.extend(lang_hashtags.get("vietnamese", ["#NhacViet", "#Vpop", "#NhacTre", "#LyricsVideo"]))
         else:
-            hashtags.extend(["#NewMusic", "#TopHits", "#ViralSong"])
+            hashtags.extend(lang_hashtags.get("international", ["#NewMusic", "#TopHits", "#ViralSong"]))
 
         if clean_artist:
             tag_artist = re.sub(r'[^\w\u1780-\u17FF]', '', clean_artist)
@@ -215,15 +303,15 @@ def build_youtube_metadata(
         if tag_title:
             hashtags.append(f"#{tag_title}")
 
-        desc_lines.append(" ".join(hashtags[:14]))
+        desc_lines.append(" ".join(hashtags[:15]))
         final_desc = "\n".join(desc_lines)[:5000]
 
-    # 3. Tags (Max 25 tags for YouTube Algorithm)
+    # 3. Tags from JSON (Max 25 tags for YouTube Algorithm)
     if custom_tags:
         final_tags = [str(t).strip() for t in custom_tags if str(t).strip()]
     else:
-        final_tags = ["VibeTunes", "VibeTunes Music", "VIDA Studio", "Music Video", "Audio Visualizer", "60 FPS", "Karaoke", "Lyrics"]
-        if clean_title:
+        final_tags = list(cfg.get("default_tags", ["VibeTunes", "VibeTunes Music", "VIDA Studio", "Music Video", "Audio Visualizer", "60 FPS", "Karaoke", "Lyrics"]))
+        if clean_title and clean_title not in final_tags:
             final_tags.append(clean_title)
         if clean_artist:
             final_tags.append(clean_artist)

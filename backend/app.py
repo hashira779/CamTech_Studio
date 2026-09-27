@@ -843,6 +843,19 @@ def preview_youtube_metadata_api(req: YouTubePreviewRequest):
         aspect_ratio=req.aspect_ratio
     )
 
+@app.get("/api/youtube/config")
+def get_youtube_config_api():
+    """Returns the standard YouTube default metadata JSON configuration."""
+    from backend.youtube_uploader import load_youtube_defaults
+    return load_youtube_defaults()
+
+@app.post("/api/youtube/config")
+def update_youtube_config_api(data: Dict[str, Any]):
+    """Saves updated YouTube default metadata JSON configuration."""
+    from backend.youtube_uploader import save_youtube_defaults
+    success = save_youtube_defaults(data)
+    return {"status": "success" if success else "error"}
+
 @app.post("/api/analyze")
 def analyze_audio_structure(req: AnalyzeRequest):
     """Deep acoustic feature extraction, sections, viral hook, and waveform envelope."""
