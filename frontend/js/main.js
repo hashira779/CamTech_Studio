@@ -132,26 +132,40 @@ document.addEventListener('DOMContentLoaded', () => {
     state.lyrics = [];
   }
 
+  function hasValidAudioSource(player) {
+    if (!player || !player.src) return false;
+    const s = (player.src || '').trim();
+    return s !== '' && s !== window.location.href && s !== 'about:blank' && !s.endsWith('/');
+  }
+
   const savedSrc = sessionStorage.getItem('vida_audio_src') || localStorage.getItem('vida_audio_src');
   const savedTime = parseFloat(sessionStorage.getItem('vida_audio_time') || '0');
 
-  if (savedSrc && audioPlayer) {
+  if (savedSrc && savedSrc !== window.location.href && savedSrc !== 'about:blank' && audioPlayer) {
     audioPlayer.src = savedSrc;
     state.audioUrl = savedSrc;
     audioPlayer.currentTime = savedTime;
     showToast('🔄 Session Restored', 'Audio & lyrics resumed from where you left off', 'info', 2500);
     
-    // Auto-play and init visualizer
+    // Auto-play and init visualizer safely
     audioPlayer.play().then(() => {
       state.isPlaying = true;
       if (btnPlayPause) btnPlayPause.textContent = "⏸";
       initAudioContext(audioPlayer, () => startVisualizer());
-    }).catch(() => {});
+    }).catch((err) => {
+      state.isPlaying = false;
+      if (btnPlayPause) btnPlayPause.textContent = "▶";
+    });
   }
 
   // ============ Audio Play/Pause ============
   if (btnPlayPause && audioPlayer) {
-    btnPlayPause.addEventListener('click', () => {
+    btnPlayPause.addEventListener('click', async () => {
+      if (!hasValidAudioSource(audioPlayer)) {
+        showToast('No Audio Loaded', 'Please upload or select an audio track first to play', 'info', 3000);
+        return;
+      }
+
       initAudioContext(audioPlayer, (isNew, status) => {
          if (isNew || status === "resumed") {
            startVisualizer();
@@ -159,9 +173,15 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       
       if (audioPlayer.paused) {
-        audioPlayer.play();
-        state.isPlaying = true;
-        btnPlayPause.textContent = "⏸";
+        try {
+          await audioPlayer.play();
+          state.isPlaying = true;
+          btnPlayPause.textContent = "⏸";
+        } catch (err) {
+          console.warn('Playback prevented or source unavailable:', err);
+          state.isPlaying = false;
+          btnPlayPause.textContent = "▶";
+        }
       } else {
         audioPlayer.pause();
         state.isPlaying = false;
@@ -1488,16 +1508,20 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       item.addEventListener('click', () => {
-        if (audioPlayer) {
-          audioPlayer.currentTime = line.start;
-          if (audioPlayer.paused) {
-            initAudioContext(audioPlayer, () => startVisualizer());
-            audioPlayer.play().then(() => {
-              state.isPlaying = true;
-              if (btnPlayPause) btnPlayPause.textContent = "⏸";
-            }).catch(() => {});
-          }
+        if (audioPlayer && hasValidAudioSource(audioPlayer)) {
+          try {
+            audioPlayer.currentTime = line.start;
+            if (audioPlayer.paused) {
+              initAudioContext(audioPlayer, () => startVisualizer());
+              audioPlayer.play().then(() => {
+                state.isPlaying = true;
+                if (btnPlayPause) btnPlayPause.textContent = "⏸";
+              }).catch(() => {});
+            }
+          } catch(e) {}
           showToast('Jump to Lyric', `[${formatTime(line.start)}] "${line.text.substring(0, 30)}..."`, 'info', 1500);
+        } else {
+          showToast('Audio Track Not Loaded', 'Upload or select an audio file to listen to this section', 'info', 2000);
         }
       });
 
