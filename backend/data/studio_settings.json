@@ -1,0 +1,39 @@
+{
+  "app_name": "VIDA Studio",
+  "version": "2.5.0",
+  "brand": {
+    "name": "VibeTunes",
+    "logo_path": "uploads/images/vibetunes_logo.png",
+    "logo_transparent_path": "uploads/images/vibetunes_logo_transparent.png",
+    "center_badge_primary": "VibeTunes",
+    "center_badge_secondary": "OFFICIAL",
+    "tagline": "Visual Intelligent Dynamic Audio-Video"
+  },
+  "studio_defaults": {
+    "theme": "trap_circle",
+    "palette": "cyberpunk",
+    "aspect_ratio": "16:9",
+    "render_fps": 60,
+    "render_resolution": "1080p",
+    "bar_count": 64,
+    "bass_boost": 1.3,
+    "smoothing": 0.88,
+    "particles_level": 3,
+    "vfx": {
+      "shake": true,
+      "shockwave": true,
+      "bloom": true,
+      "chromatic": true,
+      "scanlines": false
+    }
+  },
+  "export_defaults": {
+    "video_codec": "libx264",
+    "audio_codec": "aac",
+    "audio_bitrate": "320k",
+    "preset": "faster",
+    "crf": 18
+  },
+  "youtube_defaults_file": "backend/data/youtube_defaults.json",
+  "xml_feed_template": "backend/data/youtube_metadata_template.xml"
+}

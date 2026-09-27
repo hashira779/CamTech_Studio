@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Standard YouTube & Broadcast Audio-Visual Metadata Descriptor
+  Compatible with YouTube Batch Feed, Media RSS, and Video Editing Workflows
+-->
+<video_asset xmlns:media="http://search.yahoo.com/mrss/" version="2.0">
+  <channel>
+    <name>VibeTunes</name>
+    <handle>@VibeTunes</handle>
+    <studio>VIDA Studio</studio>
+  </channel>
+  
+  <publication>
+    <privacy>public</privacy>
+    <category_id>10</category_id>
+    <category_name>Music</category_name>
+    <made_for_kids>false</made_for_kids>
+  </publication>
+  
+  <video_spec>
+    <fps>60</fps>
+    <resolution>1080p</resolution>
+    <aspect_ratio>16:9</aspect_ratio>
+    <codec>libx264</codec>
+    <audio_bitrate>320k</audio_bitrate>
+  </video_spec>
+
+  <metadata_template>
+    <title_pattern>{artist} - {title} | Official Audio Visualizer (60 FPS)</title_pattern>
+    <title_pattern_khmer>{artist} - {title} | ចម្រៀងកាយវិការ [Official 4K 60FPS Video]</title_pattern_khmer>
+    <description_header>
+      <![CDATA[
+🎵 Song Title: {title}
+🎙️ Artist / Singer: {artist}
+✨ Visualizer: {theme} (60 FPS Ultra-HD)
+📐 Format: {format}
+⚡ Visual Production: VibeTunes — VIDA Studio
+      ]]>
+    </description_header>
+    <call_to_action>
+      <![CDATA[
+🔔 Don't forget to Like, Share, and Subscribe to VibeTunes for more high-fidelity visualizer tracks!
+      ]]>
+    </call_to_action>
+    <default_hashtags>#VibeTunes #VibeTunesMusic #AudioVisualizer #MusicVideo #60FPS #KaraokeLyrics</default_hashtags>
+    <default_tags>VibeTunes, VibeTunes Music, VIDA Studio, Music Video, Audio Visualizer, 60 FPS, Karaoke, Lyrics</default_tags>
+  </metadata_template>
+</video_asset>
