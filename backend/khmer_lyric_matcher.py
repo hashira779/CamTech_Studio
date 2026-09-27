@@ -553,6 +553,18 @@ def match_or_fetch_khmer_lyrics(
     3. Uses Gemini Multimodal Audio to LISTEN to the actual song and transcribe real words with exact timestamps.
     4. Falls back to text search if no audio file is accessible.
     """
+    # STRICT GUARD: Only run for songs that actually have Khmer text!
+    # Prevents generating Khmer lyrics for Vietnamese, English, Thai, or Chinese songs.
+    has_khmer = (
+        any('\u1780' <= c <= '\u17FF' for c in (title or "")) or
+        any('\u1780' <= c <= '\u17FF' for c in (artist or "")) or
+        any('\u1780' <= c <= '\u17FF' for c in (description or "")) or
+        any('\u1780' <= c <= '\u17FF' for c in (audio_path or ""))
+    )
+    if not has_khmer:
+        log.info(f"[Khmer Lyric Matcher] Skipping non-Khmer song: '{title}' by '{artist}'")
+        return None
+
     # Probe duration if missing
     if duration <= 0.0 and os.path.exists(audio_path):
         try:

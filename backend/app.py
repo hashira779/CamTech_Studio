@@ -340,7 +340,7 @@ def transcribe_audio(req: TranscribeRequest):
 
     # ⚡ GEMINI CLOUD AI FAST-PATH (Ultra-Fast 1-2s, 100% accurate, bypasses slow CPU Demucs!)
     is_khmer_target = (target_lang == "km" or is_khmer_text(req.audio_path))
-    if req.model_size == "gemini-fast" or (is_khmer_target and req.model_size != "qwen3-khmer"):
+    if is_khmer_target and (req.model_size == "gemini-fast" or req.model_size != "qwen3-khmer"):
         update_transcribe_progress(15, "⚡ Gemini AI retrieving authentic lyrics & timestamps...")
         try:
             try:
