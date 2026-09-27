@@ -2898,6 +2898,39 @@ document.addEventListener('DOMContentLoaded', () => {
   // Check auth status on startup
   checkYouTubeAuthStatus();
 
+  // ============ Background Render & Mini PIP Widget Controls ============
+  const miniWidget = document.getElementById('export-mini-widget');
+  const miniPct = document.getElementById('mini-render-pct');
+  const miniFill = document.getElementById('mini-render-fill');
+  const miniFrames = document.getElementById('mini-render-frames');
+  const miniFps = document.getElementById('mini-render-fps');
+
+  let isRenderMinimized = false;
+
+  const btnMinimizeRender = document.getElementById('btn-minimize-render');
+  const btnRunInBgAction = document.getElementById('btn-run-in-bg-action');
+  const btnExpandRender = document.getElementById('btn-expand-render');
+
+  function minimizeRenderProgress() {
+    isRenderMinimized = true;
+    const modal = document.getElementById('export-progress-modal');
+    if (modal) modal.style.display = 'none';
+    if (miniWidget) miniWidget.style.display = 'block';
+    showToast('Background Render Active', 'Rendering in background — you can freely work in the studio!', 'info', 4000);
+  }
+
+  function expandRenderProgress() {
+    isRenderMinimized = false;
+    if (miniWidget) miniWidget.style.display = 'none';
+    const modal = document.getElementById('export-progress-modal');
+    if (modal) modal.style.display = 'flex';
+  }
+
+  if (btnMinimizeRender) btnMinimizeRender.addEventListener('click', minimizeRenderProgress);
+  if (btnRunInBgAction) btnRunInBgAction.addEventListener('click', minimizeRenderProgress);
+  if (btnExpandRender) btnExpandRender.addEventListener('click', (e) => { e.stopPropagation(); expandRenderProgress(); });
+  if (miniWidget) miniWidget.addEventListener('click', expandRenderProgress);
+
   function pollRenderProgress(jobId) {
     const modal = document.getElementById('export-progress-modal');
     const modalPct = document.getElementById('export-modal-pct');
@@ -2906,7 +2939,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const modalFrames = document.getElementById('export-modal-frames');
     const modalFps = document.getElementById('export-modal-fps');
 
-    if (modal) modal.style.display = 'flex';
+    if (!isRenderMinimized && modal) {
+      modal.style.display = 'flex';
+    } else if (miniWidget) {
+      miniWidget.style.display = 'block';
+    }
     setGlobalProgress(5, true);
 
     const interval = setInterval(async () => {
@@ -2919,14 +2956,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (modalPct) modalPct.textContent = `${pct}%`;
         if (modalFill) modalFill.style.width = `${pct}%`;
+        if (miniPct) miniPct.textContent = `${pct}%`;
+        if (miniFill) miniFill.style.width = `${pct}%`;
         if (btnExport) btnExport.textContent = `Rendering ${pct}%`;
         setGlobalProgress(pct, true);
 
         if (data.frame && data.total_frames) {
           if (modalFrames) modalFrames.textContent = `Frame: ${data.frame} / ${data.total_frames}`;
+          if (miniFrames) miniFrames.textContent = `${data.frame}/${data.total_frames}`;
         }
         if (data.fps) {
           if (modalFps) modalFps.textContent = `Speed: ${Math.round(data.fps)} FPS`;
+          if (miniFps) miniFps.textContent = `${Math.round(data.fps)} FPS`;
         }
 
         if (data.status === 'uploading') {
@@ -2934,6 +2975,8 @@ document.addEventListener('DOMContentLoaded', () => {
           if (modalStatus) modalStatus.textContent = data.message || `📤 Uploading to YouTube (${uploadPct}%)...`;
           if (modalPct) modalPct.textContent = `${uploadPct}%`;
           if (modalFill) modalFill.style.width = `${uploadPct}%`;
+          if (miniPct) miniPct.textContent = `${uploadPct}%`;
+          if (miniFill) miniFill.style.width = `${uploadPct}%`;
           if (btnExport) btnExport.textContent = `Uploading ${uploadPct}%`;
           if (modalFrames) modalFrames.textContent = `Auto-Posting: ${uploadPct}% sent to YouTube`;
           if (modalFps) modalFps.textContent = `Cloud Upload`;
@@ -2944,6 +2987,8 @@ document.addEventListener('DOMContentLoaded', () => {
           clearInterval(interval);
           if (modalPct) modalPct.textContent = '100%';
           if (modalFill) modalFill.style.width = '100%';
+          if (miniPct) miniPct.textContent = '100%';
+          if (miniFill) miniFill.style.width = '100%';
           if (modalStatus) modalStatus.textContent = '✅ Video Rendered Successfully (100%)!';
           setGlobalProgress(100, true);
 
@@ -2961,6 +3006,8 @@ document.addEventListener('DOMContentLoaded', () => {
           
           setTimeout(() => {
             if (modal) modal.style.display = 'none';
+            if (miniWidget) miniWidget.style.display = 'none';
+            isRenderMinimized = false;
           }, 3000);
 
           if (data.output_url) {
