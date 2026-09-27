@@ -1639,8 +1639,23 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch(e) {}
     audioPlayer.currentTime = 0;
 
-    // 2. Set source and force load
-    const finalSrc = src.startsWith('blob:') ? src : encodeURI(src);
+    // 2. Set source and force load with full URI encoding protection
+    let finalSrc = src;
+    if (src && !src.startsWith('blob:') && !src.startsWith('data:')) {
+      try {
+        if (src.startsWith('http://') || src.startsWith('https://')) {
+          const u = new URL(src);
+          const parts = u.pathname.split('/');
+          u.pathname = parts.map((p, idx) => (idx === 0 && !p) ? '' : encodeURIComponent(decodeURIComponent(p))).join('/');
+          finalSrc = u.toString();
+        } else {
+          const parts = src.split('/');
+          finalSrc = parts.map((p, idx) => (idx === 0 && !p) ? '' : encodeURIComponent(decodeURIComponent(p))).join('/');
+        }
+      } catch (e) {
+        finalSrc = encodeURI(src);
+      }
+    }
     audioPlayer.src = finalSrc;
     try {
       audioPlayer.load();

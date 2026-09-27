@@ -236,7 +236,7 @@ def get_local_library():
                     "name": f,
                     "type": "audio",
                     "path": os.path.join(AUDIO_DIR, f).replace("\\", "/"),
-                    "url": f"/uploads/audio/{f}"
+                    "url": f"/uploads/audio/{urllib.parse.quote(f)}"
                 })
                 
     # Check Video Directory
@@ -247,7 +247,7 @@ def get_local_library():
                     "name": f,
                     "type": "video",
                     "path": os.path.join(VIDEO_DIR, f).replace("\\", "/"),
-                    "url": f"/uploads/video/{f}"
+                    "url": f"/uploads/video/{urllib.parse.quote(f)}"
                 })
                 
     # Sort by modification time (newest first)
@@ -768,12 +768,27 @@ def download_youtube(req: YouTubeRequest):
         except Exception as match_err:
             print(f"[Khmer Lyric Matcher] Warning: {match_err}")
 
+    # Sanitize filename on disk if it still contains '#' or '?'
+    clean_fn = re.sub(r'[#\?%]+', '', filename).strip()
+    if clean_fn != filename and clean_fn:
+        new_saved_path = os.path.join(os.path.dirname(saved_path), clean_fn)
+        try:
+            if os.path.exists(new_saved_path):
+                os.remove(new_saved_path)
+            os.rename(saved_path, new_saved_path)
+            saved_path = new_saved_path
+            filename = clean_fn
+        except Exception as e:
+            print(f"[KMVM YouTube] Rename note: {e}")
+
+    encoded_filename = urllib.parse.quote(filename)
+
     update_youtube_progress(100, f"Ready: {clean_title}")
 
     return {
         "status": "success",
         "audio_path": saved_path,
-        "audio_url": f"/uploads/audio/{filename}",
+        "audio_url": f"/uploads/audio/{encoded_filename}",
         "filename": filename,
         "title": clean_title,
         "artist": clean_artist,

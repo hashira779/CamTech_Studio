@@ -297,8 +297,8 @@ def download_youtube_audio(url: str, output_dir: str, on_progress=None) -> Tuple
                     candidate = line.strip()
                     if candidate and os.path.exists(candidate):
                         ext = os.path.splitext(candidate)[1].lower()
-                        if ext in {".mp3", ".wav", ".m4a", ".opus", ".webm", ".ogg", ".aac", ".flac"}:
                             audio_file = convert_to_mp3(candidate)
+                            audio_file = _sanitize_filepath(audio_file)
                             _sanitize_subtitles_for_audio(audio_file, title=info.get("title") if info else None)
                             notify_progress(100, "Download complete!")
                             print(f"[KMVM] Downloaded (via yt-dlp output): {audio_file}", flush=True)
@@ -307,6 +307,7 @@ def download_youtube_audio(url: str, output_dir: str, on_progress=None) -> Tuple
             title_hint = info.get("title") if info else None
             audio_file = _find_latest_audio_file(output_dir, title_hint=title_hint)
             if audio_file:
+                audio_file = _sanitize_filepath(audio_file)
                 _sanitize_subtitles_for_audio(audio_file, title=title_hint)
                 notify_progress(100, "Download complete!")
                 print(f"[KMVM] Downloaded (via directory scan): {audio_file}", flush=True)
@@ -322,6 +323,46 @@ def download_youtube_audio(url: str, output_dir: str, on_progress=None) -> Tuple
 
     notify_progress(0, "Download failed!")
     return None, None
+
+
+def _sanitize_filepath(path: str) -> str:
+    """
+    Sanitizes audio/subtitle file paths on disk:
+    Strips URL-breaking characters like '#', '?', '%', and duplicate spaces
+    to prevent browsers from truncating URLs at the hash fragment (#).
+    """
+    if not path or not os.path.exists(path):
+        return path
+    dirname = os.path.dirname(path)
+    filename = os.path.basename(path)
+    
+    clean_fn = re.sub(r'[#\?%]+', '', filename)
+    clean_fn = re.sub(r'\s+', ' ', clean_fn).strip()
+    
+    if clean_fn != filename and clean_fn:
+        new_path = os.path.join(dirname, clean_fn)
+        try:
+            if os.path.exists(new_path):
+                os.remove(new_path)
+            os.rename(path, new_path)
+            # Also rename accompanying subtitle files with same stem
+            old_base = os.path.splitext(filename)[0]
+            new_base = os.path.splitext(clean_fn)[0]
+            for ext in ['.lrc', '.vtt', '.srt', '.km.lrc', '.km.vtt']:
+                sub_old = os.path.join(dirname, old_base + ext)
+                sub_new = os.path.join(dirname, new_base + ext)
+                if os.path.exists(sub_old):
+                    try:
+                        if os.path.exists(sub_new):
+                            os.remove(sub_new)
+                        os.rename(sub_old, sub_new)
+                    except Exception:
+                        pass
+            print(f"[KMVM File] Renamed sanitized file: '{filename}' -> '{clean_fn}'", flush=True)
+            return new_path
+        except Exception as e:
+            print(f"[KMVM File] Rename notice: {e}", flush=True)
+    return path
 
 
 def convert_to_mp3(src_path: str) -> str:
