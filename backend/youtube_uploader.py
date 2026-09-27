@@ -31,7 +31,7 @@ def get_authenticated_service():
 
     return build('youtube', 'v3', credentials=creds)
 
-def upload_video_to_youtube(video_path, title, description, tags, category_id="10"):
+def upload_video_to_youtube(video_path, title, description, tags, category_id="10", progress_callback=None):
     try:
         youtube = get_authenticated_service()
 
@@ -48,7 +48,9 @@ def upload_video_to_youtube(video_path, title, description, tags, category_id="1
             }
         }
 
-        media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
+        # 10MB chunksize enables live progress reporting and resumable transmission
+        chunk_size = 10 * 1024 * 1024
+        media = MediaFileUpload(video_path, chunksize=chunk_size, resumable=True)
 
         request = youtube.videos().insert(
             part=",".join(body.keys()),
@@ -61,11 +63,14 @@ def upload_video_to_youtube(video_path, title, description, tags, category_id="1
         while response is None:
             status, response = request.next_chunk()
             if status:
-                print(f"[YouTube Uploader] Uploaded {int(status.progress() * 100)}%")
+                progress = int(status.progress() * 100)
+                print(f"[YouTube Uploader] Uploaded {progress}%")
+                if progress_callback:
+                    progress_callback(progress)
 
         video_url = f"https://youtu.be/{response['id']}"
         print(f"[YouTube Uploader] Upload Complete! Video URL: {video_url}")
         return video_url
     except Exception as e:
         print(f"[YouTube Uploader] Error: {e}")
-        return None
+        raise e

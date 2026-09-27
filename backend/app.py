@@ -933,6 +933,14 @@ def _execute_render_job(job_id: str, req: RenderRequest):
         youtube_url = None
         if req.auto_post_youtube:
             try:
+                jobs[job_id]["status"] = "uploading"
+                jobs[job_id]["upload_percent"] = 0
+                jobs[job_id]["message"] = "Uploading to YouTube (0%)..."
+
+                def on_yt_progress(pct: int):
+                    jobs[job_id]["upload_percent"] = pct
+                    jobs[job_id]["message"] = f"Uploading to YouTube ({pct}%)..."
+
                 # Local import to prevent breaking app startup if credentials missing
                 from backend.youtube_uploader import upload_video_to_youtube
                 title = f"{req.song_title} - {req.artist_name} (Music Video)"
@@ -941,7 +949,8 @@ def _execute_render_job(job_id: str, req: RenderRequest):
                     video_path=output_path,
                     title=title,
                     description=desc,
-                    tags=["VIDA", "Music", req.song_title, req.artist_name]
+                    tags=["VIDA", "Music", req.song_title, req.artist_name],
+                    progress_callback=on_yt_progress
                 )
             except Exception as yt_err:
                 print(f"[YouTube Upload Error] {yt_err}")

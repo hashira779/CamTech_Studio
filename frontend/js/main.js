@@ -2589,6 +2589,17 @@ document.addEventListener('DOMContentLoaded', () => {
           if (modalFps) modalFps.textContent = `Speed: ${Math.round(data.fps)} FPS`;
         }
 
+        if (data.status === 'uploading') {
+          const uploadPct = Math.round(data.upload_percent || 0);
+          if (modalStatus) modalStatus.textContent = data.message || `📤 Uploading to YouTube (${uploadPct}%)...`;
+          if (modalPct) modalPct.textContent = `${uploadPct}%`;
+          if (modalFill) modalFill.style.width = `${uploadPct}%`;
+          if (btnExport) btnExport.textContent = `Uploading ${uploadPct}%`;
+          if (modalFrames) modalFrames.textContent = `Auto-Posting: ${uploadPct}% sent to YouTube`;
+          if (modalFps) modalFps.textContent = `Cloud Upload`;
+          setGlobalProgress(uploadPct, true);
+        }
+
         if (data.status === 'completed') {
           clearInterval(interval);
           if (modalPct) modalPct.textContent = '100%';
