@@ -2753,7 +2753,8 @@ document.addEventListener('DOMContentLoaded', () => {
             lyric_style: state.showLyrics === false ? "none" : state.lyricStyle,
             bar_count: state.barCount,
             bass_boost: state.bassBoost,
-            auto_post_youtube: document.getElementById('check-youtube-autopost') ? document.getElementById('check-youtube-autopost').checked : false
+            auto_post_youtube: document.getElementById('check-youtube-autopost') ? document.getElementById('check-youtube-autopost').checked : false,
+            youtube_privacy: document.getElementById('select-youtube-privacy') ? document.getElementById('select-youtube-privacy').value : 'public'
           })
         });
         const data = await res.json();
@@ -2768,6 +2769,65 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+
+  // ============ YouTube Channel Auth Manager ============
+  const btnYtConnect = document.getElementById('btn-youtube-connect');
+  const ytConnectIcon = document.getElementById('yt-connect-icon');
+  const ytConnectText = document.getElementById('yt-connect-text');
+
+  async function checkYouTubeAuthStatus() {
+    try {
+      const res = await fetch('/api/youtube/auth/status');
+      const data = await res.json();
+      if (data.connected && btnYtConnect) {
+        btnYtConnect.style.background = 'rgba(16, 185, 129, 0.15)';
+        btnYtConnect.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+        btnYtConnect.style.color = '#34d399';
+        if (ytConnectIcon) ytConnectIcon.textContent = '🟢';
+        if (ytConnectText) ytConnectText.textContent = data.channel_title ? data.channel_title.substring(0, 14) : 'Connected';
+        btnYtConnect.title = `Connected Channel: ${data.channel_title || 'Authorized'}`;
+      } else if (btnYtConnect) {
+        btnYtConnect.style.background = 'rgba(239, 68, 68, 0.15)';
+        btnYtConnect.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+        btnYtConnect.style.color = '#f87171';
+        if (ytConnectIcon) ytConnectIcon.textContent = '🔴';
+        if (ytConnectText) ytConnectText.textContent = 'Connect YT';
+        btnYtConnect.title = 'Click to authorize your YouTube channel for auto-posting';
+      }
+      return data.connected;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  if (btnYtConnect) {
+    btnYtConnect.addEventListener('click', async () => {
+      setButtonLoading(btnYtConnect, 'Connecting...');
+      showToast('YouTube Sign-In', 'Opening browser to authorize your YouTube channel...', 'info', 6000);
+      try {
+        await fetch('/api/youtube/auth/connect', { method: 'POST' });
+        // Poll status every 2 seconds for up to 60 seconds
+        let attempts = 0;
+        const authPoll = setInterval(async () => {
+          attempts++;
+          const isConn = await checkYouTubeAuthStatus();
+          if (isConn || attempts > 30) {
+            clearInterval(authPoll);
+            clearButtonLoading(btnYtConnect, isConn ? '🟢 Connected' : 'Connect YT');
+            if (isConn) {
+              showToast('YouTube Connected!', 'Your channel is now authorized for auto-posting!', 'success', 5000);
+            }
+          }
+        }, 2000);
+      } catch (err) {
+        clearButtonLoading(btnYtConnect, 'Connect YT');
+        showToast('Auth Error', err.message, 'error');
+      }
+    });
+  }
+
+  // Check auth status on startup
+  checkYouTubeAuthStatus();
 
   function pollRenderProgress(jobId) {
     const modal = document.getElementById('export-progress-modal');
@@ -2821,9 +2881,11 @@ document.addEventListener('DOMContentLoaded', () => {
           clearButtonLoading(btnExport, 'Export Video');
           
           if (data.youtube_url) {
-            showToast('Export & Upload Complete!', `Video rendered and auto-posted to YouTube:\n${data.youtube_url}`, 'success', 12000);
+            showToast('🎉 Export & YouTube Upload Complete!', `Video rendered and auto-posted to YouTube:\n${data.youtube_url}`, 'success', 15000);
             console.log("YouTube URL:", data.youtube_url);
             window.open(data.youtube_url, '_blank');
+          } else if (data.youtube_error) {
+            showToast('YouTube Upload Notice', `Video rendered, but YouTube upload failed:\n${data.youtube_error}`, 'warning', 10000);
           } else {
             showToast('Export Complete!', 'Your 60 FPS video is ready for download (100%)', 'success', 8000);
           }
