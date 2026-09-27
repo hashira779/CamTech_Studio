@@ -104,6 +104,121 @@ def trigger_browser_auth():
     return {"status": "started", "message": "Browser opened for Google account authorization"}
 
 
+def build_youtube_metadata(
+    song_title: str,
+    artist_name: str,
+    lyrics_data: Optional[list] = None,
+    theme: str = "",
+    aspect_ratio: str = "16:9",
+    custom_title: Optional[str] = None,
+    custom_desc: Optional[str] = None,
+    custom_tags: Optional[list] = None
+) -> Dict[str, Any]:
+    """Generates viral, perfectly formatted YouTube title, rich description with lyrics and timestamps, and SEO tags."""
+    import re
+
+    clean_title = (song_title or "VIDA Official Track").strip()
+    clean_artist = (artist_name or "").strip()
+    if clean_artist.lower() in ("official audio", "vida project", "unknown", "none"):
+        clean_artist = ""
+
+    # Detect Khmer script
+    is_khmer = any('\u1780' <= c <= '\u17FF' for c in (clean_title + " " + clean_artist))
+
+    # 1. Perfectly Formatted YouTube Title (Max 100 characters)
+    if custom_title and custom_title.strip():
+        final_title = custom_title.strip()[:100]
+    else:
+        if is_khmer:
+            tagline = " | ចម្រៀងកាយវិការ [Official 4K 60FPS Video]"
+            alt_tagline = " [Official Lyrics Video]"
+        else:
+            tagline = " | Official Audio Visualizer (60 FPS)"
+            alt_tagline = " [Official Video]"
+
+        if clean_artist:
+            lead = f"{clean_artist} - {clean_title}"
+        else:
+            lead = clean_title
+
+        if len(lead + tagline) <= 100:
+            final_title = lead + tagline
+        elif len(lead + alt_tagline) <= 100:
+            final_title = lead + alt_tagline
+        else:
+            final_title = lead[:100]
+
+    # 2. Rich, High-Converting YouTube Description
+    if custom_desc and custom_desc.strip():
+        final_desc = custom_desc.strip()[:5000]
+    else:
+        desc_lines = []
+        if clean_artist:
+            desc_lines.append(f"🎵 Song Title: {clean_title}")
+            desc_lines.append(f"🎙️ Artist / Singer: {clean_artist}")
+        else:
+            desc_lines.append(f"🎵 Song Title: {clean_title}")
+
+        theme_name = theme.replace("_", " ").title() if theme else "Fluid Wave"
+        desc_lines.append(f"✨ Visualizer: {theme_name} (60 FPS Ultra-HD)")
+        desc_lines.append(f"📐 Format: {'Vertical (9:16 Shorts/Reels)' if aspect_ratio == '9:16' else 'Cinematic (16:9 4K)'}")
+        desc_lines.append("⚡ Visual Production: VIDA Studio — Visual Intelligent Dynamic Audio-Video")
+        desc_lines.append("")
+        desc_lines.append("═" * 40)
+
+        # Include Timed Synchronized Lyrics if available
+        if lyrics_data and len(lyrics_data) > 0:
+            desc_lines.append("📝 FULL SYNCHRONIZED LYRICS / ទំនុកច្រៀង:")
+            desc_lines.append("═" * 40)
+            for item in lyrics_data:
+                txt = item.get("text", "").strip() if isinstance(item, dict) else str(item).strip()
+                s = float(item.get("start", 0)) if isinstance(item, dict) else 0.0
+                if txt:
+                    mm = int(s // 60)
+                    ss = int(s % 60)
+                    desc_lines.append(f"[{mm:02d}:{ss:02d}] {txt}")
+            desc_lines.append("═" * 40)
+            desc_lines.append("")
+
+        # SEO Call to Action
+        desc_lines.append("🔔 Don't forget to Like, Share, and Subscribe for more high-fidelity visualizer tracks!")
+        desc_lines.append("")
+
+        # SEO Hashtags
+        hashtags = ["#VIDAStudio", "#AudioVisualizer", "#MusicVideo", "#60FPS", "#KaraokeLyrics"]
+        if is_khmer:
+            hashtags.extend(["#KhmerMusic", "#KhmerSong", "#ចម្រៀងខ្មែរ", "#ចម្រៀងថ្មីៗ"])
+        if clean_artist:
+            tag_artist = re.sub(r'[^\w\u1780-\u17FF]', '', clean_artist)
+            if tag_artist:
+                hashtags.append(f"#{tag_artist}")
+        tag_title = re.sub(r'[^\w\u1780-\u17FF]', '', clean_title)
+        if tag_title:
+            hashtags.append(f"#{tag_title}")
+
+        desc_lines.append(" ".join(hashtags[:12]))
+        final_desc = "\n".join(desc_lines)[:5000]
+
+    # 3. Tags (Max 25 tags)
+    if custom_tags:
+        final_tags = [str(t).strip() for t in custom_tags if str(t).strip()]
+    else:
+        final_tags = ["VIDA", "VIDA Studio", "Music Video", "Audio Visualizer", "60 FPS", "Karaoke", "Lyrics"]
+        if clean_title:
+            final_tags.append(clean_title)
+        if clean_artist:
+            final_tags.append(clean_artist)
+            final_tags.append(f"{clean_artist} music")
+        if is_khmer:
+            final_tags.extend(["Khmer song", "Khmer music", "ចម្រៀងខ្មែរ", "ភ្លេងការ", "ចម្រៀងកាយវិការ", "ចម្រៀងថ្មី"])
+
+    return {
+        "title": final_title,
+        "description": final_desc,
+        "tags": final_tags[:25]
+    }
+
+
 def upload_video_to_youtube(
     video_path: str,
     title: str,

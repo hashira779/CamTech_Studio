@@ -123,6 +123,11 @@
           <option value="private">🔒 Private</option>
         </select>
 
+        <!-- YouTube Post Title & Description Customizer Button -->
+        <button id="btn-open-yt-modal" style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.18); color: #cbd5e1; border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 3px;" title="Preview & Customize YouTube Title, Description with Lyrics & Tags">
+          <span>⚙️</span> Details
+        </button>
+
         <!-- Channel Connection Status Badge & Button -->
         <button id="btn-youtube-connect" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #f87171; border-radius: 4px; padding: 2px 7px; font-size: 10px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 3px;" title="Connect or authorize your YouTube channel">
           <span id="yt-connect-icon">🔴</span>
@@ -235,13 +240,13 @@
               <span class="media-item-badge" id="badge-upload-bg">Auto</span>
             </div>
 
-            <div class="media-item" id="btn-upload-logo" style="cursor: pointer;">
+            <div class="media-item active" id="btn-upload-logo" style="cursor: pointer;">
               <div class="media-item-left">
                 <span class="icon">🎨</span>
-                <span class="media-item-title">Center Logo</span>
+                <span class="media-item-title">Logo: VibeTunes</span>
               </div>
               <input type="file" id="logo-file-input" accept="image/*" class="hidden">
-              <span class="media-item-badge" id="badge-upload-logo">Click Upload</span>
+              <span class="media-item-badge" id="badge-upload-logo" style="background:#10b981; color:#fff;">Default ✓</span>
             </div>
           </div>
 
@@ -630,19 +635,19 @@
 
                 <!-- Status indicator -->
                 <div id="badge-status-pill" style="font-size: 10px; color: var(--text-dim); margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; background: rgba(0,0,0,0.25); padding: 4px 8px; border-radius: 4px;">
-                  <span id="badge-status-text">Status: 🔤 Custom Text Badge</span>
-                  <button id="btn-remove-logo" class="hidden" style="background: transparent; border: none; color: #f59e0b; font-size: 10px; cursor: pointer; text-decoration: underline;" title="Remove uploaded logo image and restore text badge">Revert to Text</button>
+                  <span id="badge-status-text">🎧 VibeTunes Logo Active</span>
+                  <button id="btn-remove-logo" style="background: transparent; border: none; color: #f59e0b; font-size: 10px; cursor: pointer; text-decoration: underline;" title="Switch between VibeTunes logo and text badge">Switch to Text</button>
                 </div>
 
                 <!-- Text inputs -->
                 <div id="badge-text-inputs-container" style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px;">
                   <div>
                     <span style="font-size: 9px; color: var(--text-dim); display: block; margin-bottom: 2px;">Line 1 (Title / Name)</span>
-                    <input type="text" id="input-center-primary" class="prop-input" placeholder="VIDA (or ខ្មែរ / Any)" value="VIDA" style="font-size: 11px; width: 100%;">
+                    <input type="text" id="input-center-primary" class="prop-input" placeholder="VibeTunes" value="VibeTunes" style="font-size: 11px; width: 100%;">
                   </div>
                   <div>
                     <span style="font-size: 9px; color: var(--text-dim); display: block; margin-bottom: 2px;">Line 2 (Subtitle / Style)</span>
-                    <input type="text" id="input-center-secondary" class="prop-input" placeholder="FLUID WAVE" value="FLUID WAVE" style="font-size: 11px; width: 100%;">
+                    <input type="text" id="input-center-secondary" class="prop-input" placeholder="OFFICIAL" value="OFFICIAL" style="font-size: 11px; width: 100%;">
                   </div>
                 </div>
 
@@ -957,7 +962,7 @@
     </div>
   </div>
 
-  <script type="module" src="/static/js/main.js?v=20260927-v20"></script>
+  <script type="module" src="/static/js/main.js?v=20260927-v21"></script>
   
   <!-- Auto-Reflect Hot Reloader for Development -->
   <script>

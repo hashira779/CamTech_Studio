@@ -132,6 +132,29 @@ document.addEventListener('DOMContentLoaded', () => {
     state.lyrics = [];
   }
 
+  // ============ Default VibeTunes Logo Initialization ============
+  const defaultLogoUrl = '/uploads/images/vibetunes_logo.png';
+  const defaultLogoPath = 'd:\\Project\\VIDA\\uploads\\images\\vibetunes_logo.png';
+
+  const defaultLogoImg = new Image();
+  defaultLogoImg.onload = () => {
+    state.logoImageObj = defaultLogoImg;
+    state.logoImageUrl = defaultLogoUrl;
+    state.logoImagePath = defaultLogoPath;
+    
+    // Update Media Item & Center Badge UI
+    const btnLogoEl = document.getElementById('btn-upload-logo');
+    if (btnLogoEl) {
+      btnLogoEl.classList.add('active');
+      btnLogoEl.innerHTML = `<div class="media-item-left"><span class="icon">🎨</span><span class="media-item-title">Logo: VibeTunes</span></div><span class="media-item-badge" style="background:#10b981; color:#fff;">Default ✓</span>`;
+    }
+    const badgeStatusText = document.getElementById('badge-status-text');
+    if (badgeStatusText) badgeStatusText.innerHTML = '<span style="color:#10b981; font-weight:600;">🎧 VibeTunes Logo Active</span>';
+    const btnRemoveLogo = document.getElementById('btn-remove-logo');
+    if (btnRemoveLogo) btnRemoveLogo.classList.remove('hidden');
+  };
+  defaultLogoImg.src = defaultLogoUrl;
+
   function hasValidAudioSource(player) {
     if (!player || !player.src) return false;
     const s = (player.src || '').trim();
@@ -653,20 +676,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function updateBadgeStatusUI() {
     if (state.logoImageObj && state.logoImageObj.complete) {
-      if (badgeStatusText) badgeStatusText.innerHTML = '<span style="color:#10b981; font-weight:600;">🖼️ Custom Artwork Active</span>';
-      if (btnRemoveLogo) btnRemoveLogo.classList.remove('hidden');
+      if (badgeStatusText) badgeStatusText.innerHTML = '<span style="color:#10b981; font-weight:600;">🎧 VibeTunes Logo Active</span>';
+      if (btnRemoveLogo) {
+        btnRemoveLogo.classList.remove('hidden');
+        btnRemoveLogo.textContent = 'Switch to Text';
+      }
     } else if (state.showCenterText === false) {
       if (badgeStatusText) badgeStatusText.innerHTML = '<span style="color:#94a3b8;">👁️ Badge Hidden (Off)</span>';
       if (btnRemoveLogo) btnRemoveLogo.classList.add('hidden');
     } else {
-      const c1 = state.centerTextPrimary !== undefined ? state.centerTextPrimary : 'VIDA';
-      const c2 = state.centerTextSecondary !== undefined ? state.centerTextSecondary : 'FLUID WAVE';
+      const c1 = state.centerTextPrimary !== undefined ? state.centerTextPrimary : 'VibeTunes';
+      const c2 = state.centerTextSecondary !== undefined ? state.centerTextSecondary : 'OFFICIAL';
       if (!c1.trim() && !c2.trim()) {
         if (badgeStatusText) badgeStatusText.innerHTML = '<span style="color:#f59e0b; font-weight:600;">⚪ Clean Ring (No Text)</span>';
       } else {
         if (badgeStatusText) badgeStatusText.innerHTML = `<span style="color:#ec4899; font-weight:600;">🔤 Badge: "${c1}" / "${c2}"</span>`;
       }
-      if (btnRemoveLogo) btnRemoveLogo.classList.add('hidden');
+      if (btnRemoveLogo) {
+        btnRemoveLogo.classList.remove('hidden');
+        btnRemoveLogo.textContent = 'Restore VibeTunes';
+      }
     }
   }
 
@@ -852,16 +881,35 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (btnRemoveLogo) {
     btnRemoveLogo.addEventListener('click', () => {
-      state.logoImageObj = null;
-      state.logoImagePath = null;
-      state.logoImageUrl = null;
-      const btnLogoEl = document.getElementById('btn-upload-logo');
-      if (btnLogoEl) {
-        btnLogoEl.classList.remove('active');
-        btnLogoEl.innerHTML = `<div class="media-item-left"><span class="icon">🎨</span><span class="media-item-title">Center Logo</span></div><span class="media-item-badge">Click Upload</span>`;
+      if (state.logoImageObj) {
+        state.logoImageObj = null;
+        state.logoImagePath = null;
+        state.logoImageUrl = null;
+        const btnLogoEl = document.getElementById('btn-upload-logo');
+        if (btnLogoEl) {
+          btnLogoEl.classList.remove('active');
+          btnLogoEl.innerHTML = `<div class="media-item-left"><span class="icon">🎨</span><span class="media-item-title">Center Logo</span></div><span class="media-item-badge">None</span>`;
+        }
+        updateBadgeStatusUI();
+        showToast('Center Badge', 'Switched to text badge (Click "Restore VibeTunes" anytime)', 'info', 2500);
+      } else {
+        const defaultLogoUrl = '/uploads/images/vibetunes_logo.png';
+        const defaultLogoPath = 'd:\\Project\\VIDA\\uploads\\images\\vibetunes_logo.png';
+        const img = new Image();
+        img.onload = () => {
+          state.logoImageObj = img;
+          state.logoImageUrl = defaultLogoUrl;
+          state.logoImagePath = defaultLogoPath;
+          const btnLogoEl = document.getElementById('btn-upload-logo');
+          if (btnLogoEl) {
+            btnLogoEl.classList.add('active');
+            btnLogoEl.innerHTML = `<div class="media-item-left"><span class="icon">🎨</span><span class="media-item-title">Logo: VibeTunes</span></div><span class="media-item-badge" style="background:#10b981; color:#fff;">Default ✓</span>`;
+          }
+          updateBadgeStatusUI();
+          showToast('Center Badge', 'Restored default VibeTunes logo!', 'success', 2500);
+        };
+        img.src = defaultLogoUrl;
       }
-      updateBadgeStatusUI();
-      showToast('Artwork Removed', 'Reverted to custom text badge', 'info', 2000);
     });
   }
 

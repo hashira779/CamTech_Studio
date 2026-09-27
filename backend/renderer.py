@@ -225,9 +225,13 @@ class VideoRenderer:
         self.theme = theme
         self.palette = PALETTES.get(palette_name, PALETTES["cyberpunk"])
         self.background_image_path = background_image
-        self.logo_image_path = logo_image
-        self.center_text_primary = center_text_primary if center_text_primary is not None else "VIDA"
-        self.center_text_secondary = center_text_secondary if center_text_secondary is not None else "FLUID WAVE"
+        default_logo = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads", "images", "vibetunes_logo.png")
+        if (not logo_image or not os.path.exists(logo_image)) and os.path.exists(default_logo):
+            self.logo_image_path = default_logo
+        else:
+            self.logo_image_path = logo_image
+        self.center_text_primary = center_text_primary if center_text_primary is not None else "VibeTunes"
+        self.center_text_secondary = center_text_secondary if center_text_secondary is not None else "OFFICIAL"
         self.show_center_text = show_center_text
         self.song_title = song_title or "VIDA Visualizer"
         self.artist_name = artist_name or "Official Audio"
