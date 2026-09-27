@@ -2834,6 +2834,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (ytConnectIcon) ytConnectIcon.textContent = '🟢';
         if (ytConnectText) ytConnectText.textContent = data.channel_title ? data.channel_title.substring(0, 14) : 'Connected';
         btnYtConnect.title = `Connected Channel: ${data.channel_title || 'Authorized'}`;
+        delete btnYtConnect.dataset.enableUrl;
+      } else if (data.needs_api_enable && btnYtConnect) {
+        btnYtConnect.style.background = 'rgba(245, 158, 11, 0.2)';
+        btnYtConnect.style.borderColor = 'rgba(245, 158, 11, 0.5)';
+        btnYtConnect.style.color = '#fbbf24';
+        if (ytConnectIcon) ytConnectIcon.textContent = '⚠️';
+        if (ytConnectText) ytConnectText.textContent = 'Enable API';
+        btnYtConnect.title = 'YouTube API is disabled in Google Cloud. Click to open and click ENABLE!';
+        btnYtConnect.dataset.enableUrl = data.enable_url;
       } else if (btnYtConnect) {
         btnYtConnect.style.background = 'rgba(239, 68, 68, 0.15)';
         btnYtConnect.style.borderColor = 'rgba(239, 68, 68, 0.4)';
@@ -2841,15 +2850,22 @@ document.addEventListener('DOMContentLoaded', () => {
         if (ytConnectIcon) ytConnectIcon.textContent = '🔴';
         if (ytConnectText) ytConnectText.textContent = 'Connect YT';
         btnYtConnect.title = 'Click to authorize your YouTube channel for auto-posting';
+        delete btnYtConnect.dataset.enableUrl;
       }
-      return data.connected;
+      return data;
     } catch (_) {
-      return false;
+      return { connected: false };
     }
   }
 
   if (btnYtConnect) {
     btnYtConnect.addEventListener('click', async () => {
+      // If needs API enable, open the direct link directly!
+      if (btnYtConnect.dataset.enableUrl) {
+        window.open(btnYtConnect.dataset.enableUrl, '_blank');
+        showToast('Enable YouTube API', 'Opening Google Cloud Console — click the blue ENABLE button!', 'warning', 8000);
+        return;
+      }
       setButtonLoading(btnYtConnect, 'Connecting...');
       showToast('YouTube Sign-In', 'Opening browser to authorize your YouTube channel...', 'info', 6000);
       try {
@@ -2858,12 +2874,17 @@ document.addEventListener('DOMContentLoaded', () => {
         let attempts = 0;
         const authPoll = setInterval(async () => {
           attempts++;
-          const isConn = await checkYouTubeAuthStatus();
-          if (isConn || attempts > 30) {
+          const authData = await checkYouTubeAuthStatus();
+          if (authData.connected || authData.needs_api_enable || attempts > 30) {
             clearInterval(authPoll);
-            clearButtonLoading(btnYtConnect, isConn ? '🟢 Connected' : 'Connect YT');
-            if (isConn) {
+            if (authData.connected) {
+              clearButtonLoading(btnYtConnect, '🟢 Connected');
               showToast('YouTube Connected!', 'Your channel is now authorized for auto-posting!', 'success', 5000);
+            } else if (authData.needs_api_enable) {
+              clearButtonLoading(btnYtConnect, '⚠️ Enable API');
+              showToast('Enable YouTube API', 'Login authorized! Click "⚠️ Enable API" to enable YouTube API on Google Cloud', 'warning', 10000);
+            } else {
+              clearButtonLoading(btnYtConnect, 'Connect YT');
             }
           }
         }, 2000);

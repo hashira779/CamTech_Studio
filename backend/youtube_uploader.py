@@ -80,7 +80,19 @@ def get_youtube_channel_info() -> Dict[str, Any]:
             }
         return {"connected": True, "channel_title": "Connected Channel", "channel_id": None}
     except Exception as e:
-        return {"connected": False, "error": str(e)}
+        err_str = str(e)
+        needs_enable = (
+            "has not been used in project" in err_str or
+            "it is disabled" in err_str or
+            "accessNotConfigured" in err_str or
+            "SERVICE_DISABLED" in err_str
+        )
+        return {
+            "connected": False,
+            "error": err_str,
+            "needs_api_enable": needs_enable,
+            "enable_url": "https://console.developers.google.com/apis/api/youtube.googleapis.com/overview?project=486767077998"
+        }
 
 
 _auth_thread = None
