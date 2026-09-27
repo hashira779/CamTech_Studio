@@ -175,12 +175,17 @@ class ThumbnailRequest(BaseModel):
 
 class LLMAnalyzeRequest(BaseModel):
     text: str
+    lyrics_data: Optional[List[Dict[str, Any]]] = None
 
 class LLMTranslateRequest(BaseModel):
     text: str
 
 class LyricsVerifyRequest(BaseModel):
     lyrics_data: List[Dict[str, Any]]
+
+class LyricsCorrectReferenceRequest(BaseModel):
+    lyrics_data: List[Dict[str, Any]]
+    reference_text: str
 
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
@@ -557,6 +562,31 @@ async def auto_fix_lyrics_api(req: LyricsVerifyRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM Auto-Fix Error: {str(e)}")
 
+@app.post("/api/lyrics/correct-with-reference")
+async def correct_lyrics_with_reference_api(req: LyricsCorrectReferenceRequest):
+    """
+    Aligns and corrects automated speech-to-text / Whisper transcription
+    with user-provided ground-truth original lyrics, repairing all misheard phonetic words
+    while preserving audio start/end timestamps and word synchronization.
+    """
+    if not req.lyrics_data:
+        raise HTTPException(status_code=400, detail="No lyrics loaded in teleprompter")
+    if not req.reference_text or not req.reference_text.strip():
+        raise HTTPException(status_code=400, detail="Please paste reference lyrics text")
+    
+    try:
+        from backend.llm_engine import align_and_correct_lyrics_with_reference
+        corrected_lyrics, report = align_and_correct_lyrics_with_reference(req.lyrics_data, req.reference_text)
+        return {
+            "status": "success",
+            "lines_count": len(corrected_lyrics),
+            "changes_count": report.get("changes_count", 0),
+            "report": report,
+            "lyrics": corrected_lyrics
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lyrics alignment error: {str(e)}")
+
 def clean_youtube_title_and_artist(
     raw_title: str,
     uploader: Optional[str] = None,
@@ -831,8 +861,22 @@ def analyze_audio_structure(req: AnalyzeRequest):
 
 @app.post("/api/ai/llm/analyze")
 def llm_analyze_text(req: LLMAnalyzeRequest):
-    """Uses local Qwen 2.5 / SeaLLMs model to analyze Khmer text for semantic meaning."""
+    """Uses Gemini / local model to analyze Khmer text for semantic meaning or auto-align with loaded lyrics."""
     try:
+        # Check if user has lyrics loaded in teleprompter and pasted lyric lines to align/correct
+        if req.lyrics_data and len(req.lyrics_data) > 0 and req.text and any('\u1780' <= c <= '\u17FF' for c in req.text):
+            lines = [l.strip() for l in req.text.splitlines() if l.strip()]
+            if len(lines) >= 3 or any(w in req.text for w in ["កែ", "align", "lyrics", "ទំនុកច្រៀង", "កែអត្ថបទ", "តម្រឹម"]):
+                from backend.llm_engine import align_and_correct_lyrics_with_reference
+                corrected_lyrics, report = align_and_correct_lyrics_with_reference(req.lyrics_data, req.text)
+                return {
+                    "status": "success",
+                    "aligned": True,
+                    "analysis": f"⚡ **Gemini Aligned Lyrics**: Successfully matched & corrected {report.get('changes_count', 0)} lines with your original text, preserving all audio timestamps!",
+                    "changes_count": report.get("changes_count", 0),
+                    "lyrics": corrected_lyrics,
+                    "report": report
+                }
         result = llm_engine.analyze_khmer_text(req.text)
         return result
     except Exception as e:

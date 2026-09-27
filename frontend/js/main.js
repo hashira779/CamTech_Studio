@@ -405,24 +405,99 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // ============ LLM Chat Box ============
-  const llmInput = document.querySelector('.llm-input');
-  const llmBtn = document.querySelector('.btn-ai-small');
+  // ============ LLM Chat Box & Lyrics Aligner ============
+  const llmInput = document.getElementById('input-ai-prompt') || document.querySelector('.llm-input');
+  const llmBtn = document.getElementById('btn-ask-gemini') || document.querySelector('.btn-ai-small');
+  const btnAiAlignLyrics = document.getElementById('btn-ai-align-lyrics');
+
+  async function runLyricsAlignmentWithReference(referenceText, triggerBtn = null) {
+    if (!state.lyrics || state.lyrics.length === 0) {
+      showToast('No Lyrics in Teleprompter', 'Please transcribe audio or load lyrics first to align', 'info', 3000);
+      return false;
+    }
+    const cleanRef = (referenceText || '').trim();
+    if (!cleanRef) {
+      showToast('Empty Lyrics', 'Please paste your 100% correct lyrics text first', 'warning', 3000);
+      return false;
+    }
+
+    const prevBtnText = triggerBtn ? triggerBtn.textContent : '';
+    if (triggerBtn) setButtonLoading(triggerBtn, '⚡ Aligning...');
+    setGlobalProgress(25, true, 'Aligning with Original Lyrics...');
+
+    try {
+      const res = await fetch('/api/lyrics/correct-with-reference', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lyrics_data: state.lyrics,
+          reference_text: cleanRef
+        })
+      });
+      const data = await res.json();
+      setGlobalProgress(100, true, 'Lyrics Alignment Complete');
+
+      if (data.status === 'success' && data.lyrics && data.lyrics.length > 0) {
+        state.lyrics = data.lyrics;
+        try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(e) {}
+        renderLyricsTeleprompter(state.lyrics, true);
+        const lyricsVerifiedBadge = document.getElementById('lyrics-verified-badge');
+        if (lyricsVerifiedBadge) lyricsVerifiedBadge.style.display = 'inline-block';
+
+        showToast(
+          '✅ 100% Lyrics Aligned & Corrected',
+          `Successfully matched & fixed ${data.changes_count || data.lines_count} lines! Audio timestamps & kinetic glow preserved.`,
+          'success',
+          4500
+        );
+        return true;
+      } else {
+        showToast('Alignment Notice', data.detail || 'Could not complete lyrics alignment', 'info', 3000);
+        return false;
+      }
+    } catch (err) {
+      console.error('Lyrics alignment error:', err);
+      showToast('Alignment Error', err.message, 'error', 3500);
+      return false;
+    } finally {
+      if (triggerBtn) clearButtonLoading(triggerBtn, prevBtnText || '⚡ Align & Fix Teleprompter');
+      setTimeout(() => setGlobalProgress(100, false, ''), 1000);
+    }
+  }
+
   if (llmBtn && llmInput) {
     llmBtn.addEventListener('click', async () => {
       const text = llmInput.value.trim();
       if (!text) return;
+
+      // If user pasted multi-line lyrics and teleprompter has loaded lines, auto-align!
+      const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+      const hasKhmer = /[\u1780-\u17FF]/.test(text);
+      if (state.lyrics && state.lyrics.length > 0 && hasKhmer && lines.length >= 3) {
+        const success = await runLyricsAlignmentWithReference(text, llmBtn);
+        if (success) return;
+      }
       
       try {
         setButtonLoading(llmBtn, '⚡ Asking Gemini...');
         const res = await fetch('/api/ai/llm/analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text })
+          body: JSON.stringify({ 
+            text,
+            lyrics_data: state.lyrics || []
+          })
         });
         const data = await res.json();
         
-        if (data.analysis) {
+        if (data.aligned && data.lyrics) {
+          state.lyrics = data.lyrics;
+          try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(e) {}
+          renderLyricsTeleprompter(state.lyrics, true);
+          const lyricsVerifiedBadge = document.getElementById('lyrics-verified-badge');
+          if (lyricsVerifiedBadge) lyricsVerifiedBadge.style.display = 'inline-block';
+          showToast('⚡ Gemini Aligned Lyrics', `Fixed ${data.changes_count} lines with your original text!`, 'success', 4000);
+        } else if (data.analysis) {
           llmInput.value = data.analysis;
           showToast('⚡ Gemini AI Response', data.analysis.substring(0, 80) + '...', 'success');
         } else if (data.status === 'error') {
@@ -434,6 +509,13 @@ document.addEventListener('DOMContentLoaded', () => {
       } finally {
         clearButtonLoading(llmBtn, '⚡ Ask Gemini AI (Khmer Focus)');
       }
+    });
+  }
+
+  if (btnAiAlignLyrics && llmInput) {
+    btnAiAlignLyrics.addEventListener('click', async () => {
+      const text = llmInput.value.trim();
+      await runLyricsAlignmentWithReference(text, btnAiAlignLyrics);
     });
   }
 
@@ -1233,6 +1315,67 @@ document.addEventListener('DOMContentLoaded', () => {
       } finally {
         clearButtonLoading(btnVerifyLyrics, '🔍 Double-Check');
         setTimeout(() => setGlobalProgress(100, false, ''), 1000);
+      }
+    });
+  }
+
+  // 📝 Paste & Align Original Lyrics Modal
+  const btnPasteAlignLyrics = document.getElementById('btn-paste-align-lyrics');
+  const alignLyricsModal = document.getElementById('align-lyrics-modal');
+  const btnCloseAlignModal = document.getElementById('btn-close-align-modal');
+  const btnCancelAlignModal = document.getElementById('btn-cancel-align-modal');
+  const btnSubmitAlignLyrics = document.getElementById('btn-submit-align-lyrics');
+  const inputAlignReference = document.getElementById('input-align-reference');
+  const alignModalLineCount = document.getElementById('align-modal-line-count');
+
+  function openAlignModal() {
+    if (!alignLyricsModal) return;
+    alignLyricsModal.style.display = 'flex';
+    const aiInputVal = (document.getElementById('input-ai-prompt') || document.querySelector('.llm-input'))?.value?.trim();
+    if (aiInputVal && inputAlignReference && (!inputAlignReference.value || !inputAlignReference.value.trim())) {
+      inputAlignReference.value = aiInputVal;
+    }
+    updateAlignLineCount();
+    setTimeout(() => inputAlignReference?.focus(), 100);
+  }
+
+  function closeAlignModal() {
+    if (alignLyricsModal) alignLyricsModal.style.display = 'none';
+  }
+
+  function updateAlignLineCount() {
+    if (!inputAlignReference || !alignModalLineCount) return;
+    const lines = inputAlignReference.value.split('\n').map(l => l.trim()).filter(Boolean);
+    alignModalLineCount.textContent = `${lines.length} Lines`;
+  }
+
+  if (inputAlignReference) {
+    inputAlignReference.addEventListener('input', updateAlignLineCount);
+  }
+
+  if (btnPasteAlignLyrics) {
+    btnPasteAlignLyrics.addEventListener('click', () => {
+      if (!state.lyrics || state.lyrics.length === 0) {
+        showToast('No Lyrics Loaded', 'Please load or transcribe audio first so timing cues exist to align against', 'info', 3500);
+        return;
+      }
+      openAlignModal();
+    });
+  }
+
+  if (btnCloseAlignModal) btnCloseAlignModal.addEventListener('click', closeAlignModal);
+  if (btnCancelAlignModal) btnCancelAlignModal.addEventListener('click', closeAlignModal);
+
+  if (btnSubmitAlignLyrics) {
+    btnSubmitAlignLyrics.addEventListener('click', async () => {
+      const text = inputAlignReference ? inputAlignReference.value.trim() : '';
+      if (!text) {
+        showToast('Empty Lyrics', 'Please paste your original lyrics text into the box', 'warning', 3000);
+        return;
+      }
+      const success = await runLyricsAlignmentWithReference(text, btnSubmitAlignLyrics);
+      if (success) {
+        closeAlignModal();
       }
     });
   }

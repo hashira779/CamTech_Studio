@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 
 
 def call_gemini_api(prompt: str, json_mode: bool = False, timeout: int = 10) -> Optional[str]:
@@ -14,7 +14,15 @@ def call_gemini_api(prompt: str, json_mode: bool = False, timeout: int = 10) -> 
             return None
         import urllib.request
         import json
-        models = ["gemini-3.1-flash-lite", "gemini-flash-latest", "gemini-3.5-flash"]
+        models = [
+            "gemini-3.5-flash-lite",
+            "gemini-flash-lite-latest",
+            "gemini-3.7-flash",
+            "gemini-3.6-flash",
+            "gemini-3.8-flash",
+            "gemini-3.5-flash",
+            "gemini-3.1-flash-lite",
+        ]
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
         if json_mode:
             payload["generationConfig"] = {"response_mime_type": "application/json"}
@@ -750,4 +758,102 @@ class LocalLLMEngine:
         return self.translate_text(english_text, target_lang="Khmer")
 
 llm_engine = LocalLLMEngine()
+
+
+def align_and_correct_lyrics_with_reference(
+    lyrics_data: List[Dict[str, Any]],
+    reference_text: str
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    Aligns automated speech-to-text / Whisper transcription lines with
+    user-provided ground-truth original lyrics text.
+    
+    1. Repairs phonetic mishearing errors, dialect shifts, and distorted words.
+    2. Maps combined short stanzas in reference text to Whisper lines.
+    3. Retains exact audio start/end timestamps.
+    4. Automatically re-tokenizes and synchronizes word-level timestamps.
+    5. Fallback to sequence matching if Gemini Cloud is unavailable.
+    """
+    if not lyrics_data:
+        return [], {"changes_count": 0, "status": "No lyrics to align"}
+    if not reference_text or not reference_text.strip():
+        from backend.lyric_engine import double_check_lyrics
+        return double_check_lyrics(lyrics_data)
+
+    clean_ref = reference_text.strip()
+    transcript_summary = [
+        {"line_id": i, "text": item.get("text", "")}
+        for i, item in enumerate(lyrics_data)
+    ]
+
+    import json
+    prompt = (
+        "You are an expert Khmer song editor and lyric alignment AI.\n"
+        "An audio song was transcribed automatically by Whisper speech-to-text. The line timestamps and line_ids are already captured accurately, but Whisper misheard phonetic words in Khmer singing (homophones, background music distortion).\n"
+        "The user has provided the 100% correct, ground-truth ORIGINAL LYRICS text.\n\n"
+        "Task:\n"
+        f"Map every transcribed line_id (0 to {len(lyrics_data)-1}) to the exact corresponding line(s) from the ORIGINAL LYRICS.\n"
+        "Rules:\n"
+        "1. Whisper lines often merge 2 short verses into 1 line (e.g. 'ដល់រដូវភ្ជុំ' + 'ស្រីម៉ុម វេចនំឬទេ?' -> 'ដល់រដូវភ្ជុំ ស្រីម៉ុម វេចនំឬទេ?').\n"
+        "2. Replace Whisper's misheard words with the authentic words from the ORIGINAL LYRICS.\n"
+        "3. Every input line_id MUST appear in your output array in order.\n"
+        "4. Preserve authentic Khmer spacing between phrase units.\n\n"
+        f"Transcribed Lines (from audio):\n{json.dumps(transcript_summary, ensure_ascii=False)}\n\n"
+        f"Original Reference Lyrics (ground-truth):\n{clean_ref}\n\n"
+        "Output format:\n"
+        "Return ONLY a valid JSON array of objects with keys:\n"
+        "[\n"
+        '  { "line_id": 0, "text": "corrected text for line 0" },\n'
+        "  ...\n"
+        "]"
+    )
+
+    corrected_map: Dict[int, str] = {}
+    gem_res = call_gemini_api(prompt, json_mode=True, timeout=18)
+    if gem_res:
+        try:
+            parsed = json.loads(gem_res)
+            for item in parsed:
+                if "line_id" in item and "text" in item:
+                    corrected_map[int(item["line_id"])] = str(item["text"]).strip()
+        except Exception as parse_e:
+            print(f"[Lyric Align] Parse notice: {parse_e}")
+
+    # Fallback to local sequence alignment if Gemini returned empty
+    if not corrected_map:
+        import difflib
+        ref_lines = [l.strip() for l in clean_ref.splitlines() if l.strip()]
+        ref_idx = 0
+        for i, item in enumerate(lyrics_data):
+            orig_t = item.get("text", "")
+            if ref_idx < len(ref_lines):
+                cand1 = ref_lines[ref_idx]
+                cand2 = f"{ref_lines[ref_idx]} {ref_lines[ref_idx+1]}" if ref_idx + 1 < len(ref_lines) else cand1
+                score1 = difflib.SequenceMatcher(None, orig_t, cand1).ratio()
+                score2 = difflib.SequenceMatcher(None, orig_t, cand2).ratio()
+                if score2 > score1 or len(cand2) <= len(orig_t) + 5:
+                    corrected_map[i] = cand2
+                    ref_idx += 2
+                else:
+                    corrected_map[i] = cand1
+                    ref_idx += 1
+
+    changes_count = 0
+    new_lyrics = []
+    from backend.lyric_engine import double_check_lyrics
+
+    for i, orig_item in enumerate(lyrics_data):
+        item_copy = dict(orig_item)
+        new_text = corrected_map.get(i)
+        if new_text and new_text != item_copy.get("text"):
+            item_copy["text"] = new_text
+            item_copy["words"] = []  # Forces word-level re-tokenization & monotonic duration proportioning
+            changes_count += 1
+        new_lyrics.append(item_copy)
+
+    verified, report = double_check_lyrics(new_lyrics)
+    report["changes_count"] = changes_count
+    report["model_used"] = "Gemini 3.5 Flash / Cloud AI" if gem_res else "Local Sequence Aligner"
+    return verified, report
+
 

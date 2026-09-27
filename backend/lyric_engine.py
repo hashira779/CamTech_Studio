@@ -251,13 +251,13 @@ def clean_khmer_hallucination_loops(text: str) -> str:
     pattern = r'([\u1780-\u17D3]{1,8}?)\1{2,}'
     cleaned = re.sub(pattern, r'\1\1', text)
 
-    cleaned = re.sub(r'[\s\u200B-\u200D\uFEFF]', '', cleaned)
-    
-    if len(cleaned) > 20:
-        if len(set(cleaned)) <= 3:
+    # Check for hallucinated monotone loops (without whitespace)
+    no_space = re.sub(r'[\s\u200B-\u200D\uFEFF]', '', cleaned)
+    if len(no_space) > 20:
+        if len(set(no_space)) <= 3:
             return ""
-        khmer_chars = [c for c in cleaned if '\u1780' <= c <= '\u17D3']
-        if len(khmer_chars) > 0 and len(set(khmer_chars)) <= 2 and len(khmer_chars) > len(cleaned) * 0.5:
+        khmer_chars = [c for c in no_space if '\u1780' <= c <= '\u17D3']
+        if len(khmer_chars) > 0 and len(set(khmer_chars)) <= 2 and len(khmer_chars) > len(no_space) * 0.5:
             return ""
 
     # Remove extreme vowel elongations common in singing ASR (e.g. ាាាា -> ា)
