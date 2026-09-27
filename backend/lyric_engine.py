@@ -1075,7 +1075,17 @@ def fetch_synced_lyrics_lrclib(title: str, artist: str = "", duration: float = 0
 class WhisperTranscriber:
     """Handles automatic speech-to-text with word-level timestamps and Khmer support."""
 
+    VALID_WHISPER_MODELS = {
+        "tiny.en", "tiny", "base.en", "base", "small.en", "small",
+        "medium.en", "medium", "large-v1", "large-v2", "large-v3",
+        "large", "distil-large-v2", "distil-medium.en", "distil-small.en",
+        "distil-large-v3", "distil-large-v3.5", "large-v3-turbo", "turbo"
+    }
+
     def __init__(self, model_size: str = "large-v3-turbo", device: str = "auto", compute_type: str = "default"):
+        if model_size not in self.VALID_WHISPER_MODELS:
+            print(f"[WhisperTranscriber] Note: '{model_size}' is not a valid Whisper model identifier. Defaulting to 'large-v3-turbo'.")
+            model_size = "large-v3-turbo"
         self.model_size = model_size
         self.device = device
         self.compute_type = compute_type

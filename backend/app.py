@@ -440,10 +440,14 @@ def transcribe_audio(req: TranscribeRequest):
             detected_lang = "km"
             source_type = "qwen3-asr"
         else:
-            update_transcribe_progress(5, "Preparing Whisper AI engine...")
-            if transcriber_instance is None or transcriber_instance.model_size != req.model_size:
-                update_transcribe_progress(10, f"Loading Whisper {req.model_size} model...")
-                transcriber_instance = WhisperTranscriber(model_size=req.model_size)
+            whisper_model = "large-v3-turbo"
+            if req.model_size and req.model_size not in ("gemini-fast", "qwen3-khmer", "auto", "default"):
+                whisper_model = req.model_size
+
+            update_transcribe_progress(5, f"Preparing Whisper ({whisper_model})...")
+            if transcriber_instance is None or transcriber_instance.model_size != whisper_model:
+                update_transcribe_progress(10, f"Loading Whisper {whisper_model} model...")
+                transcriber_instance = WhisperTranscriber(model_size=whisper_model)
 
             def on_progress(pct, msg):
                 update_transcribe_progress(pct, msg)
@@ -498,6 +502,8 @@ def transcribe_audio(req: TranscribeRequest):
             "count": len(lyrics)
         }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         update_transcribe_progress(0, f"Error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
