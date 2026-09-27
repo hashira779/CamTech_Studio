@@ -1043,9 +1043,12 @@ def _execute_render_job(job_id: str, req: RenderRequest):
         jobs[job_id]["youtube_url"] = youtube_url
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
+        err_msg = str(e) or repr(e) or type(e).__name__
         jobs[job_id]["status"] = "failed"
-        jobs[job_id]["error"] = str(e)
-        print(f"Rendering error for job {job_id}: {e}")
+        jobs[job_id]["error"] = err_msg
+        print(f"Rendering error for job {job_id}: {err_msg}")
 
 @app.post("/api/render")
 async def start_render(req: RenderRequest, background_tasks: BackgroundTasks):

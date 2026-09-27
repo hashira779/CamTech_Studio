@@ -655,17 +655,23 @@ class VideoRenderer:
             if self.theme in ("neon_bars", "spectrum"):
                 lyric_y = int(self.height * 0.28)  # Position above bars
 
+            # Safe word string extractor supporting both dicts and plain strings
+            def _get_w_str(w_obj):
+                if isinstance(w_obj, dict):
+                    return str(w_obj.get("word", ""))
+                return str(w_obj)
+
             # Check if line text belongs to unspaced script (Khmer, Chinese, Japanese, Thai)
             raw_line_text = active_line.get("text", "")
             is_unspaced = any(0x1780 <= ord(c) <= 0x17FF or 0x4E00 <= ord(c) <= 0x9FFF or 0x3040 <= ord(c) <= 0x30FF or 0x0E00 <= ord(c) <= 0x0E7F for c in raw_line_text)
             w_space = "" if is_unspaced else " "
-            full_line_text = raw_line_text if raw_line_text else (w_space.join([w["word"] for w in words]) if words else "")
+            full_line_text = raw_line_text if raw_line_text else (w_space.join([_get_w_str(w) for w in words]) if words else "")
 
             # Script-aware font loading for current lyric line
             used_font = self._load_font(int(self.height * 0.045), bold=True, text=full_line_text)
 
             # Calculate total width of the line by summing exact word bounding boxes to guarantee 100% match with drawn text
-            word_bboxes = [draw.textbbox((0, 0), w["word"] + w_space, font=used_font) for w in words]
+            word_bboxes = [draw.textbbox((0, 0), _get_w_str(w) + w_space, font=used_font) for w in words]
             total_text_w = sum(b[2] - b[0] for b in word_bboxes) if word_bboxes else (draw.textbbox((0, 0), full_line_text, font=used_font)[2] - draw.textbbox((0, 0), full_line_text, font=used_font)[0])
             max_text_h = max((b[3] - b[1] for b in word_bboxes), default=int(self.height * 0.045))
 
@@ -673,7 +679,7 @@ class VideoRenderer:
                 scale = (self.width * 0.85) / max(1, total_text_w)
                 new_size = max(18, int(self.height * 0.045 * scale))
                 used_font = self._load_font(new_size, bold=True, text=full_line_text)
-                word_bboxes = [draw.textbbox((0, 0), w["word"] + w_space, font=used_font) for w in words]
+                word_bboxes = [draw.textbbox((0, 0), _get_w_str(w) + w_space, font=used_font) for w in words]
                 total_text_w = sum(b[2] - b[0] for b in word_bboxes) if word_bboxes else (draw.textbbox((0, 0), full_line_text, font=used_font)[2] - draw.textbbox((0, 0), full_line_text, font=used_font)[0])
                 max_text_h = max((b[3] - b[1] for b in word_bboxes), default=new_size)
 
@@ -693,7 +699,7 @@ class VideoRenderer:
             # Draw word by word with karaoke highlight
             cur_x = start_x
             for w_idx, w in enumerate(words):
-                w_text = w["word"] + w_space
+                w_text = _get_w_str(w) + w_space
                 w_w = word_bboxes[w_idx][2] - word_bboxes[w_idx][0] if w_idx < len(word_bboxes) else (draw.textbbox((0, 0), w_text, font=used_font)[2] - draw.textbbox((0, 0), w_text, font=used_font)[0])
 
                 if w_idx == active_word_idx:
