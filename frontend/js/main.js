@@ -488,14 +488,9 @@ document.addEventListener('DOMContentLoaded', () => {
   if (llmBtn && llmInput) {
     llmBtn.addEventListener('click', async () => {
       const text = llmInput.value.trim();
-      if (!text) return;
-
-      // If user pasted multi-line lyrics and teleprompter has loaded lines, auto-align!
-      const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-      const hasKhmer = /[\u1780-\u17FF]/.test(text);
-      if (state.lyrics && state.lyrics.length > 0 && hasKhmer && lines.length >= 3) {
-        const success = await runLyricsAlignmentWithReference(text, llmBtn);
-        if (success) return;
+      if (!text) {
+        showToast('Empty Prompt', 'Type a question or message to ask Gemini AI', 'info', 2500);
+        return;
       }
       
       try {
@@ -503,26 +498,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const res = await fetch('/api/ai/llm/analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            text,
-            lyrics_data: state.lyrics || []
-          })
+          body: JSON.stringify({ text })
         });
         const data = await res.json();
         
-        if (data.aligned && data.lyrics) {
-          state.lyrics = data.lyrics;
-          try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(e) {}
-          renderLyricsTeleprompter(state.lyrics, true);
-          const lyricsVerifiedBadge = document.getElementById('lyrics-verified-badge');
-          if (lyricsVerifiedBadge) lyricsVerifiedBadge.style.display = 'inline-block';
-          showToast('⚡ Gemini Aligned Lyrics', `Fixed ${data.changes_count} lines with your original text!`, 'success', 4000);
-        } else if (data.analysis) {
-          llmInput.value = data.analysis;
-          showToast('⚡ Gemini AI Response', data.analysis.substring(0, 80) + '...', 'success');
+        if (data.analysis) {
+          showToast('⚡ Gemini AI Response', data.analysis.substring(0, 100) + '...', 'success', 5000);
         } else if (data.status === 'error') {
-          llmInput.value = data.analysis || 'Gemini AI notice: Unable to process request.';
-          showToast('AI Error', 'Could not get response', 'error');
+          showToast('AI Error', 'Could not get response from Gemini', 'error');
         }
       } catch (err) {
         showToast('AI Error', err.message, 'error');
@@ -535,6 +518,10 @@ document.addEventListener('DOMContentLoaded', () => {
   if (btnAiAlignLyrics && llmInput) {
     btnAiAlignLyrics.addEventListener('click', async () => {
       const text = llmInput.value.trim();
+      if (!text) {
+        showToast('Empty Lyrics', 'Please paste original lyrics into the box first to align', 'warning', 3000);
+        return;
+      }
       await runLyricsAlignmentWithReference(text, btnAiAlignLyrics);
     });
   }
@@ -1334,6 +1321,48 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast('Verification Error', err.message, 'error', 3000);
       } finally {
         clearButtonLoading(btnVerifyLyrics, '🔍 Double-Check');
+        setTimeout(() => setGlobalProgress(100, false, ''), 1000);
+      }
+    });
+  }
+
+  // 🪄 Auto-Fix Words (In-Place, Zero Structure/Timestamp Change)
+  const btnAutofixLyrics = document.getElementById('btn-autofix-lyrics');
+  if (btnAutofixLyrics) {
+    btnAutofixLyrics.addEventListener('click', async () => {
+      if (!state.lyrics || state.lyrics.length === 0) {
+        showToast('No Lyrics', 'Please load audio or lyrics first to fix words', 'info', 2500);
+        return;
+      }
+      setButtonLoading(btnAutofixLyrics, '🪄 Fixing...');
+      setGlobalProgress(25, true, 'Fixing Words in Place...');
+      try {
+        const res = await fetch('/api/lyrics/auto_fix', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lyrics_data: state.lyrics })
+        });
+        const data = await res.json();
+        setGlobalProgress(100, true, 'Words Fixed');
+        if (data.status === 'success' && data.lyrics) {
+          state.lyrics = data.lyrics;
+          try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(e) {}
+          renderLyricsTeleprompter(state.lyrics, true);
+          if (lyricsVerifiedBadge) lyricsVerifiedBadge.style.display = 'inline-block';
+          showToast(
+            '🪄 Words Fixed (Structure Preserved)',
+            `Fixed spelling & phonetic errors across ${data.lyrics.length} lines in place! All timestamps 100% intact.`,
+            'success',
+            4000
+          );
+        } else {
+          showToast('Notice', data.detail || 'Could not auto-fix words', 'info', 3000);
+        }
+      } catch (err) {
+        console.error('Auto-fix words error:', err);
+        showToast('Fix Error', err.message, 'error', 3000);
+      } finally {
+        clearButtonLoading(btnAutofixLyrics, '🪄 Fix Words');
         setTimeout(() => setGlobalProgress(100, false, ''), 1000);
       }
     });
