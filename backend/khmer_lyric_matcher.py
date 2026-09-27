@@ -13,9 +13,9 @@ import json
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 try:
-    from backend.vocal_align import force_align_lyrics_to_audio
+    from backend.vocal_align import force_align_lyrics_to_audio, detect_vocal_segments
 except ImportError:
-    from vocal_align import force_align_lyrics_to_audio
+    from vocal_align import force_align_lyrics_to_audio, detect_vocal_segments
 
 log = logging.getLogger(__name__)
 
@@ -186,7 +186,7 @@ def gemini_clean_youtube_metadata(
         return None
 
     import urllib.request
-    models_to_try = ["gemini-3.1-flash-lite", "gemini-flash-latest", "gemini-3.5-flash"]
+    models_to_try = ["gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-flash-latest"]
 
     prompt = f"""Given this YouTube music video:
 Title: "{raw_title}"
@@ -208,14 +208,13 @@ Return ONLY a valid JSON object in this exact schema:
     data_bytes = json.dumps(payload).encode("utf-8")
 
     for model in models_to_try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         headers = {
-            "Content-Type": "application/json",
-            "X-goog-api-key": api_key
+            "Content-Type": "application/json"
         }
         try:
             req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=6) as response:
+            with urllib.request.urlopen(req, timeout=10) as response:
                 result = json.loads(response.read().decode("utf-8"))
                 text = result["candidates"][0]["content"]["parts"][0]["text"]
                 parsed = json.loads(text)
@@ -267,6 +266,63 @@ def upload_audio_to_gemini_files_api(api_key: str, file_path: str, mime_type: st
     except Exception as e:
         log.warning(f"[Gemini Files API] Upload notice: {e}")
         return None
+
+
+def _refine_timestamps_with_vad(
+    aligned_lines: List[Dict[str, Any]],
+    vocal_segments: List[Tuple[float, float]],
+    total_duration: float
+) -> List[Dict[str, Any]]:
+    """
+    Refines Gemini-generated timestamps by:
+    1. Applying a correction offset (Gemini consistently marks lyrics ~1.5s before actual singing)
+    2. Snapping each line's start time to the nearest vocal onset detected by VAD
+    This safely refines Gemini timestamps with acoustic VAD without drifting.
+    """
+    if not aligned_lines or not vocal_segments:
+        return aligned_lines
+
+    vocal_onsets = [seg[0] for seg in vocal_segments]
+
+    def snap_to_nearest_vocal(t: float, search_window: float = 0.35) -> float:
+        """Find the nearest vocal onset within a micro search window."""
+        best = t
+        best_dist = float('inf')
+        for onset in vocal_onsets:
+            dist = abs(onset - t)
+            if dist < best_dist and dist <= search_window:
+                best_dist = dist
+                best = onset
+        return best
+
+    refined = []
+    for i, line in enumerate(aligned_lines):
+        orig_start = float(line["start"])
+        orig_end = float(line["end"])
+        orig_dur = max(1.0, orig_end - orig_start)
+
+        # Micro-snap to nearest onset if within 0.35s
+        new_start = snap_to_nearest_vocal(orig_start, search_window=0.35)
+        new_end = round(new_start + orig_dur, 2)
+
+        # Preserve ordering without pushing whole subsequent song forward
+        if refined and new_start < refined[-1]["start"] + 0.2:
+            new_start = round(refined[-1]["start"] + 0.2, 2)
+            new_end = max(new_end, new_start + 1.0)
+
+        # Cap to total duration
+        new_start = min(new_start, max(0.0, total_duration - 1.0))
+        new_end = min(new_end, total_duration)
+
+        refined.append({
+            "line_id": line.get("line_id", i),
+            "start": round(new_start, 2),
+            "end": round(new_end, 2),
+            "text": line["text"]
+        })
+
+    log.info(f"[VAD Refine] Refined {len(refined)} timestamps with acoustic onsets")
+    return refined
 
 
 def parse_lrc_to_aligned(lrc_text: str, total_duration: float = 180.0) -> List[Dict[str, Any]]:
@@ -323,7 +379,8 @@ def transcribe_audio_with_gemini(
     audio_path: str,
     title: str = "",
     artist: str = "",
-    duration: float = 180.0
+    duration: float = 180.0,
+    reference_lyrics: Optional[List[str]] = None
 ) -> Optional[Tuple[List[str], Optional[List[Dict[str, Any]]]]]:
     """
     Transcribes actual audio file using Gemini Multimodal Audio.
@@ -343,9 +400,15 @@ def transcribe_audio_with_gemini(
     # Step 1: Upload via Files API
     file_uri = upload_audio_to_gemini_files_api(api_key, audio_path, mime_type=mime_type)
 
+    ref_hint = ""
+    if reference_lyrics and isinstance(reference_lyrics, list) and len(reference_lyrics) > 0:
+        ref_text = "\n".join(reference_lyrics[:40])
+        ref_hint = f"\nAuthentic lyric reference for correct Khmer spelling & words:\n{ref_text}\n"
+
     prompt = (
         f"You are an expert music subtitler and Cambodian audio transcriber.\n"
         f"Song title hint: '{title}', Artist hint: '{artist}'.\n"
+        f"{ref_hint}"
         f"Listen carefully to the audio and transcribe the exact lyrics in synchronized LRC format with timestamps.\n"
         f"Format strictly as: [mm:ss.xx] Khmer lyrics line\n"
         f"Example:\n"
@@ -358,7 +421,7 @@ def transcribe_audio_with_gemini(
         f"5. Rhyme integrity (កាព្យចុងចួន): Cambodian song lyrics strictly follow poetic end-rhymes. Words rhyming with 'ឡើយ' or 'ហើយ' must use 'ត្រានត្រើយ' (or 'ត្រាណត្រើយ'), NEVER 'ត្រង់'."
     )
 
-    models = ["gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-flash-latest", "gemini-3.5-flash"]
+    models = ["gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-flash-latest"]
 
     for model in models:
         try:
@@ -433,7 +496,7 @@ def fetch_lyrics_with_gemini(title: str, artist: str = "", description: str = ""
         return None
 
     import urllib.request
-    models_to_try = ["gemini-3.1-flash-lite", "gemini-flash-latest", "gemini-3.5-flash"]
+    models_to_try = ["gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-flash-latest"]
 
     desc_hint = f" (Context: {description[:150]})" if description else ""
     prompt = (
@@ -450,14 +513,13 @@ def fetch_lyrics_with_gemini(title: str, artist: str = "", description: str = ""
     data_bytes = json.dumps(payload).encode("utf-8")
 
     for model in models_to_try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         headers = {
-            "Content-Type": "application/json",
-            "X-goog-api-key": api_key
+            "Content-Type": "application/json"
         }
         try:
             req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=12) as response:
+            with urllib.request.urlopen(req, timeout=30) as response:
                 result = json.loads(response.read().decode("utf-8"))
                 text = result["candidates"][0]["content"]["parts"][0]["text"]
                 lines = [
@@ -481,7 +543,8 @@ def match_or_fetch_khmer_lyrics(
     title: str,
     artist: str = "",
     duration: float = 0.0,
-    description: str = ""
+    description: str = "",
+    progress_callback=None
 ) -> Optional[Tuple[str, List[Dict[str, Any]]]]:
     """
     Main orchestration entry point:
@@ -502,34 +565,50 @@ def match_or_fetch_khmer_lyrics(
     raw_lines = None
     true_aligned = None
 
-    # Step 1: Check local verified DB or description for authentic golden spelling
+    # Step 1: Check local verified DB or description for authentic golden spelling reference
+    golden_lyrics = None
+    if progress_callback:
+        progress_callback(18, f"🔍 Checking local lyrics database for '{title[:30]}'...")
     if title:
-        raw_lines = search_local_lyrics_db(title, artist)
+        golden_lyrics = search_local_lyrics_db(title, artist)
 
-    if not raw_lines and description:
-        raw_lines = extract_lyrics_from_description(description)
+    if not golden_lyrics and description:
+        golden_lyrics = extract_lyrics_from_description(description)
 
-    # Step 2: Uses Gemini Multimodal Audio to LISTEN to the actual song and transcribe real words
-    if not raw_lines and audio_path and os.path.exists(audio_path):
+    # Step 2: Uses Gemini Multimodal Audio to LISTEN to the actual song and transcribe real words with true timestamps
+    if audio_path and os.path.exists(audio_path):
         log.info(f"[Khmer Lyric Matcher] Listening to audio with Gemini for: {title}")
-        res = transcribe_audio_with_gemini(audio_path, title, artist, duration)
+        if progress_callback:
+            progress_callback(25, f"🎧 Gemini AI is listening to the audio & transcribing lyrics...")
+        res = transcribe_audio_with_gemini(audio_path, title, artist, duration, reference_lyrics=golden_lyrics)
         if res:
             raw_lines, true_aligned = res
 
-    # Step 3: Fallback to Gemini text prompt for text extraction if not found locally and no audio transcribed
-    if not raw_lines and title:
-        log.info(f"[Khmer Lyric Matcher] Fallback to Gemini text prompt for: {title}")
-        raw_lines = fetch_lyrics_with_gemini(title, artist, description=description)
+    # If audio transcription wasn't available or failed, fallback to golden lyrics or text prompt
+    if not raw_lines:
+        if golden_lyrics:
+            raw_lines = golden_lyrics
+        elif title:
+            log.info(f"[Khmer Lyric Matcher] Fallback to Gemini text prompt for: {title}")
+            if progress_callback:
+                progress_callback(55, f"📝 Gemini AI searching lyrics by song title...")
+            raw_lines = fetch_lyrics_with_gemini(title, artist, description=description)
 
-    # Step 4: Align lines using Whisper Magic
+    # Step 4: Align lyrics to audio timing
     if raw_lines:
-        if true_aligned:
-            aligned = true_aligned
+        if true_aligned and len(true_aligned) >= 4:
+            log.info(f"[Khmer Lyric Matcher] Acoustically fine-tuning {len(true_aligned)} Gemini timestamps with VAD...")
+            if progress_callback:
+                progress_callback(75, f"🎯 Acoustically fine-tuning {len(true_aligned)} lyric timestamps...")
+            vocal_segments = detect_vocal_segments(audio_path)
+            aligned = _refine_timestamps_with_vad(true_aligned, vocal_segments, duration)
         elif audio_path and os.path.exists(audio_path):
-            log.info("[Khmer Lyric Matcher] Using Dynamic Vocal Alignment Engine...")
+            log.info(f"[Khmer Lyric Matcher] Using smart VAD force-alignment for {len(raw_lines)} lyrics...")
+            if progress_callback:
+                progress_callback(75, f"🎯 Aligning {len(raw_lines)} lyrics to vocal activity...")
             aligned = force_align_lyrics_to_audio(raw_lines, audio_path, duration)
         else:
-            log.warning("[Khmer Lyric Matcher] No audio file; using force_align fallback.")
+            log.warning("[Khmer Lyric Matcher] No audio; using proportional spacing.")
             aligned = force_align_lyrics_to_audio(raw_lines, audio_path or "", duration)
     else:
         return None

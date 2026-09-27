@@ -160,6 +160,9 @@ export function drawLyrics(ctx, w, h) {
   // Handle instrumental breaks gracefully with glassmorphism
   if (activeLyricState.isInstrumental) {
     if (!state.lyrics || state.lyrics.length === 0) return;
+    // Only show instrumental indicator for real musical breaks (>= 3.5s), not short breath pauses
+    if (activeLyricState.diffToNext > 0 && activeLyricState.diffToNext < 3.5) return;
+
     const next = activeLyricState.nextLine;
     ctx.save();
     let fontSize = Math.max(13, Math.floor(h * 0.030));
@@ -300,7 +303,7 @@ export function drawLyrics(ctx, w, h) {
   }
 
   // ============ Draw Next Line Preview (Floating Above/Below) ============
-  if (nextLine && nextLine.text) {
+  if (nextLine && nextLine.text && (!line || nextLine.start - line.end <= 6.0)) {
     ctx.save();
     const nextFontSize = Math.max(12, Math.floor(fontSize * 0.58));
     ctx.font = `600 ${nextFontSize}px ${fontFamilies}`;

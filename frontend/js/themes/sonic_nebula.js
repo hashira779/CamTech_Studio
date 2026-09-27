@@ -183,19 +183,6 @@ export function drawSonicNebula(ctx, w, h, bars, bass) {
     ctx.fill();
   }
 
-  // ── 6. Title ──
-  if (state.showTitles !== false) {
-    ctx.textAlign = 'center';
-    ctx.font = `700 ${Math.max(14, Math.floor(w * 0.018))}px 'Kantumruy Pro', 'Outfit', sans-serif`;
-    ctx.fillStyle = '#ffffff';
-    ctx.shadowColor = pal.glow;
-    ctx.shadowBlur = 12 + bass * 10;
-    ctx.fillText(state.songTitle || 'NEBULA', cx, h * 0.92);
-    ctx.shadowBlur = 0;
-    ctx.font = `600 ${Math.max(10, Math.floor(w * 0.011))}px 'Kantumruy Pro', 'Outfit', sans-serif`;
-    ctx.fillStyle = `rgba(${pri.join(',')}, 0.85)`;
-    ctx.fillText(state.artistName || 'VIDA Studio', cx, h * 0.955);
-  }
 
   ctx.restore();
 }

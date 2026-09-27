@@ -155,7 +155,7 @@ export function drawHyperLiquid(ctx, w, h, bars, bass) {
       const baseFs1 = Math.floor(pulseRadius * 0.38);
       const fs1 = len1 > 7 ? Math.max(11, Math.floor(baseFs1 * (7 / len1))) : baseFs1;
       ctx.fillStyle = `rgb(${priRgb})`;
-      ctx.font = `800 ${fs1}px 'Kantumruy Pro', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Thai', 'Outfit', sans-serif`;
+      ctx.font = `800 ${Math.floor((Math.floor((fs1) * (state.titleScale || 1.5))) * (state.titleScale || 1.5))}px 'Kantumruy Pro', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Thai', 'Outfit', sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(center1, cx, center2 && center2.trim() ? cy - pulseRadius * 0.15 : cy);
@@ -165,7 +165,7 @@ export function drawHyperLiquid(ctx, w, h, bars, bass) {
       const len2 = Math.max(center2.length, 6);
       const baseFs2 = Math.floor(pulseRadius * 0.22);
       const fs2 = len2 > 10 ? Math.max(9, Math.floor(baseFs2 * (10 / len2))) : baseFs2;
-      ctx.font = `600 ${fs2}px 'Kantumruy Pro', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Thai', 'Outfit', sans-serif`;
+      ctx.font = `600 ${Math.floor((Math.floor((fs2) * (state.titleScale || 1.5))) * (state.titleScale || 1.5))}px 'Kantumruy Pro', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Thai', 'Outfit', sans-serif`;
       ctx.fillStyle = `rgba(${secRgb}, 0.95)`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -173,29 +173,6 @@ export function drawHyperLiquid(ctx, w, h, bars, bass) {
     }
   }
 
-  // Top Header HUD (Song & Artist)
-  if (state.showTitles !== false) {
-    const displayTitle = state.songTitle;
-    const displayArtist = state.artistName;
-
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-
-    if (displayTitle && displayTitle.trim()) {
-      ctx.font = `700 ${Math.max(14, Math.min(22, Math.floor(w * 0.016)))}px 'Kantumruy Pro', 'Outfit', sans-serif`;
-      ctx.fillStyle = "#ffffff";
-      ctx.shadowColor = pal.glow;
-      ctx.shadowBlur = 10 + bass * 8;
-      ctx.fillText(displayTitle, cx, h * 0.10);
-      ctx.shadowBlur = 0;
-    }
-
-    if (displayArtist && displayArtist.trim()) {
-      ctx.font = `600 ${Math.max(10, Math.min(13, Math.floor(w * 0.010)))}px 'Kantumruy Pro', 'Outfit', sans-serif`;
-      ctx.fillStyle = `rgba(${priRgb}, 0.9)`;
-      ctx.fillText(displayArtist, cx, h * 0.10 + 20);
-    }
-  }
 
   ctx.restore();
 }

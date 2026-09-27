@@ -15,6 +15,7 @@ export const state = {
   particlesLevel: 3,
   songTitle: "Cyber Horizon",
   artistName: "VIDA Synth Engine",
+  titleScale: 1.5,
   showTitles: true,
   centerTextPrimary: "VIDA",
   centerTextSecondary: "FLUID WAVE",

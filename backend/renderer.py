@@ -214,7 +214,8 @@ class VideoRenderer:
         lyrics_data: list = None,
         lyric_style: str = "karaoke",    # karaoke | kinetic | minimal
         bar_count: int = 64,
-        bass_boost: float = 1.3
+        bass_boost: float = 1.3,
+        title_scale: float = 1.0
     ):
         self.audio_path = audio_path
         self.output_path = output_path
@@ -239,13 +240,17 @@ class VideoRenderer:
         self.peak_caps = np.zeros(bar_count, dtype=np.float32)
         self.peak_decay = 0.015
 
+        self.bg_video_cap = None
+        self.vignette_mask = None
         # Pre-load / prepare background
         self.bg_frame = self._prepare_background()
         self.logo_circle = self._prepare_logo()
 
+        self.title_scale = title_scale
+
         # Fonts
-        self.font_title = self._load_font(int(height * 0.035), bold=True, text=self.song_title)
-        self.font_artist = self._load_font(int(height * 0.022), bold=False, text=self.artist_name)
+        self.font_title = self._load_font(int(height * 0.035 * self.title_scale), bold=True, text=self.song_title)
+        self.font_artist = self._load_font(int(height * 0.022 * self.title_scale), bold=False, text=self.artist_name)
         sample_lyric = " ".join([l.get("text", "") for l in self.lyrics_data[:3]]) if self.lyrics_data else self.song_title
         self.font_lyrics = self._load_font(int(height * 0.045), bold=True, text=sample_lyric)
         self.font_lyrics_sub = self._load_font(int(height * 0.030), bold=False, text=sample_lyric)
@@ -342,31 +347,46 @@ class VideoRenderer:
                     continue
         return ImageFont.load_default()
 
+    def _process_bg_frame(self, img: np.ndarray) -> np.ndarray:
+        """Resizes, crops, and darkens a background frame."""
+        h, w = img.shape[:2]
+        target_ratio = self.width / self.height
+        current_ratio = w / h
+
+        if current_ratio > target_ratio:
+            new_w = int(h * target_ratio)
+            start_x = (w - new_w) // 2
+            cropped = img[:, start_x:start_x + new_w]
+        else:
+            new_h = int(w / target_ratio)
+            start_y = (h - new_h) // 2
+            cropped = img[start_y:start_y + new_h, :]
+
+        resized = cv2.resize(cropped, (self.width, self.height), interpolation=cv2.INTER_AREA)
+        blurred = cv2.GaussianBlur(resized, (21, 21), 0)
+        darkened = (blurred.astype(np.float32) * 0.42).astype(np.uint8)
+        
+        if self.vignette_mask is None:
+            Y, X = np.ogrid[:self.height, :self.width]
+            dist_from_center = np.sqrt(((X - self.width/2)/(self.width/2))**2 + ((Y - self.height/2)/(self.height/2))**2)
+            self.vignette_mask = np.clip(1.0 - 0.45 * dist_from_center, 0.2, 1.0)[:, :, np.newaxis]
+            
+        return darkened
+
     def _prepare_background(self) -> np.ndarray:
-        """Prepares a darkened, blurred, high-contrast background frame."""
+        """Prepares a darkened, blurred, high-contrast background frame or initializes video."""
         if self.background_image_path and os.path.exists(self.background_image_path):
             try:
-                img = cv2.imread(self.background_image_path)
-                if img is not None:
-                    # Resize with aspect cover
-                    h, w = img.shape[:2]
-                    target_ratio = self.width / self.height
-                    current_ratio = w / h
-
-                    if current_ratio > target_ratio:
-                        new_w = int(h * target_ratio)
-                        start_x = (w - new_w) // 2
-                        cropped = img[:, start_x:start_x + new_w]
-                    else:
-                        new_h = int(w / target_ratio)
-                        start_y = (h - new_h) // 2
-                        cropped = img[start_y:start_y + new_h, :]
-
-                    resized = cv2.resize(cropped, (self.width, self.height), interpolation=cv2.INTER_AREA)
-                    # Apply gentle blur & darkening vignette
-                    blurred = cv2.GaussianBlur(resized, (21, 21), 0)
-                    darkened = (blurred.astype(np.float32) * 0.42).astype(np.uint8)
-                    return darkened
+                # Check if video
+                if self.background_image_path.lower().endswith(('.mp4', '.webm', '.avi', '.mov')):
+                    self.bg_video_cap = cv2.VideoCapture(self.background_image_path)
+                    ret, img = self.bg_video_cap.read()
+                    if ret and img is not None:
+                        return self._process_bg_frame(img)
+                else:
+                    img = cv2.imread(self.background_image_path)
+                    if img is not None:
+                        return self._process_bg_frame(img)
             except Exception as e:
                 print(f"Warning: could not load background {e}")
 
@@ -380,10 +400,12 @@ class VideoRenderer:
             bg[y, :] = color.astype(np.uint8)
 
         # Subtle vignette
-        Y, X = np.ogrid[:self.height, :self.width]
-        dist_from_center = np.sqrt(((X - self.width/2)/(self.width/2))**2 + ((Y - self.height/2)/(self.height/2))**2)
-        vignette = np.clip(1.0 - 0.45 * dist_from_center, 0.2, 1.0)
-        bg = (bg.astype(np.float32) * vignette[:, :, np.newaxis]).astype(np.uint8)
+        if self.vignette_mask is None:
+            Y, X = np.ogrid[:self.height, :self.width]
+            dist_from_center = np.sqrt(((X - self.width/2)/(self.width/2))**2 + ((Y - self.height/2)/(self.height/2))**2)
+            self.vignette_mask = np.clip(1.0 - 0.45 * dist_from_center, 0.2, 1.0)[:, :, np.newaxis]
+            
+        bg = (bg.astype(np.float32) * self.vignette_mask).astype(np.uint8)
         return bg
 
     def _prepare_logo(self) -> np.ndarray:
@@ -611,7 +633,7 @@ class VideoRenderer:
         draw.text((margin_x + 2, margin_y + 2), self.song_title, font=self.font_title, fill=(0, 0, 0, 180))
         draw.text((margin_x, margin_y), self.song_title, font=self.font_title, fill=(255, 255, 255))
 
-        artist_y = margin_y + int(self.height * 0.045)
+        artist_y = margin_y + int(self.height * 0.045 * self.title_scale)
         c_pri = self.palette["primary"]
         draw.text((margin_x, artist_y), self.artist_name, font=self.font_artist, fill=(c_pri[0], c_pri[1], c_pri[2]))
 
@@ -741,7 +763,17 @@ class VideoRenderer:
                 onset = float(onset_curve[f_idx])
 
                 # 1. Base background
-                frame = self.bg_frame.copy()
+                if self.bg_video_cap is not None:
+                    ret, v_frame = self.bg_video_cap.read()
+                    if not ret:
+                        self.bg_video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        ret, v_frame = self.bg_video_cap.read()
+                    if ret and v_frame is not None:
+                        frame = self._process_bg_frame(v_frame)
+                    else:
+                        frame = self.bg_frame.copy()
+                else:
+                    frame = self.bg_frame.copy()
 
                 # 2. Audio-reactive particle dust
                 c_pri = self.palette["primary"]
@@ -782,6 +814,8 @@ class VideoRenderer:
 
             proc.stdin.close()
             proc.wait()
+            if self.bg_video_cap is not None:
+                self.bg_video_cap.release()
 
         if proc.returncode != 0:
             err_text = ""

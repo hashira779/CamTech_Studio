@@ -1,6 +1,6 @@
 import { state, PALETTES } from './state.js';
 import { getAudioData, getAnalyser } from './audio.js';
-import { renderActiveTheme } from '../themes/index.js';
+import { renderActiveTheme } from '../themes/index.js?v=20260926-v6';
 import { updateLyricState, drawLyrics } from './lyrics.js';
 import { getCameraShakeOffset, renderPostVFX } from '../plugins/vfx_engine.js';
 import { evaluateDirectorRules } from '../plugins/director_rules.js';
@@ -65,7 +65,9 @@ function renderFrame() {
   }
   
   // Draw Background
-  if (state.bgImageObj && state.bgImageObj.complete) {
+  if (state.bgVideoObj) {
+    ctx.drawImage(state.bgVideoObj, 0, 0, width, height);
+  } else if (state.bgImageObj && state.bgImageObj.complete) {
     ctx.drawImage(state.bgImageObj, 0, 0, width, height);
   } else {
     const curPal = PALETTES[state.palette] || PALETTES.cyberpunk;
@@ -185,6 +187,43 @@ function renderFrame() {
     updateLyricState(audioPlayer.currentTime);
   }
   drawLyrics(ctx, width, height);
+
+  // Draw Header Metadata (Top-Left)
+  if (state.showTitles !== false && state.songTitle) {
+    ctx.save();
+    const marginX = width * 0.05;
+    const marginY = height * 0.06;
+    const titleScale = state.titleScale || 1.5;
+    
+    // Song Title
+    const titleSize = Math.max(12, Math.floor(height * 0.035 * titleScale));
+    ctx.font = `700 ${titleSize}px 'Kantumruy Pro', 'Outfit', sans-serif`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    
+    // Shadow
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillText(state.songTitle, marginX + 2, marginY + 2);
+    // Text
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(state.songTitle, marginX, marginY);
+    
+    // Artist Name
+    if (state.artistName) {
+      const artistY = marginY + height * 0.045 * titleScale;
+      const artistSize = Math.max(10, Math.floor(height * 0.022 * titleScale));
+      const activePalette = PALETTES[state.palette] || PALETTES.cyberpunk;
+      ctx.font = `600 ${artistSize}px 'Kantumruy Pro', 'Outfit', sans-serif`;
+      
+      // Shadow
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      ctx.fillText(state.artistName, marginX + 1, artistY + 1);
+      // Text
+      ctx.fillStyle = `rgb(${activePalette.primary.join(',')})`;
+      ctx.fillText(state.artistName, marginX, artistY);
+    }
+    ctx.restore();
+  }
 
   ctx.restore(); // Restore Camera Shake Transform
 

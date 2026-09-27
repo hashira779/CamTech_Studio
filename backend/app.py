@@ -5,8 +5,17 @@ LRC subtitle parsing, asynchronous video rendering jobs, and studio UI serving.
 """
 
 import os
-import sys
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+hf_cache_root = os.path.expanduser("~/.cache/huggingface/hub")
+if os.path.exists(hf_cache_root):
+    try:
+        if any(d.startswith("models--") for d in os.listdir(hf_cache_root)):
+            os.environ["HF_HUB_OFFLINE"] = "1"
+    except Exception:
+        pass
+import sys
 backend_dir = os.path.dirname(os.path.abspath(__file__))
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
@@ -29,6 +38,7 @@ from backend.lyric_engine import (
     parse_subtitle_content,
     parse_subtitle_file,
     find_matching_subtitles,
+    fetch_synced_lyrics_lrclib,
     detect_text_language,
     double_check_lyrics,
     export_lyrics_to_lrc,
@@ -45,10 +55,18 @@ from backend.llm_engine import llm_engine
 # Directories
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+AUDIO_DIR = os.path.join(UPLOAD_DIR, "audio")
+LYRICS_DIR = os.path.join(UPLOAD_DIR, "lyrics")
+VIDEO_DIR = os.path.join(UPLOAD_DIR, "video")
+IMAGES_DIR = os.path.join(UPLOAD_DIR, "images")
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(AUDIO_DIR, exist_ok=True)
+os.makedirs(LYRICS_DIR, exist_ok=True)
+os.makedirs(VIDEO_DIR, exist_ok=True)
+os.makedirs(IMAGES_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(FRONTEND_DIR, exist_ok=True)
 
@@ -112,6 +130,7 @@ class RenderRequest(BaseModel):
     fps: int = 60
     song_title: str = "VIDA Soundscape"
     artist_name: str = "Original Mix"
+    title_scale: float = 1.5
     background_image: Optional[str] = None
     logo_image: Optional[str] = None
     center_text_primary: Optional[str] = "VIDA"
@@ -121,6 +140,7 @@ class RenderRequest(BaseModel):
     lyric_style: str = "karaoke"
     bar_count: int = 64
     bass_boost: float = 1.3
+    auto_post_youtube: Optional[bool] = False
 
 class TranscribeRequest(BaseModel):
     audio_path: str
@@ -167,17 +187,71 @@ async def upload_file(file: UploadFile = File(...)):
     """Uploads audio, background image, or logo file to server."""
     ext = os.path.splitext(file.filename)[1].lower()
     unique_name = f"{uuid.uuid4().hex[:10]}{ext}"
-    target_path = os.path.join(UPLOAD_DIR, unique_name)
+    
+    if ext in [".mp3", ".wav", ".m4a", ".ogg"]:
+        subfolder = "audio"
+        target_dir = AUDIO_DIR
+    elif ext in [".lrc", ".vtt", ".srt", ".txt"]:
+        subfolder = "lyrics"
+        target_dir = LYRICS_DIR
+    elif ext in [".mp4", ".webm"]:
+        subfolder = "video"
+        target_dir = VIDEO_DIR
+    elif ext in [".jpg", ".jpeg", ".png", ".webp"]:
+        subfolder = "images"
+        target_dir = IMAGES_DIR
+    else:
+        subfolder = ""
+        target_dir = UPLOAD_DIR
+        
+    target_path = os.path.join(target_dir, unique_name)
 
     content = await file.read()
     with open(target_path, "wb") as f:
         f.write(content)
 
+    url_path = f"/uploads/{subfolder}/{unique_name}" if subfolder else f"/uploads/{unique_name}"
+    
     return {
         "filename": file.filename,
         "saved_path": target_path,
-        "url": f"/uploads/{unique_name}"
+        "url": url_path
     }
+
+@app.get("/api/library")
+def get_local_library():
+    """Returns a list of all audio and video files previously downloaded or uploaded."""
+    files = []
+    
+    # Check Audio Directory
+    if os.path.exists(AUDIO_DIR):
+        for f in os.listdir(AUDIO_DIR):
+            if f.lower().endswith(('.mp3', '.wav', '.flac', '.m4a', '.ogg')):
+                files.append({
+                    "name": f,
+                    "type": "audio",
+                    "path": os.path.join(AUDIO_DIR, f).replace("\\", "/"),
+                    "url": f"/uploads/audio/{f}"
+                })
+                
+    # Check Video Directory
+    if os.path.exists(VIDEO_DIR):
+        for f in os.listdir(VIDEO_DIR):
+            if f.lower().endswith(('.mp4', '.mov', '.avi', '.mkv')):
+                files.append({
+                    "name": f,
+                    "type": "video",
+                    "path": os.path.join(VIDEO_DIR, f).replace("\\", "/"),
+                    "url": f"/uploads/video/{f}"
+                })
+                
+    # Sort by modification time (newest first)
+    try:
+        files.sort(key=lambda x: os.path.getmtime(x["path"]), reverse=True)
+    except Exception:
+        files.sort(key=lambda x: x["name"])
+        
+    return {"status": "success", "files": files}
 
 @app.get("/api/transcribe/progress")
 def get_transcribe_progress():
@@ -200,8 +274,29 @@ def transcribe_audio(req: TranscribeRequest):
     sub_path = None
     if not req.force_ai:
         sub_path = find_matching_subtitles(req.audio_path, target_lang=target_lang)
-        # Fast Cloud AI match (Gemini / Description / DB) before burning 10 minutes on CPU!
+        # Fast Online LRCLIB Check (Millions of verified international songs: English, Vietnamese, Spanish, etc.)
         if not sub_path:
+            try:
+                base_title = os.path.splitext(os.path.basename(req.audio_path))[0]
+                clean_t, clean_a = clean_youtube_title_and_artist(base_title)
+                lrc_text = fetch_synced_lyrics_lrclib(clean_t, clean_a)
+                if lrc_text:
+                    lrclib_lyrics = parse_subtitle_content(lrc_text)
+                    if lrclib_lyrics and len(lrclib_lyrics) >= 4:
+                        # Cache to matching .lrc file next to audio
+                        base_audio = os.path.splitext(req.audio_path)[0]
+                        lrc_dest = f"{base_audio}.lrc"
+                        try:
+                            with open(lrc_dest, "w", encoding="utf-8") as f:
+                                f.write(lrc_text)
+                        except Exception:
+                            pass
+                        sub_path = lrc_dest
+                        print(f"[LRCLIB Fast-Path] ✅ Found verified synced lyrics ({len(lrclib_lyrics)} lines)")
+            except Exception as lrc_err:
+                print(f"[LRCLIB Fast-Path] Notice: {lrc_err}")
+        # Fast Cloud AI match (Gemini / Description / DB) for Khmer songs before burning 10 minutes on CPU!
+        if not sub_path and (target_lang == "km" or is_khmer_text(req.audio_path)):
             try:
                 try:
                     from backend.khmer_lyric_matcher import match_or_fetch_khmer_lyrics
@@ -216,7 +311,7 @@ def transcribe_audio(req: TranscribeRequest):
                 print(f"[Lyric Matcher Fast-Path] Notice: {match_err}")
     if sub_path and os.path.exists(sub_path):
         try:
-            lyrics = parse_subtitle_file(sub_path)
+            lyrics = parse_subtitle_file(sub_path, audio_path=req.audio_path)
             if lyrics:
                 sample_text = " ".join([l.get("text", "") for l in lyrics[:10]])
                 detected_lang = detect_text_language(sample_text)
@@ -239,7 +334,8 @@ def transcribe_audio(req: TranscribeRequest):
             print(f"Subtitle parse warning: {e}")
 
     # ⚡ GEMINI CLOUD AI FAST-PATH (Ultra-Fast 1-2s, 100% accurate, bypasses slow CPU Demucs!)
-    if req.model_size == "gemini-fast" or (target_lang == "km" and req.model_size not in ["small", "base", "tiny", "medium", "large-v3-turbo", "distil-large-v3", "qwen3-khmer"]):
+    is_khmer_target = (target_lang == "km" or is_khmer_text(req.audio_path))
+    if req.model_size == "gemini-fast" or (is_khmer_target and req.model_size != "qwen3-khmer"):
         update_transcribe_progress(15, "⚡ Gemini AI retrieving authentic lyrics & timestamps...")
         try:
             try:
@@ -248,10 +344,10 @@ def transcribe_audio(req: TranscribeRequest):
                 from khmer_lyric_matcher import match_or_fetch_khmer_lyrics
             base_title = os.path.splitext(os.path.basename(req.audio_path))[0]
             clean_t, clean_a = clean_youtube_title_and_artist(base_title, use_gemini=True)
-            matcher_res = match_or_fetch_khmer_lyrics(req.audio_path, clean_t, clean_a)
+            matcher_res = match_or_fetch_khmer_lyrics(req.audio_path, clean_t, clean_a, progress_callback=update_transcribe_progress)
             if matcher_res:
                 lrc_path, aligned = matcher_res
-                lyrics = parse_subtitle_file(lrc_path)
+                lyrics = parse_subtitle_file(lrc_path, audio_path=req.audio_path)
                 if lyrics:
                     update_transcribe_progress(100, f"✅ Gemini AI: Synced {len(lyrics)} lines!")
                     return {
@@ -266,14 +362,15 @@ def transcribe_audio(req: TranscribeRequest):
             print(f"[Gemini Transcribe Fast-Path] Notice: {gem_err}. Continuing with fallback.")
 
     # 2. Vocal Separation (Demucs) if enabled or requested
+    #    SKIP Demucs entirely when using Gemini Cloud AI — it doesn't need isolated vocals
     transcribe_path = req.audio_path
-    if req.use_demucs or req.model_size == "qwen3-khmer":
+    if req.model_size != "gemini-fast" and (req.use_demucs or req.model_size == "qwen3-khmer"):
         try:
             try:
                 from backend.vocal_separator import separate_vocals_demucs
             except ImportError:
                 from vocal_separator import separate_vocals_demucs
-            update_transcribe_progress(10, "Demucs: Isolating singing vocals from instruments...")
+            update_transcribe_progress(20, "Demucs: Isolating singing vocals from instruments...")
             sep_result = separate_vocals_demucs(req.audio_path, progress_callback=update_transcribe_progress)
             if sep_result.get("vocals") and os.path.exists(sep_result["vocals"]):
                 transcribe_path = sep_result["vocals"]
@@ -295,10 +392,9 @@ def transcribe_audio(req: TranscribeRequest):
                 base_t = os.path.splitext(os.path.basename(req.audio_path))[0]
                 c_title, c_artist = clean_youtube_title_and_artist(base_t, use_gemini=True)
                 
-                gem_res = match_or_fetch_khmer_lyrics(req.audio_path, c_title, c_artist)
+                gem_res = match_or_fetch_khmer_lyrics(req.audio_path, c_title, c_artist, progress_callback=update_transcribe_progress)
                 if gem_res:
                     lrc_p, _ = gem_res
-                    from backend.app import parse_subtitle_file # local import just in case
                     lyrics = parse_subtitle_file(lrc_p)
                     detected_lang = "km"
                     source_type = "magic-db-vad"
@@ -361,7 +457,7 @@ def transcribe_audio(req: TranscribeRequest):
                     from backend.khmer_lyric_matcher import match_or_fetch_khmer_lyrics
                     base_t = os.path.splitext(os.path.basename(req.audio_path))[0]
                     c_title, c_artist = clean_youtube_title_and_artist(base_t, use_gemini=True)
-                    gem_res = match_or_fetch_khmer_lyrics(req.audio_path, c_title, c_artist)
+                    gem_res = match_or_fetch_khmer_lyrics(req.audio_path, c_title, c_artist, progress_callback=update_transcribe_progress)
                     if gem_res:
                         lrc_p, _ = gem_res
                         lyrics = parse_subtitle_file(lrc_p)
@@ -581,7 +677,7 @@ def download_youtube(req: YouTubeRequest):
     print(f"[KMVM YouTube] Downloading: {clean_u}")
     update_youtube_progress(5, "Connecting to YouTube stream...")
     try:
-        saved_path, info = download_youtube_audio(clean_u, output_dir=UPLOAD_DIR, on_progress=update_youtube_progress)
+        saved_path, info = download_youtube_audio(clean_u, output_dir=AUDIO_DIR, on_progress=update_youtube_progress)
     except Exception as e:
         update_youtube_progress(0, f"Download error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Download error: {str(e)}")
@@ -647,7 +743,7 @@ def download_youtube(req: YouTubeRequest):
     return {
         "status": "success",
         "audio_path": saved_path,
-        "audio_url": f"/uploads/{filename}",
+        "audio_url": f"/uploads/audio/{filename}",
         "filename": filename,
         "title": clean_title,
         "artist": clean_artist,
@@ -825,6 +921,7 @@ def _execute_render_job(job_id: str, req: RenderRequest):
             show_center_text=req.show_center_text if req.show_center_text is not None else True,
             song_title=req.song_title,
             artist_name=req.artist_name,
+            title_scale=req.title_scale,
             lyrics_data=req.lyrics_data or [],
             lyric_style=req.lyric_style,
             bar_count=req.bar_count,
@@ -833,10 +930,28 @@ def _execute_render_job(job_id: str, req: RenderRequest):
 
         renderer.render_video(progress_callback=on_progress)
 
+        youtube_url = None
+        if req.auto_post_youtube:
+            try:
+                # Local import to prevent breaking app startup if credentials missing
+                from backend.youtube_uploader import upload_video_to_youtube
+                title = f"{req.song_title} - {req.artist_name} (Music Video)"
+                desc = f"Generated by VIDA Studio.\nTitle: {req.song_title}\nArtist: {req.artist_name}\n\nTheme: {req.theme}"
+                youtube_url = upload_video_to_youtube(
+                    video_path=output_path,
+                    title=title,
+                    description=desc,
+                    tags=["VIDA", "Music", req.song_title, req.artist_name]
+                )
+            except Exception as yt_err:
+                print(f"[YouTube Upload Error] {yt_err}")
+                jobs[job_id]["error"] = f"Video rendered, but YouTube upload failed: {yt_err}"
+
         jobs[job_id]["status"] = "completed"
         jobs[job_id]["percent"] = 100.0
         jobs[job_id]["output_url"] = f"/outputs/{output_filename}"
         jobs[job_id]["output_path"] = output_path
+        jobs[job_id]["youtube_url"] = youtube_url
 
     except Exception as e:
         jobs[job_id]["status"] = "failed"
@@ -876,7 +991,7 @@ async def get_progress(job_id: str):
 @app.get("/api/demo")
 async def get_demo_assets():
     """Generates and returns ready-to-test demo track with synced lyrics."""
-    demo_audio_path = os.path.join(UPLOAD_DIR, "demo_synthwave.wav")
+    demo_audio_path = os.path.join(AUDIO_DIR, "demo_synthwave.wav")
     if not os.path.exists(demo_audio_path):
         generate_demo_track(demo_audio_path, duration_sec=14.0)
 
@@ -941,7 +1056,7 @@ async def get_demo_assets():
 
     return {
         "audio_path": demo_audio_path,
-        "audio_url": "/uploads/demo_synthwave.wav",
+        "audio_url": "/uploads/audio/demo_synthwave.wav",
         "title": "Cyber Horizon",
         "artist": "VIDA Synth Engine",
         "lyrics": demo_lyrics,
@@ -969,7 +1084,7 @@ async def get_demo_assets():
 @app.get("/api/demo/sinisamut")
 async def get_sinisamut_demo():
     """Generates and returns ready-to-test Sinn Sisamouth 60s golden era demo track with synced Khmer lyrics."""
-    demo_audio_path = os.path.join(UPLOAD_DIR, "demo_sinisamut.wav")
+    demo_audio_path = os.path.join(AUDIO_DIR, "demo_sinisamut.wav")
     if not os.path.exists(demo_audio_path):
         generate_khmer_60s_demo(demo_audio_path, duration_sec=18.0)
 
@@ -1032,7 +1147,7 @@ async def get_sinisamut_demo():
 
     return {
         "audio_path": demo_audio_path,
-        "audio_url": "/uploads/demo_sinisamut.wav",
+        "audio_url": "/uploads/audio/demo_sinisamut.wav",
         "title": "ចំប៉ាបាត់ដំបង (Champa Battambang)",
         "artist": "ស៊ីន ស៊ីសាមុត (Sinn Sisamouth)",
         "lyrics": sinisamut_lyrics,

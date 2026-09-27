@@ -10,6 +10,9 @@ echo.
 
 cd /d "%~dp0"
 set HF_HUB_DISABLE_SYMLINKS_WARNING=1
+set KMP_DUPLICATE_LIB_OK=TRUE
+set OMP_NUM_THREADS=4
+set HF_HUB_OFFLINE=1
 
 if not exist "venv\Scripts\python.exe" (
     echo [*] Setting up Python environment...

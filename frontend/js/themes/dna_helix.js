@@ -122,19 +122,6 @@ export function drawDNAHelix(ctx, w, h, bars, bass) {
   ctx.arc(cx, cy, coreR, 0, Math.PI * 2);
   ctx.fill();
 
-  // ── 5. Title ──
-  if (state.showTitles !== false) {
-    ctx.textAlign = 'center';
-    ctx.font = `700 ${Math.max(14, Math.floor(w * 0.016))}px 'Kantumruy Pro', 'Outfit', sans-serif`;
-    ctx.fillStyle = '#ffffff';
-    ctx.shadowColor = pal.glow;
-    ctx.shadowBlur = 10 + bass * 8;
-    ctx.fillText(state.songTitle || 'DNA HELIX', cx, h * 0.93);
-    ctx.shadowBlur = 0;
-    ctx.font = `600 ${Math.max(10, Math.floor(w * 0.010))}px 'Kantumruy Pro', 'Outfit', sans-serif`;
-    ctx.fillStyle = `rgba(${pri.join(',')}, 0.85)`;
-    ctx.fillText(state.artistName || 'VIDA Studio', cx, h * 0.96);
-  }
 
   ctx.restore();
 }

@@ -12,6 +12,12 @@ import logging
 from pathlib import Path
 from typing import Optional, Callable, Dict, Any
 
+# Enable offline mode for HuggingFace if model is cached locally
+# This completely prevents "ReadTimeoutError: HTTPSConnectionPool(host='huggingface.co', port=443)"
+_hf_cache = os.path.expanduser("~/.cache/huggingface/hub/models--adefossez--HTDemucs")
+if os.path.exists(_hf_cache):
+    os.environ["HF_HUB_OFFLINE"] = "1"
+
 log = logging.getLogger(__name__)
 
 # Cache directory for isolated stems
@@ -68,22 +74,40 @@ def separate_vocals_demucs(
         }
 
     if progress_callback:
-        progress_callback(10, f"Loading Demucs ({model_name}) vocal separator...")
+        progress_callback(20, f"Loading Demucs ({model_name}) vocal separator...")
+
+    # Enable HuggingFace offline mode if model already cached locally to prevent network timeouts
+    hf_cache = os.path.expanduser(f"~/.cache/huggingface/hub/models--adefossez--HTDemucs")
+    if os.path.exists(hf_cache):
+        os.environ["HF_HUB_OFFLINE"] = "1"
 
     try:
-        # Build Demucs separator
-        separator = demucs_api.Separator(
-            model=model_name,
-            device=device,
-            shifts=1,      # 1 shift for maximum speed on CPU
-            overlap=0.25,
-            segment=7.8,
-            jobs=min(4, os.cpu_count() or 1),
-            progress=False
-        )
+        # Build Demucs separator (retry with offline mode if network check times out)
+        try:
+            separator = demucs_api.Separator(
+                model=model_name,
+                device=device,
+                shifts=1,      # 1 shift for maximum speed on CPU
+                overlap=0.25,
+                segment=7.8,
+                jobs=min(4, os.cpu_count() or 1),
+                progress=False
+            )
+        except Exception as load_err:
+            print(f"[Demucs] Notice loading model: {load_err}. Retrying in local offline mode...")
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            separator = demucs_api.Separator(
+                model=model_name,
+                device=device,
+                shifts=1,
+                overlap=0.25,
+                segment=7.8,
+                jobs=min(4, os.cpu_count() or 1),
+                progress=False
+            )
 
         if progress_callback:
-            progress_callback(20, "Separating vocals from instruments...")
+            progress_callback(25, "Separating vocals from instruments...")
 
         origin_tensor, separated = separator.separate_audio_file(audio_path)
         stems = separator.model.sources

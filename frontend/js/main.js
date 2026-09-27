@@ -662,9 +662,22 @@ document.addEventListener('DOMContentLoaded', () => {
     if (inputCenterSecondary && state.centerTextSecondary !== undefined) inputCenterSecondary.value = state.centerTextSecondary;
     if (checkShowTitles) checkShowTitles.checked = state.showTitles !== false;
     if (checkShowCenterText) checkShowCenterText.checked = state.showCenterText !== false;
+    const sliderScale = document.getElementById('slider-title-scale');
+    const labelScale = document.getElementById('label-title-scale');
+    if (sliderScale) sliderScale.value = state.titleScale || 1.5;
+    if (labelScale) labelScale.textContent = `${Math.round((state.titleScale || 1.5) * 100)}%`;
     updateBadgeStatusUI();
   }
   syncTitleInputs();
+
+  const sliderTitleScale = document.getElementById('slider-title-scale');
+  const labelTitleScale = document.getElementById('label-title-scale');
+  if (sliderTitleScale && labelTitleScale) {
+    sliderTitleScale.addEventListener('input', (e) => {
+      state.titleScale = parseFloat(e.target.value);
+      labelTitleScale.textContent = `${Math.round(state.titleScale * 100)}%`;
+    });
+  }
 
   if (checkShowTitles) {
     checkShowTitles.checked = state.showTitles !== false;
@@ -1242,6 +1255,35 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Fullscreen Lyrics Toggle
+  const btnFullscreenTeleprompter = document.getElementById('btn-fullscreen-teleprompter');
+  if (btnFullscreenTeleprompter) {
+    btnFullscreenTeleprompter.addEventListener('click', () => {
+      const el = document.getElementById('lyrics-teleprompter');
+      if (el.style.position === 'fixed') {
+        el.style.position = '';
+        el.style.top = '';
+        el.style.left = '';
+        el.style.width = '';
+        el.style.height = '';
+        el.style.zIndex = '';
+        el.style.maxWidth = '';
+        btnFullscreenTeleprompter.innerHTML = '⛶ Full';
+        document.body.style.overflow = '';
+      } else {
+        el.style.position = 'fixed';
+        el.style.top = '20px';
+        el.style.left = '20px';
+        el.style.width = 'calc(100% - 40px)';
+        el.style.height = 'calc(100% - 40px)';
+        el.style.zIndex = '9999';
+        el.style.maxWidth = '100%';
+        btnFullscreenTeleprompter.innerHTML = '✖ Exit Full';
+        document.body.style.overflow = 'hidden';
+      }
+    });
+  }
+
   // ============ Synced Lyrics Teleprompter ============
   function renderLyricsTeleprompter(lyrics, isVerified = true) {
     const el = document.getElementById('lyrics-teleprompter');
@@ -1272,8 +1314,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const isKhmer = /[\u1780-\u17FF]/.test(line.text);
       const font = isKhmer ? "'Kantumruy Pro', 'Battambang', 'Siemreap', sans-serif" : "'Outfit', 'Inter', sans-serif";
 
-      item.style.cssText = 'display: flex; align-items: baseline; gap: 8px; padding: 6px 10px; border-radius: 6px; cursor: pointer; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1); border-left: 3px solid transparent; user-select: none; margin-bottom: 2px;';
-      item.innerHTML = `<span style="font-family: monospace; font-size: 10px; color: var(--accent); opacity: 0.85; white-space: nowrap; pointer-events: none; font-weight: 600;">[${formatTime(line.start)}]</span> <span class="editable-lyric" contenteditable="true" spellcheck="false" style="flex: 1; line-height: 1.5; font-size: 12px; font-family: ${font}; outline: none; border-bottom: 1px dashed transparent; transition: border-color 0.2s; color: rgba(255, 255, 255, 0.78);">${line.text}</span>`;
+      item.style.cssText = 'display: flex; align-items: baseline; gap: 4px; padding: 2px 4px; border-radius: 4px; cursor: pointer; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1); border-left: 3px solid transparent; user-select: none; margin-bottom: 1px;';
+      item.innerHTML = `<span style="font-family: monospace; font-size: 9px; color: var(--text-dim); opacity: 0.5; white-space: nowrap; pointer-events: none; font-weight: 500;">[${formatTime(line.start)}]</span> <span class="editable-lyric" contenteditable="true" spellcheck="false" style="flex: 1; line-height: 1.4; font-size: 13px; font-family: ${font}; outline: none; border-bottom: 1px dashed transparent; transition: border-color 0.2s; color: rgba(255, 255, 255, 0.9);">${line.text}</span>`;
       
       const textSpan = item.querySelector('.editable-lyric');
       textSpan.addEventListener('click', (e) => {
@@ -1330,7 +1372,7 @@ document.addEventListener('DOMContentLoaded', () => {
     lines.forEach((item) => {
       const start = parseFloat(item.dataset.start);
       const end = parseFloat(item.dataset.end);
-      if (currentTime >= start - 0.25 && currentTime <= end + 0.35) {
+      if (currentTime >= start - 0.5 && currentTime <= end + 0.35) {
         if (!item.classList.contains('active')) {
           item.classList.add('active');
           item.style.background = 'linear-gradient(90deg, rgba(14, 165, 233, 0.24), rgba(168, 85, 247, 0.12))';
@@ -1452,6 +1494,12 @@ document.addEventListener('DOMContentLoaded', () => {
       sessionStorage.setItem('vida_audio_src', finalSrc);
       sessionStorage.setItem('vida_audio_time', '0');
       sessionStorage.setItem('vida_audio_server_path', serverPath || '');
+      localStorage.setItem('vida_audio_server_path', serverPath || '');
+      if (lyrics && lyrics.length > 0) {
+        localStorage.setItem('vida_lyrics', JSON.stringify(lyrics));
+      } else {
+        localStorage.removeItem('vida_lyrics');
+      }
     } catch(e) {}
 
     // 4. Update UI displays immediately
@@ -1765,7 +1813,7 @@ document.addEventListener('DOMContentLoaded', () => {
       
       const useDemucsCheck = document.getElementById('check-use-demucs');
       const useDemucs = useDemucsCheck ? useDemucsCheck.checked : true;
-      const targetModel = modelSelect ? modelSelect.value : (targetLang === 'km' ? 'qwen3-khmer' : 'small');
+      const targetModel = modelSelect ? modelSelect.value : (targetLang === 'km' ? 'gemini-fast' : 'small');
       try {
         await runAITranscription({ targetLang, targetModel, useDemucs });
       } catch (err) {
@@ -1792,9 +1840,22 @@ document.addEventListener('DOMContentLoaded', () => {
       if (file) {
         const url = URL.createObjectURL(file);
         state.backgroundImageUrl = url;
-        const img = new Image();
-        img.src = url;
-        state.bgImageObj = img;
+        
+        if (file.type.startsWith('video/')) {
+          const vid = document.createElement('video');
+          vid.src = url;
+          vid.loop = true;
+          vid.muted = true;
+          vid.play();
+          state.bgVideoObj = vid;
+          state.bgImageObj = null;
+        } else {
+          const img = new Image();
+          img.src = url;
+          state.bgImageObj = img;
+          state.bgVideoObj = null;
+        }
+        
         btnBg.classList.add('active');
         btnBg.innerHTML = `<span class="icon">🖼️</span> ${file.name.substring(0, 20)}`;
         showToast('Background Set', `Using "${file.name}"`, 'success', 2000);
@@ -2247,18 +2308,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       } catch (_) {}
 
-      if (currentPercent < 18) {
-        currentPercent = Math.min(18, Math.floor(elapsed * 1.5));
-        if (progressStatus && elapsed > 2 && currentPercent < 18) {
-          progressStatus.textContent = `Analyzing audio & preparing AI (${Math.round(elapsed)}s)...`;
-        }
-      } else if (currentPercent >= 20 && currentPercent < 42) {
+      // If we are stuck waiting for something, slowly crawl forward up to a cap
+      if (currentPercent < 15) {
+        currentPercent = Math.max(currentPercent, Math.min(15, Math.floor(elapsed * 1.5)));
+      } else if (currentPercent >= 20 && currentPercent < 42 && progressStatus && progressStatus.textContent.includes('Demucs')) {
         // Demucs vocal isolation running on CPU
-        const demucsTicks = Math.min(21, Math.floor(elapsed * 0.18));
-        currentPercent = Math.min(41, 20 + demucsTicks);
-        if (progressStatus) {
-          progressStatus.textContent = `Separating vocals from instruments (Demucs CPU)... (${Math.round(elapsed)}s)`;
-        }
+        const demucsTicks = Math.min(21, Math.floor((elapsed - 10) * 0.18));
+        currentPercent = Math.max(currentPercent, Math.min(41, 20 + demucsTicks));
       }
 
       const displayPct = Math.min(100, Math.floor(currentPercent));
@@ -2476,6 +2532,7 @@ document.addEventListener('DOMContentLoaded', () => {
             fps: state.renderFps,
             song_title: state.songTitle,
             artist_name: state.artistName,
+            title_scale: state.titleScale || 1.5,
             background_image: state.bgImagePath,
             logo_image: state.logoImagePath,
             center_text_primary: state.centerTextPrimary !== undefined ? state.centerTextPrimary : "VIDA",
@@ -2484,7 +2541,8 @@ document.addEventListener('DOMContentLoaded', () => {
             lyrics_data: state.showLyrics === false ? [] : state.lyrics,
             lyric_style: state.showLyrics === false ? "none" : state.lyricStyle,
             bar_count: state.barCount,
-            bass_boost: state.bassBoost
+            bass_boost: state.bassBoost,
+            auto_post_youtube: document.getElementById('check-youtube-autopost') ? document.getElementById('check-youtube-autopost').checked : false
           })
         });
         const data = await res.json();
@@ -2539,11 +2597,18 @@ document.addEventListener('DOMContentLoaded', () => {
           setGlobalProgress(100, true);
 
           clearButtonLoading(btnExport, 'Export Video');
-          showToast('Export Complete!', 'Your 60 FPS video is ready for download (100%)', 'success', 8000);
+          
+          if (data.youtube_url) {
+            showToast('Export & Upload Complete!', `Video rendered and auto-posted to YouTube:\n${data.youtube_url}`, 'success', 12000);
+            console.log("YouTube URL:", data.youtube_url);
+            window.open(data.youtube_url, '_blank');
+          } else {
+            showToast('Export Complete!', 'Your 60 FPS video is ready for download (100%)', 'success', 8000);
+          }
           
           setTimeout(() => {
             if (modal) modal.style.display = 'none';
-          }, 2000);
+          }, 3000);
 
           if (data.output_url) {
             const a = document.createElement('a');
@@ -2598,5 +2663,101 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.fillRect(x, canvas.height - h, Math.max(1, step - 0.5), h);
     }
   }
+  
+  window.loadAudioTrack = loadAudioTrack;
+  window.runSmartPipeline = runSmartPipeline;
+});
 
+// ============ Local Library / Media Pool ============
+document.addEventListener('DOMContentLoaded', () => {
+  const btnOpenLibrary = document.getElementById('btn-open-library');
+  const btnCloseLibrary = document.getElementById('btn-close-library-modal');
+  const libraryModal = document.getElementById('local-library-modal');
+  const fileList = document.getElementById('library-file-list');
+
+  if (btnOpenLibrary && libraryModal) {
+    btnOpenLibrary.addEventListener('click', async () => {
+      libraryModal.style.display = 'flex';
+      if (fileList) fileList.innerHTML = '<div style="text-align: center; color: var(--text-dim); padding: 40px; font-size: 13px;">Loading media...</div>';
+      
+      try {
+        const res = await fetch('/api/library');
+        const data = await res.json();
+        
+        if (data.status === 'success' && data.files) {
+          fileList.innerHTML = '';
+          if (data.files.length === 0) {
+             fileList.innerHTML = '<div style="text-align: center; color: var(--text-dim); padding: 40px; font-size: 13px;">No files found. Upload or download a YouTube video first.</div>';
+             return;
+          }
+          
+          data.files.forEach(f => {
+            const el = document.createElement('div');
+            el.style.display = 'flex';
+            el.style.alignItems = 'center';
+            el.style.gap = '12px';
+            el.style.padding = '12px 16px';
+            el.style.background = 'rgba(255, 255, 255, 0.03)';
+            el.style.borderRadius = '8px';
+            el.style.cursor = 'pointer';
+            el.style.transition = 'background 0.2s';
+            
+            el.onmouseover = () => el.style.background = 'rgba(217, 119, 6, 0.15)';
+            el.onmouseout = () => el.style.background = 'rgba(255, 255, 255, 0.03)';
+            
+            const icon = f.type === 'video' ? '🎬' : '🎵';
+            
+            el.innerHTML = `
+              <span style="font-size: 20px;">${icon}</span>
+              <div style="flex: 1; overflow: hidden;">
+                <div style="font-weight: 600; font-size: 13px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${f.name}</div>
+                <div style="font-size: 11px; color: var(--text-dim);">${f.type.toUpperCase()}</div>
+              </div>
+            `;
+            
+            el.addEventListener('click', () => {
+              libraryModal.style.display = 'none';
+              
+              const nameNoExt = f.name.replace(/\.[^/.]+$/, "");
+              
+              // Load the file as if it was uploaded using the robust loadAudioTrack method
+              if (window.loadAudioTrack) {
+                window.loadAudioTrack({
+                  src: f.url,
+                  serverPath: f.path,
+                  filename: f.name,
+                  title: nameNoExt,
+                  artist: "Unknown",
+                  autoPlay: true
+                });
+              } else {
+                console.error("loadAudioTrack not found!");
+              }
+              
+              // Auto-fill title
+              const inputTitle = document.getElementById('input-song-title');
+              if (inputTitle) inputTitle.value = nameNoExt;
+              
+              showToast('Media Loaded', `Loaded ${f.name} from Library`, 'success');
+              
+              // 🧠 Smart Pipeline: auto-analyze + auto-lyrics
+              if (window.runSmartPipeline) {
+                setTimeout(() => window.runSmartPipeline(), 500);
+              }
+            });
+            
+            fileList.appendChild(el);
+          });
+        }
+      } catch (err) {
+        if (fileList) fileList.innerHTML = `<div style="text-align: center; color: #ef4444; padding: 40px; font-size: 13px;">Error loading library: ${err.message}</div>`;
+      }
+    });
+  }
+
+  if (btnCloseLibrary && libraryModal) {
+    btnCloseLibrary.addEventListener('click', () => {
+      libraryModal.style.display = 'none';
+    });
+  }
 });

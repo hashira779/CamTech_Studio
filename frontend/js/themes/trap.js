@@ -174,7 +174,7 @@ function drawCenterDisc(ctx, cx, cy, radius, bass, pal) {
         }
         ctx.fillStyle = isVintage ? "#fef3c7" : `rgb(${pal.primary.join(",")})`;
         const artistFontSize = Math.max(10, Math.min(Math.floor(labelRadius * 0.20), Math.floor((labelRadius * 1.5) / Math.max(displayArtist.length, 6))));
-        ctx.font = `700 ${artistFontSize}px 'Kantumruy Pro', 'Outfit', sans-serif`;
+        ctx.font = `700 ${Math.floor((Math.floor((artistFontSize) * (state.titleScale || 1.5))) * (state.titleScale || 1.5))}px 'Kantumruy Pro', 'Outfit', sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText(displayArtist, 0, -labelRadius * 0.35);
@@ -183,7 +183,7 @@ function drawCenterDisc(ctx, cx, cy, radius, bass, pal) {
       // Vintage Stereo Sub-badge (center text secondary)
       const subBadge = state.centerTextSecondary !== undefined ? state.centerTextSecondary : "33⅓ RPM STEREO";
       if (subBadge && subBadge.trim()) {
-        ctx.font = `600 ${Math.max(9, Math.floor(labelRadius * 0.12))}px 'Outfit', sans-serif`;
+        ctx.font = `600 ${Math.floor((Math.floor((Math.max(9, Math.floor(labelRadius * 0.12))) * (state.titleScale || 1.5))) * (state.titleScale || 1.5))}px 'Outfit', sans-serif`;
         ctx.fillStyle = isVintage ? "#fde68a" : "#94a3b8";
         ctx.textAlign = "center";
         ctx.fillText(subBadge, 0, -labelRadius * 0.12);
@@ -197,7 +197,7 @@ function drawCenterDisc(ctx, cx, cy, radius, bass, pal) {
         }
         ctx.fillStyle = isVintage ? "#fef08a" : "#cbd5e1";
         const titleFontSize = Math.max(9, Math.min(Math.floor(labelRadius * 0.17), Math.floor((labelRadius * 1.5) / Math.max(displayTitle.length, 6))));
-        ctx.font = `600 ${titleFontSize}px 'Kantumruy Pro', 'Outfit', sans-serif`;
+        ctx.font = `600 ${Math.floor((Math.floor((titleFontSize) * (state.titleScale || 1.5))) * (state.titleScale || 1.5))}px 'Kantumruy Pro', 'Outfit', sans-serif`;
         ctx.textAlign = "center";
         ctx.fillText(displayTitle, 0, labelRadius * 0.32);
       }

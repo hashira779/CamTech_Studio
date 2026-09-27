@@ -47,3 +47,9 @@ scratch/
 .env
 .env.*
 *.env
+
+# Secrets & Credentials
+*client_secret*.json
+*.pickle
+token.pickle
+scratch.py

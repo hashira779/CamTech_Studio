@@ -43,28 +43,6 @@ export function drawSpectrumAnalyzer(ctx, w, h, bars, bass) {
   const fftSpec = `${count}-BAND FFT • 48kHz 24-BIT • SMOOTH ${(state.smoothing || 0.88).toFixed(2)}`;
   ctx.fillText(fftSpec, marginX, 42);
 
-  // Top Center: Artist & Song Title Display
-  if (state.showTitles !== false) {
-    const centerTitle = state.songTitle !== undefined ? state.songTitle : (isVintage ? "ចំប៉ាបាត់ដំបង" : "AUDIO VISUALIZER");
-    let centerArtist = state.artistName !== undefined ? state.artistName : (isVintage ? "ស៊ីន ស៊ីសាមុត (Sinn Sisamouth)" : "MASTER AUDIO");
-
-    ctx.textAlign = "center";
-
-    if (centerTitle && centerTitle.trim()) {
-      ctx.font = `700 ${Math.max(14, Math.min(22, Math.floor(w * 0.016)))}px 'Kantumruy Pro', 'Outfit', sans-serif`;
-      ctx.fillStyle = isVintage ? "#fef3c7" : "#ffffff";
-      ctx.shadowColor = pal.glow;
-      ctx.shadowBlur = 10 + bass * 8;
-      ctx.fillText(centerTitle, w / 2, 28);
-      ctx.shadowBlur = 0;
-    }
-
-    if (centerArtist && centerArtist.trim()) {
-      ctx.font = `600 ${Math.max(10, Math.min(13, Math.floor(w * 0.010)))}px 'Kantumruy Pro', 'Outfit', sans-serif`;
-      ctx.fillStyle = isVintage ? "#fde68a" : `rgba(${primaryRgb}, 0.9)`;
-      ctx.fillText(centerArtist, w / 2, 46);
-    }
-  }
 
   // Top Right: Live Stereo VU Peak Meters
   const vuW = 100;

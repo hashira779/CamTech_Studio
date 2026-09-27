@@ -30,29 +30,6 @@ export function drawNeonBars(ctx, w, h, bars, bass) {
   ctx.fillStyle = glowGrad;
   ctx.fillRect(0, 0, w, h);
 
-  // 2. Neon Header HUD (Artist & Title)
-  if (state.showTitles !== false) {
-    const displayTitle = state.songTitle !== undefined ? state.songTitle : (isVintage ? "ចំប៉ាបាត់ដំបង" : "CYBER HORIZON");
-    const displayArtist = state.artistName !== undefined ? state.artistName : (isVintage ? "ស៊ីន ស៊ីសាមុត" : "VIDA NEON CORE");
-
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-
-    if (displayTitle && displayTitle.trim()) {
-      ctx.font = `700 ${Math.max(14, Math.min(22, Math.floor(w * 0.016)))}px 'Kantumruy Pro', 'Outfit', sans-serif`;
-      ctx.fillStyle = isVintage ? "#fef3c7" : "#ffffff";
-      ctx.shadowColor = pal.glow;
-      ctx.shadowBlur = 12 + bass * 10;
-      ctx.fillText(displayTitle, w / 2, h * 0.12);
-      ctx.shadowBlur = 0;
-    }
-
-    if (displayArtist && displayArtist.trim()) {
-      ctx.font = `600 ${Math.max(10, Math.min(13, Math.floor(w * 0.010)))}px 'Kantumruy Pro', 'Outfit', sans-serif`;
-      ctx.fillStyle = isVintage ? "#fde68a" : `rgba(${priRgb}, 0.9)`;
-      ctx.fillText(displayArtist, w / 2, h * 0.12 + 22);
-    }
-  }
 
   // 3. Grid Lines
   ctx.lineWidth = 1;

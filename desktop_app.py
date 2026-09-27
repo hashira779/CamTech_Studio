@@ -6,6 +6,13 @@ with custom window geometry and no browser URL bar/tabs.
 
 import os
 import sys
+
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["OMP_NUM_THREADS"] = "4"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+if os.path.exists(os.path.expanduser("~/.cache/huggingface/hub")):
+    os.environ["HF_HUB_OFFLINE"] = "1"
+
 import time
 import socket
 import subprocess

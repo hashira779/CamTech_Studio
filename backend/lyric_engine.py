@@ -626,8 +626,8 @@ def double_check_lyrics(lyrics: List[Dict[str, Any]]) -> Tuple[List[Dict[str, An
             cur_w_start = w_end
             total_words += 1
 
-        prev_line_end = end
-        if len(fixed_words) <= 12:
+        # Preserve full lyric phrase unless it is an extreme runaway line (> 14s duration and > 25 tokens)
+        if len(fixed_words) <= 25 or (end - start) < 14.0:
             verified_lines.append({
                 "line_id": len(verified_lines),
                 "start": round(start, 2),
@@ -636,7 +636,7 @@ def double_check_lyrics(lyrics: List[Dict[str, Any]]) -> Tuple[List[Dict[str, An
                 "words": fixed_words
             })
         else:
-            # Smart chunking for very long continuous lines (like Whisper hallucinations or zero-pause rap)
+            # Smart chunking only for massive unbroken run-on blocks (like Whisper hallucinations)
             chunks = []
             current_chunk = []
             for i, w in enumerate(fixed_words):
@@ -709,13 +709,21 @@ def parse_lrc_file(lrc_content: str) -> List[Dict[str, Any]]:
 
     parsed_lines = []
     for i, (start_time, text) in enumerate(raw_items):
-        if i + 1 < len(raw_items):
-            end_time = raw_items[i + 1][0]
-        else:
-            end_time = start_time + 4.0
-
         words = tokenize_line_words(text)
         num_words = max(1, len(words))
+        linguistic_max_dur = max(2.0, min(6.5, num_words * 0.70 + 0.9))
+
+        if i + 1 < len(raw_items):
+            next_start = raw_items[i + 1][0]
+            gap = next_start - start_time
+            # If gap to next line is large (> 5.2s), an instrumental break/solo is occurring!
+            if gap > 5.2:
+                end_time = round(start_time + linguistic_max_dur, 2)
+            else:
+                end_time = round(min(next_start - 0.15, start_time + linguistic_max_dur), 2)
+        else:
+            end_time = round(start_time + linguistic_max_dur, 2)
+
         duration = max(0.4, end_time - start_time)
         word_dur = duration / num_words
 
@@ -867,11 +875,39 @@ def export_lyrics_to_lrc(lyrics: List[Dict[str, Any]], output_path: str):
         f.write("\n".join(lines) + "\n")
 
 
-def parse_subtitle_file(file_path: str) -> List[Dict[str, Any]]:
-    """Loads and parses any subtitle or lyric file (.vtt, .srt, .lrc)."""
+def parse_subtitle_file(file_path: str, audio_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Loads and parses any subtitle or lyric file (.vtt, .srt, .lrc) with acoustic vocal calibration."""
     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
         content = f.read()
-    return parse_subtitle_content(content)
+    results = parse_subtitle_content(content)
+    if not results:
+        return []
+
+    # If audio_path not passed, check if matching audio file exists in the directory
+    if not audio_path:
+        base = os.path.splitext(file_path)[0]
+        # Check stripping .km, .en etc
+        base_clean = re.sub(r'\.[a-z]{2}$', '', base)
+        for cand_base in (base, base_clean):
+            for ext in (".mp3", ".wav", ".m4a", ".flac"):
+                cand = cand_base + ext
+                if os.path.exists(cand):
+                    audio_path = cand
+                    break
+            if audio_path:
+                break
+
+    if audio_path and os.path.exists(audio_path):
+        try:
+            try:
+                from backend.vocal_align import calibrate_lyrics_with_vocal_activity
+            except ImportError:
+                from vocal_align import calibrate_lyrics_with_vocal_activity
+            results = calibrate_lyrics_with_vocal_activity(results, audio_path=audio_path)
+        except Exception as e:
+            pass
+
+    return results
 
 
 def find_matching_subtitles(audio_path: str, target_lang: Optional[str] = None) -> Optional[str]:
@@ -895,6 +931,19 @@ def find_matching_subtitles(audio_path: str, target_lang: Optional[str] = None) 
     if os.path.isdir(yt_dir):
         search_dirs.append(yt_dir)
 
+    # Also search uploads/lyrics and uploads/subtitles
+    uploads_dir = os.path.dirname(dir_name) if os.path.basename(dir_name) in ("audio", "video") else dir_name
+    for sub in ("lyrics", "subtitles", "youtube"):
+        cand_d = os.path.join(uploads_dir, sub)
+        if os.path.isdir(cand_d) and cand_d not in search_dirs:
+            search_dirs.append(cand_d)
+        cand_d2 = os.path.join(dir_name, sub)
+        if os.path.isdir(cand_d2) and cand_d2 not in search_dirs:
+            search_dirs.append(cand_d2)
+
+    import urllib.parse
+    unquoted_base = urllib.parse.unquote(base_name)
+
     candidates = []
     for d in search_dirs:
         if not os.path.exists(d):
@@ -904,8 +953,17 @@ def find_matching_subtitles(audio_path: str, target_lang: Optional[str] = None) 
             if not f_lower.endswith((".vtt", ".srt", ".lrc")):
                 continue
             f_base = os.path.splitext(f)[0]
-            # Precise matching so we never match short unrelated filenames
-            if base_name in f or f_base.startswith(base_name) or (len(f_base) >= 8 and base_name.startswith(f_base)):
+            unquoted_f_base = urllib.parse.unquote(f_base)
+            
+            # Robust matching: substring, prefix, or URL-unquoted match
+            matches_file = (
+                base_name in f or
+                unquoted_base in f or
+                f_base.startswith(base_name) or
+                unquoted_f_base.startswith(unquoted_base) or
+                (len(f_base) >= 8 and (base_name.startswith(f_base) or unquoted_base.startswith(unquoted_f_base)))
+            )
+            if matches_file:
                 full = os.path.join(d, f)
                 priority = 0
 
@@ -967,6 +1025,50 @@ def find_matching_subtitles(audio_path: str, target_lang: Optional[str] = None) 
     if candidates:
         candidates.sort(key=lambda x: x[0], reverse=True)
         return candidates[0][1]
+    return None
+
+
+def fetch_synced_lyrics_lrclib(title: str, artist: str = "", duration: float = 0.0) -> Optional[str]:
+    """
+    Fetches verified, human-synchronized lyrics from LRCLIB (open lyric database).
+    Supports English, Vietnamese, Spanish, French, Chinese, Korean, etc.
+    Returns LRC format text with timestamps.
+    """
+    if not title:
+        return None
+
+    import urllib.request
+    import urllib.parse
+
+    # Clean title (remove brackets, (Official MV), etc.)
+    clean_title = re.sub(r'\[.*?\]|\(.*?\)|【.*?】', '', title)
+    clean_title = re.sub(r'[\s|I]+(?:Official.*|MV|Audio|Lyric.*|Full.*)$', '', clean_title, flags=re.IGNORECASE).strip()
+
+    query = f"{artist} {clean_title}".strip() if artist and artist != "Unknown" else clean_title
+    url = f"https://lrclib.net/api/search?q={urllib.parse.quote(query)}"
+    req = urllib.request.Request(url, headers={'User-Agent': 'VIDA-Studio/1.0'})
+
+    try:
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            if not data:
+                return None
+
+            for item in data:
+                synced = item.get('syncedLyrics')
+                if synced and len(synced.strip().splitlines()) >= 4:
+                    item_dur = item.get('duration', 0)
+                    if duration > 0 and item_dur > 0 and abs(item_dur - duration) > 20:
+                        continue
+                    return synced
+
+            for item in data:
+                synced = item.get('syncedLyrics')
+                if synced and len(synced.strip().splitlines()) >= 4:
+                    return synced
+    except Exception as e:
+        log.debug(f"[LRCLIB] Notice: {e}")
+        return None
     return None
 
 

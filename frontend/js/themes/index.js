@@ -1,16 +1,16 @@
 import { state } from '../core/state.js';
-import { drawTrapCircle } from './trap.js';
-import { drawNeonBars } from './neon.js';
-import { drawWaveTheme } from './wave.js';
-import { drawSpectrumAnalyzer } from './spectrum.js';
-import { drawQuantumVortex } from './quantum_vortex.js';
-import { drawNeuralSynapse } from './neural_synapse.js';
-import { drawHyperLiquid } from './hyper_liquid.js';
-import { drawAngkorMandala } from './angkor_mandala.js';
-import { drawHologramHUD } from './hologram_hud.js';
-import { drawAuroraBorealis } from './aurora_borealis.js';
-import { drawDNAHelix } from './dna_helix.js';
-import { drawSonicNebula } from './sonic_nebula.js';
+import { drawTrapCircle } from './trap.js?v=20260927-v7';
+import { drawNeonBars } from './neon.js?v=20260927-v7';
+import { drawWaveTheme } from './wave.js?v=20260927-v7';
+import { drawSpectrumAnalyzer } from './spectrum.js?v=20260927-v7';
+import { drawQuantumVortex } from './quantum_vortex.js?v=20260927-v7';
+import { drawNeuralSynapse } from './neural_synapse.js?v=20260927-v7';
+import { drawHyperLiquid } from './hyper_liquid.js?v=20260927-v7';
+import { drawAngkorMandala } from './angkor_mandala.js?v=20260927-v7';
+import { drawHologramHUD } from './hologram_hud.js?v=20260927-v7';
+import { drawAuroraBorealis } from './aurora_borealis.js?v=20260927-v7';
+import { drawDNAHelix } from './dna_helix.js?v=20260927-v7';
+import { drawSonicNebula } from './sonic_nebula.js?v=20260927-v7';
 
 const THEME_RENDERERS = {
   trap_circle: drawTrapCircle,
