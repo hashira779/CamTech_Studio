@@ -196,10 +196,17 @@ def build_youtube_metadata(
         desc_lines.append("🔔 Don't forget to Like, Share, and Subscribe for more high-fidelity visualizer tracks!")
         desc_lines.append("")
 
-        # SEO Hashtags
-        hashtags = ["#VIDAStudio", "#AudioVisualizer", "#MusicVideo", "#60FPS", "#KaraokeLyrics"]
+        # SEO Hashtags with VibeTunes brand
+        is_vietnamese = any(c in "àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ" for c in (clean_title + " " + clean_artist))
+        
+        hashtags = ["#VibeTunes", "#VibeTunesMusic", "#AudioVisualizer", "#MusicVideo", "#60FPS", "#KaraokeLyrics"]
         if is_khmer:
             hashtags.extend(["#KhmerMusic", "#KhmerSong", "#ចម្រៀងខ្មែរ", "#ចម្រៀងថ្មីៗ"])
+        elif is_vietnamese:
+            hashtags.extend(["#NhacViet", "#Vpop", "#NhacTre", "#LyricsVideo"])
+        else:
+            hashtags.extend(["#NewMusic", "#TopHits", "#ViralSong"])
+
         if clean_artist:
             tag_artist = re.sub(r'[^\w\u1780-\u17FF]', '', clean_artist)
             if tag_artist:
@@ -208,14 +215,14 @@ def build_youtube_metadata(
         if tag_title:
             hashtags.append(f"#{tag_title}")
 
-        desc_lines.append(" ".join(hashtags[:12]))
+        desc_lines.append(" ".join(hashtags[:14]))
         final_desc = "\n".join(desc_lines)[:5000]
 
-    # 3. Tags (Max 25 tags)
+    # 3. Tags (Max 25 tags for YouTube Algorithm)
     if custom_tags:
         final_tags = [str(t).strip() for t in custom_tags if str(t).strip()]
     else:
-        final_tags = ["VIDA", "VIDA Studio", "Music Video", "Audio Visualizer", "60 FPS", "Karaoke", "Lyrics"]
+        final_tags = ["VibeTunes", "VibeTunes Music", "VIDA Studio", "Music Video", "Audio Visualizer", "60 FPS", "Karaoke", "Lyrics"]
         if clean_title:
             final_tags.append(clean_title)
         if clean_artist:
