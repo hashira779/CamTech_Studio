@@ -297,6 +297,7 @@ def download_youtube_audio(url: str, output_dir: str, on_progress=None) -> Tuple
                     candidate = line.strip()
                     if candidate and os.path.exists(candidate):
                         ext = os.path.splitext(candidate)[1].lower()
+                        if ext in {".mp3", ".wav", ".m4a", ".opus", ".webm", ".ogg", ".aac", ".flac"}:
                             audio_file = convert_to_mp3(candidate)
                             audio_file = _sanitize_filepath(audio_file)
                             _sanitize_subtitles_for_audio(audio_file, title=info.get("title") if info else None)
