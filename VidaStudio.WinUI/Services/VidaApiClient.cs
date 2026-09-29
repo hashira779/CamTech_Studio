@@ -334,7 +334,7 @@ public class VidaApiClient
         return lyrics;
     }
 
-    public async Task<List<LyricLine>> AlignLyricsWithReferenceAsync(List<LyricLine> lyrics, string referenceText)
+    public async Task<List<LyricLine>> AlignLyricsWithReferenceAsync(List<LyricLine> lyrics, string referenceText, string? audioPath = null)
     {
         try
         {
@@ -349,7 +349,8 @@ public class VidaApiClient
             var payload = new
             {
                 lyrics_data = lyricsPayload,
-                reference_text = referenceText
+                reference_text = referenceText,
+                audio_path = audioPath
             };
             var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
             var response = await _http.PostAsync($"{BaseUrl}/api/lyrics/correct-with-reference", content);

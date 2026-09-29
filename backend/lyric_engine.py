@@ -8,6 +8,7 @@ import os
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 import re
 import html
+import math
 from typing import List, Dict, Any, Optional, Tuple
 
 # Import linguistic Khmer word and syllable segmentation engine
@@ -1037,6 +1038,7 @@ def fetch_synced_lyrics_lrclib(title: str, artist: str = "", duration: float = 0
     if not title:
         return None
 
+    import json
     import urllib.request
     import urllib.parse
 
@@ -1049,7 +1051,7 @@ def fetch_synced_lyrics_lrclib(title: str, artist: str = "", duration: float = 0
     req = urllib.request.Request(url, headers={'User-Agent': 'VIDA-Studio/1.0'})
 
     try:
-        with urllib.request.urlopen(req, timeout=4) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode('utf-8'))
             if not data:
                 return None
@@ -1067,7 +1069,7 @@ def fetch_synced_lyrics_lrclib(title: str, artist: str = "", duration: float = 0
                 if synced and len(synced.strip().splitlines()) >= 4:
                     return synced
     except Exception as e:
-        log.debug(f"[LRCLIB] Notice: {e}")
+        print(f"[LRCLIB] Notice: {e}")
         return None
     return None
 
@@ -1434,6 +1436,17 @@ def get_active_lyric_frame(current_time: float, lyrics: List[Dict[str, Any]]) ->
             break
 
     if not active_line:
+        if next_line and (next_line.get("start", 0) - current_time > 1.8):
+            diff = next_line["start"] - current_time
+            s = int(math.ceil(diff))
+            break_text = f"♪ Instrumental Break (Next vocal in {s}s) ♪" if s <= 60 else "♪ Instrumental Break ♪"
+            return {
+                "line": {"text": break_text, "words": [{"word": break_text, "start": current_time, "end": next_line["start"]}], "is_instrumental": True},
+                "next_line": next_line,
+                "active_word_index": -1,
+                "word_progress": 0.0,
+                "alpha": 0.90
+            }
         return None
 
     active_word_index = -1

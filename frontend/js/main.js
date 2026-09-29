@@ -132,6 +132,22 @@ document.addEventListener('DOMContentLoaded', () => {
     state.lyrics = [];
   }
 
+  // Auto-refresh authentic synced lyrics from server companion .lrc if available
+  if (cachedServerPath) {
+    fetch('/api/transcribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audio_path: cachedServerPath, force_ai: false })
+    }).then(r => r.json()).then(data => {
+      if (data && data.status === 'success' && data.lyrics && data.lyrics.length > 0 && data.source === 'subtitle') {
+        state.lyrics = data.lyrics;
+        try { localStorage.setItem('vida_lyrics', JSON.stringify(data.lyrics)); } catch(_) {}
+        renderLyricsTeleprompter(state.lyrics, true);
+        setStudioPipelineProgress(3, 100, `🎤 ${state.lyrics.length} authentic lines loaded (100%)`, 'Lyrics Synced');
+      }
+    }).catch(() => {});
+  }
+
   // ============ Default VibeTunes Logo Initialization ============
   const defaultLogoUrl = '/uploads/images/vibetunes_logo.png';
   const defaultLogoPath = 'd:\\Project\\VIDA\\uploads\\images\\vibetunes_logo.png';
@@ -454,10 +470,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnAiAlignLyrics = document.getElementById('btn-ai-align-lyrics');
 
   async function runLyricsAlignmentWithReference(referenceText, triggerBtn = null) {
-    if (!state.lyrics || state.lyrics.length === 0) {
-      showToast('No Lyrics in Teleprompter', 'Please transcribe audio or load lyrics first to align', 'info', 3000);
-      return false;
-    }
     const cleanRef = (referenceText || '').trim();
     if (!cleanRef) {
       showToast('Empty Lyrics', 'Please paste your 100% correct lyrics text first', 'warning', 3000);
@@ -466,15 +478,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const prevBtnText = triggerBtn ? triggerBtn.textContent : '';
     if (triggerBtn) setButtonLoading(triggerBtn, '⚡ Aligning...');
-    setGlobalProgress(25, true, 'Aligning with Original Lyrics...');
+    setGlobalProgress(25, true, 'Aligning with Original Lyrics & Audio...');
+
+    const audioFilePath = state.audioPath || state.audioServerPath || window.__VIDA_SERVER_PATH || '';
 
     try {
       const res = await fetch('/api/lyrics/correct-with-reference', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          lyrics_data: state.lyrics,
-          reference_text: cleanRef
+          lyrics_data: state.lyrics || [],
+          reference_text: cleanRef,
+          audio_path: audioFilePath
         })
       });
       const data = await res.json();
@@ -1452,8 +1467,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (btnPasteAlignLyrics) {
     btnPasteAlignLyrics.addEventListener('click', () => {
-      if (!state.lyrics || state.lyrics.length === 0) {
-        showToast('No Lyrics Loaded', 'Please load or transcribe audio first so timing cues exist to align against', 'info', 3500);
+      if ((!state.lyrics || state.lyrics.length === 0) && !state.audioPath && !state.audioUrl) {
+        showToast('No Audio or Lyrics', 'Please load an audio file first to align lyrics', 'info', 3500);
         return;
       }
       openAlignModal();
@@ -1924,13 +1939,30 @@ document.addEventListener('DOMContentLoaded', () => {
     const selectTheme = document.getElementById('select-theme');
     const selectPalette = document.getElementById('select-palette');
 
-    // ── Check if lyrics already loaded from YouTube subtitles ──
-    const hasSubtitleLyrics = state.lyrics && state.lyrics.length > 0;
-    if (hasSubtitleLyrics) {
-      renderLyricsTeleprompter(state.lyrics);
-      if (btnTranscribe) clearButtonLoading(btnTranscribe, '✅ Lyrics Synced (100%)');
-      setStudioPipelineProgress(3, 100, `🎤 ${state.lyrics.length} lines synced from captions (100%)`, 'Lyrics Synced');
-      showToast('🎤 Lyrics Ready', `${state.lyrics.length} lines synced from captions instantly! ⚡`, 'success', 4000);
+    // ── Check if lyrics already loaded or available from server captions/LRC ──
+    try {
+      const subCheckRes = await fetch('/api/transcribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio_path: state.audioServerPath, force_ai: false })
+      });
+      const subCheckData = await subCheckRes.json();
+      if (subCheckData && subCheckData.status === 'success' && subCheckData.lyrics && subCheckData.source === 'subtitle') {
+        state.lyrics = subCheckData.lyrics;
+        try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(_) {}
+        renderLyricsTeleprompter(state.lyrics, true);
+        if (btnTranscribe) clearButtonLoading(btnTranscribe, '✅ Lyrics Synced (100%)');
+        setStudioPipelineProgress(3, 100, `🎤 ${state.lyrics.length} authentic lines synced from verified captions (100%)`, 'Lyrics Synced');
+        showToast('🎤 Lyrics Ready', `${state.lyrics.length} authentic lines loaded! ⚡`, 'success', 4000);
+      } else if (state.lyrics && state.lyrics.length > 0) {
+        renderLyricsTeleprompter(state.lyrics);
+        if (btnTranscribe) clearButtonLoading(btnTranscribe, '✅ Lyrics Synced (100%)');
+        setStudioPipelineProgress(3, 100, `🎤 ${state.lyrics.length} lines restored (100%)`, 'Lyrics Synced');
+      }
+    } catch(_) {
+      if (state.lyrics && state.lyrics.length > 0) {
+        renderLyricsTeleprompter(state.lyrics);
+      }
     }
 
     // ── Prepare Audio DNA Analysis (Step 1+2) ──
@@ -2048,7 +2080,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ── Prepare Lyrics Transcription (Step 3) — runs in PARALLEL with analysis ──
     const lyricsPromise = (async () => {
-      if (hasSubtitleLyrics) return; // Already loaded from YouTube captions — skip Whisper entirely!
+      if (state.lyrics && state.lyrics.length > 0) return; // Already loaded authentic lyrics — skip Whisper!
 
       showToast('🧠 Smart Studio', 'Transcribing vocals with Whisper AI...', 'info', 8000);
       const langSelect = document.getElementById('select-vocal-lang');
@@ -3013,8 +3045,10 @@ document.addEventListener('DOMContentLoaded', () => {
           if (data.output_url) {
             const a = document.createElement('a');
             a.href = data.output_url;
-            a.download = '';
+            a.download = data.output_filename || '';
+            document.body.appendChild(a);
             a.click();
+            setTimeout(() => a.remove(), 1000);
           }
         } else if (data.status === 'failed') {
           clearInterval(interval);

@@ -154,7 +154,7 @@ class RenderRequest(BaseModel):
 class TranscribeRequest(BaseModel):
     audio_path: str
     model_size: str = "large-v3-turbo"
-    language: Optional[str] = "km"
+    language: Optional[str] = "auto"
     use_demucs: Optional[bool] = False
     force_ai: Optional[bool] = False
 
@@ -193,8 +193,9 @@ class LyricsVerifyRequest(BaseModel):
     lyrics_data: List[Dict[str, Any]]
 
 class LyricsCorrectReferenceRequest(BaseModel):
-    lyrics_data: List[Dict[str, Any]]
+    lyrics_data: Optional[List[Dict[str, Any]]] = None
     reference_text: str
+    audio_path: Optional[str] = None
 
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
@@ -584,18 +585,35 @@ async def correct_lyrics_with_reference_api(req: LyricsCorrectReferenceRequest):
     with user-provided ground-truth original lyrics, repairing all misheard phonetic words
     while preserving audio start/end timestamps and word synchronization.
     """
-    if not req.lyrics_data:
-        raise HTTPException(status_code=400, detail="No lyrics loaded in teleprompter")
     if not req.reference_text or not req.reference_text.strip():
         raise HTTPException(status_code=400, detail="Please paste reference lyrics text")
-    
+
+    # Resolve audio_path if provided, relative, or infer latest from library
+    audio_p = req.audio_path
+    if audio_p and not os.path.exists(audio_p):
+        cand = os.path.join(AUDIO_DIR, os.path.basename(audio_p))
+        if os.path.exists(cand):
+            audio_p = cand
+    if not audio_p and os.path.exists(AUDIO_DIR):
+        all_audios = [
+            os.path.join(AUDIO_DIR, f) for f in os.listdir(AUDIO_DIR)
+            if f.lower().endswith(('.mp3', '.wav', '.flac', '.m4a', '.ogg'))
+        ]
+        if all_audios:
+            all_audios.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+            audio_p = all_audios[0]
+
     try:
         from backend.llm_engine import align_and_correct_lyrics_with_reference
-        corrected_lyrics, report = align_and_correct_lyrics_with_reference(req.lyrics_data, req.reference_text)
+        corrected_lyrics, report = align_and_correct_lyrics_with_reference(
+            lyrics_data=req.lyrics_data or [],
+            reference_text=req.reference_text,
+            audio_path=audio_p
+        )
         return {
             "status": "success",
             "lines_count": len(corrected_lyrics),
-            "changes_count": report.get("changes_count", 0),
+            "changes_count": report.get("changes_count", len(corrected_lyrics)),
             "report": report,
             "lyrics": corrected_lyrics
         }
@@ -1017,7 +1035,38 @@ def _execute_render_job(job_id: str, req: RenderRequest):
         else:
             width, height = 1920, 1080
 
-        output_filename = f"vida_{job_id[:8]}.mp4"
+        # Determine descriptive output filename incorporating song title and artist
+        candidate_title = (req.song_title or "").strip()
+        candidate_artist = (req.artist_name or "").strip()
+        if candidate_artist in ("Official Audio", "Unknown", "Artist", "None", ""):
+            candidate_artist = ""
+
+        if candidate_title and candidate_artist:
+            base_display_name = f"{candidate_artist} - {candidate_title}"
+        elif candidate_title:
+            base_display_name = candidate_title
+        elif req.audio_path:
+            base_display_name = os.path.splitext(os.path.basename(req.audio_path))[0]
+        else:
+            base_display_name = f"VIDA_Visualizer_{job_id[:8]}"
+
+        # Sanitize for Windows filesystem characters: \ / : * ? " < > |
+        safe_name = re.sub(r'[\\/*?:"<>|]', "", base_display_name).strip()
+        safe_name = re.sub(r'\s+', ' ', safe_name)
+        if not safe_name:
+            safe_name = f"VIDA_Visualizer_{job_id[:8]}"
+
+        # Truncate to maximum 100 chars to guarantee MAX_PATH safety on Windows
+        if len(safe_name) > 100:
+            safe_name = safe_name[:100].strip()
+
+        # Check for filename collisions in OUTPUT_DIR
+        target_candidate = f"{safe_name}.mp4"
+        if os.path.exists(os.path.join(OUTPUT_DIR, target_candidate)):
+            output_filename = f"{safe_name} ({job_id[:6]}).mp4"
+        else:
+            output_filename = target_candidate
+
         output_path = os.path.join(OUTPUT_DIR, output_filename)
 
         def on_progress(p_data):
@@ -1028,6 +1077,28 @@ def _execute_render_job(job_id: str, req: RenderRequest):
                 "fps": p_data["fps"],
                 "eta_seconds": p_data["eta_seconds"]
             })
+
+        # Ensure we always prioritize verified authentic synced lyrics if available on disk
+        render_lyrics = req.lyrics_data or []
+        if req.audio_path and os.path.exists(req.audio_path):
+            base_audio, _ = os.path.splitext(req.audio_path)
+            cand_lrcs = [
+                f"{base_audio}.vi.lrc",
+                f"{base_audio}.km.lrc",
+                f"{base_audio}.lrc",
+                req.audio_path.replace(".mp3", ".vi.lrc").replace(".wav", ".vi.lrc"),
+                req.audio_path.replace(".mp3", ".lrc").replace(".wav", ".lrc")
+            ]
+            for cand in cand_lrcs:
+                if os.path.exists(cand):
+                    try:
+                        disk_lyrics = parse_subtitle_file(cand, audio_path=req.audio_path)
+                        if disk_lyrics and len(disk_lyrics) >= 4:
+                            print(f"[Render Engine] 🎯 Auto-loaded verified authentic lyrics ({len(disk_lyrics)} lines) from {os.path.basename(cand)}")
+                            render_lyrics = disk_lyrics
+                            break
+                    except Exception as lrc_err:
+                        print(f"[Render Engine] Warning reading {cand}: {lrc_err}")
 
         renderer = VideoRenderer(
             audio_path=req.audio_path,
@@ -1045,7 +1116,7 @@ def _execute_render_job(job_id: str, req: RenderRequest):
             song_title=req.song_title,
             artist_name=req.artist_name,
             title_scale=req.title_scale,
-            lyrics_data=req.lyrics_data or [],
+            lyrics_data=render_lyrics,
             lyric_style=req.lyric_style,
             bar_count=req.bar_count,
             bass_boost=req.bass_boost
@@ -1093,7 +1164,8 @@ def _execute_render_job(job_id: str, req: RenderRequest):
 
         jobs[job_id]["status"] = "completed"
         jobs[job_id]["percent"] = 100.0
-        jobs[job_id]["output_url"] = f"/outputs/{output_filename}"
+        jobs[job_id]["output_url"] = f"/outputs/{urllib.parse.quote(output_filename)}"
+        jobs[job_id]["output_filename"] = output_filename
         jobs[job_id]["output_path"] = output_path
         jobs[job_id]["youtube_url"] = youtube_url
 

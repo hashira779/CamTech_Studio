@@ -1346,7 +1346,7 @@ public sealed partial class StudioPage : Page
                                    .ToArray();
 
         ShowActivity("Aligning teleprompter with reference lyrics...");
-        var aligned = await VidaApiClient.Instance.AlignLyricsWithReferenceAsync(_lyricLines, refText);
+        var aligned = await VidaApiClient.Instance.AlignLyricsWithReferenceAsync(_lyricLines, refText, _currentAudioPath);
         HideActivity();
 
         if (aligned != null && aligned.Count > 0 && aligned != _lyricLines)
@@ -1399,7 +1399,7 @@ public sealed partial class StudioPage : Page
         if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(dlg.ReferenceLyricsText))
         {
             ShowActivity("Aligning teleprompter with original lyrics...");
-            var aligned = await VidaApiClient.Instance.AlignLyricsWithReferenceAsync(_lyricLines, dlg.ReferenceLyricsText);
+            var aligned = await VidaApiClient.Instance.AlignLyricsWithReferenceAsync(_lyricLines, dlg.ReferenceLyricsText, _currentAudioPath);
             HideActivity();
             UpdateLoadedLyrics(aligned);
         }

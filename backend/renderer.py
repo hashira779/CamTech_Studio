@@ -15,6 +15,7 @@ import cv2
 
 from backend.audio_analyzer import get_ffmpeg_exe, AudioAnalyzer
 from backend.lyric_engine import get_active_lyric_frame
+from backend.theme_renderers import AdvancedThemeRenderer
 
 try:
     from backend.gpu_renderer import is_cuda_available, CUDAVideoRenderer
@@ -250,6 +251,7 @@ class VideoRenderer:
 
         self.particles = ParticleSystem(80, width, height)
         self.peak_caps = np.zeros(bar_count, dtype=np.float32)
+        self.wave_overlay = np.zeros((height, width, 3), dtype=np.uint8)
 
         # Lyric text rendering cache: avoids re-rendering identical text frames
         self._lyric_cache_key = None
@@ -293,6 +295,9 @@ class VideoRenderer:
 
         # Bake static header (Song Title, Artist, Watermark) directly onto bg_frame ONCE!
         self._bake_header_onto_bg()
+
+        # Initialize advanced theme renderers for all 12 themes
+        self._adv_themes = AdvancedThemeRenderer(self.width, self.height)
 
     def _load_font(self, size: int, bold: bool = False, text: str = ""):
         """
@@ -364,19 +369,22 @@ class VideoRenderer:
             "cyrillic": [
                 "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf",
                 "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf"
-            ],
-            "latin": [
-                "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf",
-                "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf",
-                "C:\\Windows\\Fonts\\calibrib.ttf" if bold else "C:\\Windows\\Fonts\\calibri.ttf"
             ]
         }
 
-        candidates = list(font_map.get(script, font_map["latin"]))
-        candidates.extend([
-            "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf",
-            "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf"
-        ])
+        if "♪" in text or script == "latin":
+            candidates = [
+                "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf",
+                "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf",
+                "C:\\Windows\\Fonts\\seguisym.ttf",
+                "C:\\Windows\\Fonts\\calibrib.ttf" if bold else "C:\\Windows\\Fonts\\calibri.ttf"
+            ]
+        else:
+            candidates = list(font_map.get(script, font_map["latin"]))
+            candidates.extend([
+                "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf",
+                "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf"
+            ])
 
         for p in candidates:
             if os.path.exists(p):
@@ -430,21 +438,43 @@ class VideoRenderer:
             except Exception as e:
                 print(f"Warning: could not load background {e}")
 
-        # Procedural deep cyber gradient background
+        # Procedural background matching frontend visualizer.js radial gradient exactly
+        # Frontend (lines 73-79): createRadialGradient(w/2, h*0.45, w*0.05, w/2, h/2, w*0.75)
+        #   stop 0: rgba(secondary, 0.08)
+        #   stop 0.55: #0b0e17
+        #   stop 1: #040508
         bg = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-        c_top = np.array([12, 10, 24], dtype=np.float32)     # Deep dark indigo
-        c_bottom = np.array([4, 4, 10], dtype=np.float32)    # Near pitch black
-        for y in range(self.height):
-            ratio = y / self.height
-            color = (1.0 - ratio) * c_top + ratio * c_bottom
-            bg[y, :] = color.astype(np.uint8)
+        cx, cy_inner = self.width / 2.0, self.height * 0.45
+        r_inner = self.width * 0.05
+        r_outer = self.width * 0.75
+        Y, X = np.ogrid[:self.height, :self.width]
+        dist = np.sqrt((X - cx)**2 + (Y - cy_inner)**2).astype(np.float32)
+
+        # Normalize distance between inner and outer radius
+        norm_dist = np.clip((dist - r_inner) / max(1.0, r_outer - r_inner), 0.0, 1.0)
+
+        # Color stops: 0 -> secondary*0.08, 0.55 -> #0b0e17, 1.0 -> #040508
+        c_sec_rgb = np.array([self.palette["secondary"][2], self.palette["secondary"][1], self.palette["secondary"][0]], dtype=np.float32)
+        c_mid = np.array([23, 14, 11], dtype=np.float32)   # #0b0e17 in BGR
+        c_end = np.array([8, 5, 4], dtype=np.float32)      # #040508 in BGR
+
+        # Fully vectorized radial gradient interpolation (no Python loops)
+        nd3 = norm_dist[:, :, np.newaxis]  # (H, W, 1) for broadcasting
+        mask_inner = (nd3 < 0.55)
+        # Inner region: blend secondary*0.08 -> mid
+        t_inner = nd3 / 0.55
+        color_inner = (c_sec_rgb * 0.08) * (1.0 - t_inner) + c_mid * t_inner
+        # Outer region: blend mid -> end
+        t_outer = (nd3 - 0.55) / 0.45
+        color_outer = c_mid * (1.0 - t_outer) + c_end * t_outer
+        bg = np.where(mask_inner, color_inner, color_outer).clip(0, 255).astype(np.uint8)
 
         # Subtle vignette
         if self.vignette_mask is None:
-            Y, X = np.ogrid[:self.height, :self.width]
-            dist_from_center = np.sqrt(((X - self.width/2)/(self.width/2))**2 + ((Y - self.height/2)/(self.height/2))**2)
+            Y2, X2 = np.ogrid[:self.height, :self.width]
+            dist_from_center = np.sqrt(((X2 - self.width/2)/(self.width/2))**2 + ((Y2 - self.height/2)/(self.height/2))**2)
             self.vignette_mask = np.clip(1.0 - 0.45 * dist_from_center, 0.2, 1.0)[:, :, np.newaxis]
-            
+
         bg = (bg.astype(np.float32) * self.vignette_mask).astype(np.uint8)
         return bg
 
@@ -528,11 +558,6 @@ class VideoRenderer:
         artist_y = margin_y + int(self.height * 0.045 * self.title_scale)
         c_pri = self.palette["primary"]
         draw.text((margin_x, artist_y), self.artist_name, font=self.font_artist, fill=(c_pri[0], c_pri[1], c_pri[2], 255))
-
-        # Watermark
-        wm_text = "VIDA AUDIO STUDIO"
-        wm_x = self.width - int(self.width * 0.18)
-        draw.text((wm_x, margin_y), wm_text, font=self.font_artist, fill=(160, 160, 180, 255))
 
         # Alpha-blend onto self.bg_frame
         overlay_np = cv2.cvtColor(np.array(overlay), cv2.COLOR_RGBA2BGRA)
@@ -659,33 +684,129 @@ class VideoRenderer:
                 ref_color = (int(col_b * 0.25), int(col_g * 0.25), int(col_r * 0.25))
                 cv2.rectangle(frame, (x, base_y + 3), (x + bar_width, base_y + 3 + ref_h), ref_color, -1)
 
-    def render_horizon_wave(self, frame: np.ndarray, spectrum: np.ndarray, bass: float, onset: float):
-        """Fluid glowing oscilloscope wave along the horizon."""
-        n_bars = len(spectrum)
-        base_y = int(self.height * 0.55)
-        max_amp = int(self.height * 0.25)
-
-        points = []
-        for i in range(n_bars):
-            x = int(i / (n_bars - 1) * self.width)
-            amp = spectrum[i] * max_amp
-            y = int(base_y - amp * math.sin(i * 0.4 + time.time()))
-            points.append((x, y))
+    def render_ocean_wave(self, frame: np.ndarray, spectrum: np.ndarray, bass: float, onset: float, anim_time: float = 0.0):
+        """
+        Multi-Layer Fluid Wave Harmonic Layers + Glowing Crests + Center Core Emblem.
+        Directly matches frontend/js/themes/wave.js for consistent studio export.
+        """
+        cx = self.width // 2
+        cy = self.height // 2
+        count = len(spectrum)
+        if count == 0:
+            return
 
         c_pri = self.palette["primary"]
-        color_bgr = (c_pri[2], c_pri[1], c_pri[0])
+        c_sec = self.palette["secondary"]
+        glow_val = self.palette.get("glow", c_pri)
+        if isinstance(glow_val, (list, tuple)) and len(glow_val) >= 3:
+            glow_bgr = (int(glow_val[2]), int(glow_val[1]), int(glow_val[0]))
+        else:
+            glow_bgr = (int(c_pri[2]), int(c_pri[1]), int(c_pri[0]))
 
-        # Draw glowing multiline
-        pts_arr = np.array(points, np.int32).reshape((-1, 1, 2))
-        cv2.polylines(frame, [pts_arr], isClosed=False, color=color_bgr, thickness=4, lineType=cv2.LINE_AA)
-        cv2.polylines(frame, [pts_arr], isClosed=False, color=(255, 255, 255), thickness=1, lineType=cv2.LINE_AA)
+        # Smooth resampled points across width for organic fluid curves
+        n_pts = 260
+        x_coords = np.linspace(0, self.width, n_pts, dtype=np.float32)
+
+        interp_spec = np.interp(
+            np.linspace(0, count - 1, n_pts),
+            np.arange(count),
+            spectrum
+        ).astype(np.float32)
+        interp_spec = np.maximum(0.04, interp_spec)
+
+        # Match frontend: waveAnim += 0.02 per frame => at 60fps that's 1.2/sec
+        # Frontend phase: waveAnim * (layer + 1.2) where waveAnim = frame_idx * 0.02
+        # So we use: anim_time * fps * 0.02 * (layer + 1.2)
+        wave_anim = anim_time * self.fps * 0.02
+
+        # 1. Multi-Layer Fluid Wave Harmonic Layers (layer 2, 1, 0 from back to front)
+        overlay = self.wave_overlay
+        for layer in (2, 1, 0):
+            opacity = 0.25 + layer * 0.25  # Match frontend: 0.25 + layer * 0.25
+            amplitude = (self.height * 0.14) * (1.0 + layer * 0.45) * (0.8 + bass * 0.8)
+            y_offset = cy + (layer - 1) * 36
+
+            t = layer / 3.0
+            col_b = int(c_pri[2] * (1.0 - t) + c_sec[2] * t)
+            col_g = int(c_pri[1] * (1.0 - t) + c_sec[1] * t)
+            col_r = int(c_pri[0] * (1.0 - t) + c_sec[0] * t)
+            layer_bgr = (col_b, col_g, col_r)
+
+            # Match frontend exactly: Math.sin((i / count) * Math.PI * 4 + waveAnim * (layer + 1.2))
+            phase = (x_coords / self.width) * (math.pi * 4.0) + (wave_anim * (layer + 1.2))
+            wave_y = y_offset + np.sin(phase) * amplitude * interp_spec
+
+            pts_top = np.stack([x_coords, wave_y], axis=1)
+            pts_bottom = np.array([[self.width, self.height], [0, self.height]], dtype=np.float32)
+            poly_pts = np.vstack([pts_top, pts_bottom]).astype(np.int32)
+
+            # Match frontend: gradient fill from opacity*0.85 to opacity*0.25 to 0
+            overlay.fill(0)
+            cv2.fillPoly(overlay, [poly_pts], layer_bgr)
+            cv2.addWeighted(overlay, float(opacity * 0.40), frame, 1.0, 0, frame)
+
+            # Glowing crest stroke matching UI: strokeStyle with opacity + 0.35, lineWidth 2.5 - layer*0.4, shadowBlur
+            crest_pts = pts_top.astype(np.int32).reshape((-1, 1, 2))
+            stroke_thickness = max(1, int(2.5 - layer * 0.4))
+            # Outer glow (simulates shadowBlur)
+            glow_alpha = min(1.0, opacity + 0.35)
+            glow_col = (int(col_b * glow_alpha * 0.5), int(col_g * glow_alpha * 0.5), int(col_r * glow_alpha * 0.5))
+            cv2.polylines(frame, [crest_pts], isClosed=False, color=glow_col, thickness=stroke_thickness + 4, lineType=cv2.LINE_AA)
+            # Main stroke
+            stroke_col = (int(col_b * glow_alpha), int(col_g * glow_alpha), int(col_r * glow_alpha))
+            cv2.polylines(frame, [crest_pts], isClosed=False, color=stroke_col, thickness=stroke_thickness, lineType=cv2.LINE_AA)
+
+        # 2. Center Glowing Audio-Pulse Core Emblem
+        base_radius = int(min(self.width, self.height) * 0.085 + bass * 20)
+        dynamic_radius = max(24, base_radius)
+
+        # Dark emblem background circle
+        cv2.circle(frame, (cx, cy), dynamic_radius, (10, 14, 24), -1, lineType=cv2.LINE_AA)
+
+        # Draw Center Logo badge if available
+        if self.logo_circle is not None:
+            r_quantized = int(dynamic_radius // 2 * 2)
+            if r_quantized not in self._logo_cache:
+                lw, lh = self.logo_circle.shape[1], self.logo_circle.shape[0]
+                target_d = int(r_quantized * 2.0 * 0.92)
+                if target_d > 10:
+                    resized_logo = cv2.resize(self.logo_circle, (target_d, target_d), interpolation=cv2.INTER_LINEAR)
+                    alpha_m = (resized_logo[:, :, 3:4].astype(np.float32) / 255.0)
+                    inv_alpha_m = 1.0 - alpha_m
+                    premul_logo = (resized_logo[:, :, :3].astype(np.float32) * alpha_m)
+                    self._logo_cache[r_quantized] = (target_d, target_d, inv_alpha_m, premul_logo)
+                else:
+                    self._logo_cache[r_quantized] = None
+
+            cached_logo = self._logo_cache.get(r_quantized)
+            if cached_logo is not None:
+                scaled_w, scaled_h, inv_alpha_m, premul_logo = cached_logo
+                lx1 = cx - scaled_w // 2
+                ly1 = cy - scaled_h // 2
+                lx2 = lx1 + scaled_w
+                ly2 = ly1 + scaled_h
+                if lx1 >= 0 and ly1 >= 0 and lx2 <= self.width and ly2 <= self.height:
+                    frame[ly1:ly2, lx1:lx2] = (frame[ly1:ly2, lx1:lx2] * inv_alpha_m + premul_logo).astype(np.uint8)
+
+        # Pulsing glowing outline ring
+        ring_thickness = max(2, int(2.5 + bass * 2))
+        pri_bgr = (int(c_pri[2]), int(c_pri[1]), int(c_pri[0]))
+        cv2.circle(frame, (cx, cy), dynamic_radius, pri_bgr, ring_thickness, lineType=cv2.LINE_AA)
+        cv2.circle(frame, (cx, cy), dynamic_radius + 2, glow_bgr, 1, lineType=cv2.LINE_AA)
+
+    def render_horizon_wave(self, frame: np.ndarray, spectrum: np.ndarray, bass: float, onset: float, anim_time: float = 0.0):
+        """Aliases to render_ocean_wave for smooth organic multi-layer wave rendering."""
+        self.render_ocean_wave(frame, spectrum, bass, onset, anim_time=anim_time)
 
     def render_starfield(self, frame: np.ndarray, spectrum: np.ndarray, bass: float, onset: float):
         """3D starfield acceleration warp on bass hits."""
         self.render_neon_bars(frame, spectrum, bass, onset)
 
     def render_lyrics_and_ui(self, frame_bgr: np.ndarray, current_time: float):
-        """Renders kinetic karaoke typography overlay with small-box caching (400+ FPS)."""
+        """
+        Renders kinetic karaoke typography overlay matching frontend lyrics.js exactly.
+        Uses glassmorphism pill, correct word coloring, next-line preview, and matching positions.
+        """
         lyric_state = get_active_lyric_frame(current_time, self.lyrics_data)
         if not lyric_state:
             self._lyric_cache_key = None
@@ -694,9 +815,12 @@ class VideoRenderer:
 
         active_line = lyric_state["line"]
         active_word_idx = lyric_state["active_word_index"]
+        word_progress = lyric_state.get("word_progress", 0.0)
         alpha = lyric_state["alpha"]
+        next_line = lyric_state.get("next_line")
+        is_instrumental = active_line.get("is_instrumental", False) if active_line else False
         line_id = active_line.get("line_id", active_line.get("text", ""))
-        cache_key = (line_id, active_word_idx)
+        cache_key = (line_id, active_word_idx, round(word_progress, 2) if active_word_idx >= 0 else -1)
 
         # FAST-PATH: Blend only the small cached lyric box slice! (2ms instead of 75ms)
         if cache_key == self._lyric_cache_key and self._lyric_cache_data is not None:
@@ -705,7 +829,7 @@ class VideoRenderer:
             frame_bgr[by1:by2, bx1:bx2] = (frame_slice * inv_alpha + premul_fg).astype(np.uint8)
             return frame_bgr
 
-        # Cache miss: render only the lyric pill box
+        # Cache miss: render the lyric pill box matching frontend exactly
         words = active_line.get("words", [])
         raw_line_text = active_line.get("text", "")
         is_unspaced = any(0x1780 <= ord(c) <= 0x17FF or 0x4E00 <= ord(c) <= 0x9FFF or 0x3040 <= ord(c) <= 0x30FF or 0x0E00 <= ord(c) <= 0x0E7F for c in raw_line_text)
@@ -716,34 +840,52 @@ class VideoRenderer:
                 return str(w_obj.get("word", ""))
             return str(w_obj)
 
+        # Match frontend font size: h * 0.054 (frontend lyrics.js line 219)
         full_line_text = raw_line_text if raw_line_text else (w_space.join([_get_w_str(w) for w in words]) if words else "")
-        used_font = self._load_font(int(self.height * 0.045), bold=True, text=full_line_text)
+        font_size = int(self.height * 0.054)
+        used_font = self._load_font(font_size, bold=True, text=full_line_text)
 
         temp_img = Image.new("RGBA", (1, 1))
         draw_temp = ImageDraw.Draw(temp_img)
 
-        word_bboxes = [draw_temp.textbbox((0, 0), _get_w_str(w) + w_space, font=used_font) for w in words]
-        total_text_w = sum(b[2] - b[0] for b in word_bboxes) if word_bboxes else (draw_temp.textbbox((0, 0), full_line_text, font=used_font)[2] - draw_temp.textbbox((0, 0), full_line_text, font=used_font)[0])
-        max_text_h = max((b[3] - b[1] for b in word_bboxes), default=int(self.height * 0.045))
+        # Measure natural space width and scale to 85% to match frontend (lyrics.js line 238)
+        space_w = int((draw_temp.textbbox((0, 0), " ", font=used_font)[2] - draw_temp.textbbox((0, 0), " ", font=used_font)[0]) * 0.85) if not is_unspaced else 0
 
-        if total_text_w > self.width * 0.85:
-            scale = (self.width * 0.85) / max(1, total_text_w)
-            new_size = max(18, int(self.height * 0.045 * scale))
-            used_font = self._load_font(new_size, bold=True, text=full_line_text)
-            word_bboxes = [draw_temp.textbbox((0, 0), _get_w_str(w) + w_space, font=used_font) for w in words]
-            total_text_w = sum(b[2] - b[0] for b in word_bboxes) if word_bboxes else (draw_temp.textbbox((0, 0), full_line_text, font=used_font)[2] - draw_temp.textbbox((0, 0), full_line_text, font=used_font)[0])
-            max_text_h = max((b[3] - b[1] for b in word_bboxes), default=new_size)
+        word_bboxes = []
+        for w in words:
+            w_str = _get_w_str(w)
+            bbox = draw_temp.textbbox((0, 0), w_str, font=used_font)
+            word_bboxes.append((bbox[0], bbox[1], bbox[2], bbox[3], w_str))
+        
+        total_text_w = sum((b[2] - b[0]) for b in word_bboxes) + space_w * max(0, len(words) - 1) if word_bboxes else (draw_temp.textbbox((0, 0), full_line_text, font=used_font)[2] - draw_temp.textbbox((0, 0), full_line_text, font=used_font)[0])
+        max_text_h = max((b[3] - b[1] for b in word_bboxes), default=font_size)
 
-        pad_x = 24
-        pad_y = 12
+        # Auto-scale if text exceeds 86% of screen width (matching frontend line 251)
+        if total_text_w > self.width * 0.86:
+            scale = (self.width * 0.86) / max(1, total_text_w)
+            font_size = max(15, int(font_size * scale))
+            used_font = self._load_font(font_size, bold=True, text=full_line_text)
+            space_w = int((draw_temp.textbbox((0, 0), " ", font=used_font)[2] - draw_temp.textbbox((0, 0), " ", font=used_font)[0]) * 0.85) if not is_unspaced else 0
+            word_bboxes = []
+            for w in words:
+                w_str = _get_w_str(w)
+                bbox = draw_temp.textbbox((0, 0), w_str, font=used_font)
+                word_bboxes.append((bbox[0], bbox[1], bbox[2], bbox[3], w_str))
+            total_text_w = sum((b[2] - b[0]) for b in word_bboxes) + space_w * max(0, len(words) - 1) if word_bboxes else (draw_temp.textbbox((0, 0), full_line_text, font=used_font)[2] - draw_temp.textbbox((0, 0), full_line_text, font=used_font)[0])
+            max_text_h = max((b[3] - b[1] for b in word_bboxes), default=font_size)
+
+        # Match frontend padding: paddingX = fontSize * 0.80, paddingY = fontSize * 0.72
+        pad_x = int(font_size * 0.80)
+        pad_y = int(font_size * 0.72)
         box_w = total_text_w + 2 * pad_x
         box_h = max_text_h + 2 * pad_y
 
-        lyric_y = int(self.height * 0.82)
+        # Match frontend Y position: textY = h * 0.85 (frontend lyrics.js line 230)
+        lyric_y = int(self.height * 0.85)
         if self.theme in ("neon_bars", "spectrum"):
             lyric_y = int(self.height * 0.28)
 
-        start_x = max(20, (self.width - total_text_w) // 2)
+        start_x = max(24, (self.width - total_text_w) // 2)
         bx1 = start_x - pad_x
         by1 = lyric_y - pad_y
         bx2 = bx1 + box_w
@@ -757,30 +899,142 @@ class VideoRenderer:
         actual_w = bx2 - bx1
         actual_h = by2 - by1
 
-        # Create small PIL image just for this box
+        # Create small PIL image for this box
         pill_img = Image.new("RGBA", (actual_w, actual_h), (0, 0, 0, 0))
         draw_pill = ImageDraw.Draw(pill_img)
 
-        # Draw rounded pill background
-        draw_pill.rounded_rectangle([0, 0, actual_w, actual_h], radius=16, fill=(10, 10, 16, int(190 * alpha)))
+        c_p = self.palette["primary"]
+        hl_col = self.palette["text_highlight"]
+        corner_radius = pad_y
 
-        # Draw words inside pill
+        # Main pill background (vertical linear gradient)
+        # Gradient fill: rgba(15, 23, 42, 0.86) -> rgba(5, 8, 16, 0.94)
+        bg_layer = Image.new("RGBA", (actual_w, actual_h), (0, 0, 0, 0))
+        bg_draw = ImageDraw.Draw(bg_layer)
+        for y in range(actual_h):
+            t = y / max(1, actual_h - 1)
+            r = int(15 * (1 - t) + 5 * t)
+            g = int(23 * (1 - t) + 8 * t)
+            b = int(42 * (1 - t) + 16 * t)
+            a = int((219 * (1 - t) + 240 * t) * alpha)
+            bg_draw.line([(0, y), (actual_w, y)], fill=(r, g, b, a))
+
+        # Mask it with rounded rectangle
+        mask_layer = Image.new("L", (actual_w, actual_h), 0)
+        mask_draw = ImageDraw.Draw(mask_layer)
+        mask_draw.rounded_rectangle([0, 0, actual_w - 1, actual_h - 1], radius=corner_radius, fill=255)
+        pill_img.paste(bg_layer, (0, 0), mask_layer)
+
+        # Draw Outline
+        draw_pill.rounded_rectangle(
+            [0, 0, actual_w - 1, actual_h - 1],
+            radius=corner_radius,
+            fill=None,
+            outline=(c_p[0], c_p[1], c_p[2], int(107 * alpha)),
+            width=1
+        )
+
+        # Specular top highlight sheen (lyrics.js lines 292-295)
+        sheen_h = max(1, int(pad_y * 0.65))
+        draw_pill.rounded_rectangle(
+            [2, 1, actual_w - 3, 1 + sheen_h],
+            radius=max(1, corner_radius - 1),
+            fill=(255, 255, 255, int(20 * alpha)),
+        )
+
+        # --- Next line preview above the pill (lyrics.js lines 306-317) ---
+        if next_line and not is_instrumental:
+            next_text = next_line.get("text", "") if isinstance(next_line, dict) else ""
+            if next_text and active_line:
+                line_end = active_line.get("end", 0)
+                next_start = next_line.get("start", 0) if isinstance(next_line, dict) else 0
+                if next_start - line_end <= 6.0:
+                    next_font_size = max(12, int(font_size * 0.58))
+                    next_font = self._load_font(next_font_size, bold=False, text=next_text)
+                    next_bbox = draw_temp.textbbox((0, 0), next_text, font=next_font)
+                    next_tw = next_bbox[2] - next_bbox[0]
+                    next_th = next_bbox[3] - next_bbox[1]
+                    # Position above the pill (centered)
+                    next_x = (self.width - next_tw) // 2
+                    next_y = by1 - int(next_font_size * 1.1)
+                    if next_y > 10:
+                        # Efficient small-region rendering (not full-frame overlay)
+                        nx1 = max(0, next_x - 4)
+                        ny1 = max(0, next_y - 4)
+                        nx2 = min(self.width, next_x + next_tw + 6)
+                        ny2 = min(self.height, next_y + next_th + 6)
+                        nw = nx2 - nx1
+                        nh = ny2 - ny1
+                        if nw > 0 and nh > 0:
+                            next_pill = Image.new("RGBA", (nw, nh), (0, 0, 0, 0))
+                            next_draw = ImageDraw.Draw(next_pill)
+                            local_x = next_x - nx1
+                            local_y = next_y - ny1
+                            # Shadow
+                            next_draw.text((local_x + 1, local_y + 1), next_text, font=next_font, fill=(0, 0, 0, 200))
+                            # Text at 42% opacity matching frontend
+                            next_draw.text((local_x, local_y), next_text, font=next_font, fill=(255, 255, 255, int(107 * alpha)))
+                            next_np = cv2.cvtColor(np.array(next_pill), cv2.COLOR_RGBA2BGRA)
+                            next_a = next_np[:, :, 3:4].astype(np.float32) / 255.0
+                            next_inv = 1.0 - next_a
+                            next_fg = next_np[:, :, :3].astype(np.float32) * next_a
+                            frame_bgr[ny1:ny2, nx1:nx2] = (frame_bgr[ny1:ny2, nx1:nx2] * next_inv + next_fg).astype(np.uint8)
+
+        # Draw words inside pill matching frontend coloring exactly (lyrics.js lines 320-397)
         cur_x = pad_x
         text_draw_y = pad_y
-        for w_idx, w in enumerate(words):
-            w_text = _get_w_str(w) + w_space
-            w_w = word_bboxes[w_idx][2] - word_bboxes[w_idx][0] if w_idx < len(word_bboxes) else (draw_pill.textbbox((0, 0), w_text, font=used_font)[2] - draw_pill.textbbox((0, 0), w_text, font=used_font)[0])
+        glow_layer = Image.new("RGBA", (actual_w, actual_h), (0, 0, 0, 0))
+        glow_draw = ImageDraw.Draw(glow_layer)
+
+        for w_idx, (b0, b1, b2, b3, w_str) in enumerate(word_bboxes):
+            w_w = b2 - b0
+            w_text = w_str
 
             if w_idx == active_word_idx:
-                hl_col = self.palette["text_highlight"]
-                draw_pill.text((cur_x + 1, text_draw_y + 1), w_text, font=used_font, fill=(0, 0, 0, 255))
-                draw_pill.text((cur_x, text_draw_y), w_text, font=used_font, fill=(hl_col[0], hl_col[1], hl_col[2], 255))
+                # Current word: Draw base muted text first, then sweep highlight overlay
+                # Base muted word (white 0.85 alpha)
+                draw_pill.text((cur_x, text_draw_y), w_text, font=used_font, fill=(255, 255, 255, int(216 * alpha)))
+                # Sweep highlight: fill only the portion of the word that has been sung
+                sweep_w = max(1, int(w_w * word_progress))
+                # Create a clipped highlight overlay for the sweep effect
+                sweep_img = Image.new("RGBA", (sweep_w, actual_h), (0, 0, 0, 0))
+                sweep_draw = ImageDraw.Draw(sweep_img)
+                # Draw on sweep overlay and glow overlay
+                sweep_draw.text((0, text_draw_y), w_text, font=used_font, fill=(hl_col[0], hl_col[1], hl_col[2], 255))
+                glow_draw.text((cur_x, text_draw_y), w_text, font=used_font, fill=(hl_col[0], hl_col[1], hl_col[2], 255))
+                
+                # We need to mask the glow for the swept part too, but let's approximate by glowing the whole word 
+                # slightly and fully pasting the sharp swept text
+                pill_img.paste(sweep_img, (cur_x, 0), sweep_img)
             elif w_idx < active_word_idx:
-                draw_pill.text((cur_x, text_draw_y), w_text, font=used_font, fill=(255, 255, 255, 255))
+                # Past words: use highlight color (matching frontend: ctx.fillStyle = pal.highlight)
+                draw_pill.text((cur_x, text_draw_y), w_text, font=used_font, fill=(hl_col[0], hl_col[1], hl_col[2], 255))
+                glow_draw.text((cur_x, text_draw_y), w_text, font=used_font, fill=(hl_col[0], hl_col[1], hl_col[2], 255))
             else:
-                draw_pill.text((cur_x, text_draw_y), w_text, font=used_font, fill=(180, 185, 200, 255))
+                # Future words: white with 0.85 alpha (matching frontend: rgba(255, 255, 255, 0.85))
+                draw_pill.text((cur_x, text_draw_y), w_text, font=used_font, fill=(255, 255, 255, int(216 * alpha)))
 
-            cur_x += w_w
+            cur_x += w_w + space_w
+
+        # Apply glow layer if there are past/current words
+        if active_word_idx >= 0:
+            blurred_glow = glow_layer.filter(ImageFilter.GaussianBlur(radius=6))
+            # Paste glow behind the text
+            pill_img.alpha_composite(blurred_glow)
+            # Re-draw the sharp highlighted text on top to prevent wash-out
+            cur_x = pad_x
+            for w_idx, (b0, b1, b2, b3, w_str) in enumerate(word_bboxes):
+                w_w = b2 - b0
+                w_text = w_str
+                if w_idx == active_word_idx:
+                    sweep_w = max(1, int(w_w * word_progress))
+                    sweep_img = Image.new("RGBA", (sweep_w, actual_h), (0, 0, 0, 0))
+                    sweep_draw = ImageDraw.Draw(sweep_img)
+                    sweep_draw.text((0, text_draw_y), w_text, font=used_font, fill=(hl_col[0], hl_col[1], hl_col[2], 255))
+                    pill_img.paste(sweep_img, (cur_x, 0), sweep_img)
+                elif w_idx < active_word_idx:
+                    draw_pill.text((cur_x, text_draw_y), w_text, font=used_font, fill=(hl_col[0], hl_col[1], hl_col[2], 255))
+                cur_x += w_w + space_w
 
         # Convert to numpy BGRA and pre-compute alpha masks
         pill_np = cv2.cvtColor(np.array(pill_img), cv2.COLOR_RGBA2BGRA)
@@ -831,15 +1085,17 @@ class VideoRenderer:
         # Auto-detect NVIDIA GPU for hardware-accelerated encoding (YouTube standard 60fps)
         use_nvenc = self._detect_nvenc()
         if use_nvenc:
-            print("[VIDA Renderer] ⚡ NVIDIA GPU detected — using h264_nvenc hardware encoder")
+            print("[VIDA Renderer] ⚡ NVIDIA GPU detected — using h264_nvenc hardware encoder (MAX SPEED PRESET)")
             video_codec_args = [
                 "-c:v", "h264_nvenc",
-                "-preset", "p4",         # NVENC quality/speed preset (p1=fastest, p7=best quality)
-                "-rc", "vbr",            # Variable bitrate for YouTube quality
-                "-cq", "18",             # Constant quality target (lower = better, 18 is visually lossless)
-                "-b:v", "15M",           # Target bitrate: 15 Mbps (YouTube 1080p60 recommended)
-                "-maxrate", "20M",       # Max bitrate cap
-                "-bufsize", "30M",       # VBV buffer
+                "-preset", "p1",         # MAXIMUM SPEED PRESET for NVENC
+                "-tune", "ull",          # Ultra-low latency tuning for speed
+                "-rc", "vbr",
+                "-cq", "20",             # Slightly lower constant quality (20 instead of 18) for speed
+                "-b:v", "20M",           # Target bitrate (higher for 2K)
+                "-maxrate", "30M",
+                "-bufsize", "40M",
+                "-multipass", "0",       # Disable multipass for maximum speed
             ]
         else:
             print("[VIDA Renderer] 🖥️ No NVIDIA GPU — using libx264 CPU encoder")
@@ -852,12 +1108,14 @@ class VideoRenderer:
         cmd = [
             ffmpeg_exe,
             "-y",
+            "-thread_queue_size", "16",
             "-f", "rawvideo",
             "-vcodec", "rawvideo",
             "-s", f"{self.width}x{self.height}",
-            "-pix_fmt", "bgr24",
+            "-pix_fmt", "yuv420p",
             "-r", str(self.fps),
             "-i", "-",
+            "-thread_queue_size", "64",
             "-i", self.audio_path,
             *video_codec_args,
             "-pix_fmt", "yuv420p",
@@ -902,8 +1160,8 @@ class VideoRenderer:
                 else:
                     frame = self.bg_frame.copy()
 
-                if gpu_renderer:
-                    # ── GPU ACCELERATED RENDERING ──
+                if gpu_renderer and self.theme not in ("horizon_wave", "ocean_wave"):
+                    # ── GPU ACCELERATED RENDERING (trap_circle / neon_bars) ──
                     frame_bgr = gpu_renderer.render_frame(
                         bg_frame_bgr=frame,
                         spectrum=spec,
@@ -919,21 +1177,43 @@ class VideoRenderer:
                     c_pri = self.palette["primary"]
                     self.particles.update_and_draw(frame_bgr, bass, onset, c_pri)
 
+                    _adv = self._adv_themes
+                    _lc = self.logo_circle
+                    _lcache = self._logo_cache
                     if self.theme == "trap_circle":
                         self.render_trap_circle(frame_bgr, spec, bass, onset)
                     elif self.theme in ("neon_bars", "spectrum"):
                         self.render_neon_bars(frame_bgr, spec, bass, onset)
                     elif self.theme in ("horizon_wave", "ocean_wave"):
-                        self.render_horizon_wave(frame_bgr, spec, bass, onset)
+                        self.render_ocean_wave(frame_bgr, spec, bass, onset, anim_time=t_current)
+                    elif self.theme == "quantum_vortex":
+                        _adv.render_quantum_vortex(frame_bgr, spec, bass, onset, t_current, self.palette, _lc, _lcache)
+                    elif self.theme == "neural_synapse":
+                        _adv.render_neural_synapse(frame_bgr, spec, bass, onset, t_current, self.palette, _lc, _lcache)
+                    elif self.theme == "hyper_liquid":
+                        _adv.render_hyper_liquid(frame_bgr, spec, bass, onset, t_current, self.palette, _lc, _lcache)
+                    elif self.theme == "angkor_mandala":
+                        _adv.render_angkor_mandala(frame_bgr, spec, bass, onset, t_current, self.palette, _lc, _lcache)
+                    elif self.theme == "hologram_hud":
+                        _adv.render_hologram_hud(frame_bgr, spec, bass, onset, t_current, self.palette, _lc, _lcache)
+                    elif self.theme == "aurora_borealis":
+                        _adv.render_aurora_borealis(frame_bgr, spec, bass, onset, t_current, self.palette, _lc, _lcache)
+                    elif self.theme == "dna_helix":
+                        _adv.render_dna_helix(frame_bgr, spec, bass, onset, t_current, self.palette, _lc, _lcache)
+                    elif self.theme == "sonic_nebula":
+                        _adv.render_sonic_nebula(frame_bgr, spec, bass, onset, t_current, self.palette, _lc, _lcache)
                     else:
                         self.render_trap_circle(frame_bgr, spec, bass, onset)
 
                 # 4. Kinetic karaoke lyrics & metadata overlay (cached on CPU)
                 frame_bgr = self.render_lyrics_and_ui(frame_bgr, t_current)
 
+                # Convert to native YUV420 planar buffer: 50% less RAM/pipe I/O and zero FFmpeg swscale filter memory leaks
+                frame_yuv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2YUV_I420)
+
                 # 5. Write raw bytes to FFmpeg stdin (zero-copy memoryview)
                 try:
-                    proc.stdin.write(memoryview(frame_bgr))
+                    proc.stdin.write(memoryview(frame_yuv))
                 except BrokenPipeError:
                     break
 
