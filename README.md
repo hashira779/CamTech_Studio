@@ -3,7 +3,7 @@
 
 > **DROP A SONG OR YOUTUBE LINK → AI AUTOMATICALLY CREATES A COMPLETE, POLISHED LYRIC MUSIC VIDEO.**
 
-**VIDA — Visual Intelligent Dynamic Audio-Video Studio** is a professional Windows desktop application engineered with high-performance **Python 3.12 + FastAPI + Web Audio 60 FPS Canvas Engine + FFmpeg + yt-dlp**. Designed around the philosophy of **AUTO PERFECT**, it delivers an end-to-end automated pipeline requiring zero manual editing from the user, while preserving deep visual, audio, and kinetic typography customization.
+**VIDA — Visual Intelligent Dynamic Audio-Video Studio** is a 5-star professional desktop application engineered with **WinUI 3 (Windows App SDK) + C# / .NET 10 for Modern Windows 11**, paired with high-performance **Python 3.12 AI microservices + FastAPI + 60 FPS Web Audio/Canvas Engine + FFmpeg + Demucs + Khmer ASR**. Designed around the philosophy of **AUTO PERFECT**, it delivers an end-to-end automated pipeline requiring zero manual editing from the user, while preserving deep visual, audio, and kinetic typography customization.
 
 ---
 

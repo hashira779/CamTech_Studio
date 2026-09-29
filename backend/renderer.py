@@ -16,6 +16,12 @@ import cv2
 from backend.audio_analyzer import get_ffmpeg_exe, AudioAnalyzer
 from backend.lyric_engine import get_active_lyric_frame
 
+try:
+    from backend.gpu_renderer import is_cuda_available, CUDAVideoRenderer
+except ImportError:
+    def is_cuda_available(): return False
+    CUDAVideoRenderer = None
+
 # Color Palettes
 PALETTES = {
     "cyberpunk": {
@@ -169,7 +175,7 @@ class ParticleSystem:
         self.base_alpha = np.random.uniform(0.3, 0.8, count).astype(np.float32)
 
     def update_and_draw(self, frame_bgr: np.ndarray, bass_val: float, onset_val: float, color: tuple):
-        """Updates particle positions with bass velocity boost and renders directly onto frame."""
+        """Updates particle positions with bass velocity boost and renders directly onto frame (batch optimized)."""
         boost = 1.0 + bass_val * 2.5 + onset_val * 1.5
         self.x += self.vx * boost
         self.y += self.vy * boost
@@ -182,14 +188,16 @@ class ParticleSystem:
 
         b_col, g_col, r_col = color[2], color[1], color[0]
 
-        # Draw particles
+        # Vectorized particle drawing: pre-compute all radii, positions, and colors at once
+        cur_radii = (self.radius * (1.0 + bass_val * 0.8)).astype(np.int32)
+        px_arr = self.x.astype(np.int32)
+        py_arr = self.y.astype(np.int32)
+        alphas = np.clip(self.base_alpha + bass_val * 0.4, 0.0, 1.0)
+
+        # Batch draw all particles (still uses cv2.circle but with pre-computed values, no per-iteration Python math)
         for i in range(self.count):
-            cur_r = int(self.radius[i] * (1.0 + bass_val * 0.8))
-            px = int(self.x[i])
-            py = int(self.y[i])
-            alpha = min(1.0, self.base_alpha[i] + bass_val * 0.4)
-            p_color = (int(b_col * alpha), int(g_col * alpha), int(r_col * alpha))
-            cv2.circle(frame_bgr, (px, py), cur_r, p_color, -1, lineType=cv2.LINE_AA)
+            p_color = (int(b_col * alphas[i]), int(g_col * alphas[i]), int(r_col * alphas[i]))
+            cv2.circle(frame_bgr, (px_arr[i], py_arr[i]), cur_radii[i], p_color, -1, lineType=cv2.LINE_AA)
 
 
 class VideoRenderer:
@@ -242,6 +250,10 @@ class VideoRenderer:
 
         self.particles = ParticleSystem(80, width, height)
         self.peak_caps = np.zeros(bar_count, dtype=np.float32)
+
+        # Lyric text rendering cache: avoids re-rendering identical text frames
+        self._lyric_cache_key = None
+        self._lyric_cache_overlay = None
         self.peak_decay = 0.015
 
         self.bg_video_cap = None
@@ -351,8 +363,8 @@ class VideoRenderer:
                     continue
         return ImageFont.load_default()
 
-    def _process_bg_frame(self, img: np.ndarray) -> np.ndarray:
-        """Resizes, crops, and darkens a background frame."""
+    def _process_bg_frame(self, img: np.ndarray, apply_blur: bool = True) -> np.ndarray:
+        """Resizes, crops, and darkens a background frame. Blur can be skipped for video bg frames after the first."""
         h, w = img.shape[:2]
         target_ratio = self.width / self.height
         current_ratio = w / h
@@ -367,8 +379,9 @@ class VideoRenderer:
             cropped = img[start_y:start_y + new_h, :]
 
         resized = cv2.resize(cropped, (self.width, self.height), interpolation=cv2.INTER_AREA)
-        blurred = cv2.GaussianBlur(resized, (21, 21), 0)
-        darkened = (blurred.astype(np.float32) * 0.42).astype(np.uint8)
+        if apply_blur:
+            resized = cv2.GaussianBlur(resized, (15, 15), 0)  # Reduced kernel from 21 to 15 for speed
+        darkened = (resized.astype(np.float32) * 0.42).astype(np.uint8)
         
         if self.vignette_mask is None:
             Y, X = np.ogrid[:self.height, :self.width]
@@ -624,10 +637,27 @@ class VideoRenderer:
         self.render_neon_bars(frame, spectrum, bass, onset)
 
     def render_lyrics_and_ui(self, frame_bgr: np.ndarray, current_time: float):
-        """Renders kinetic karaoke typography and song info overlay."""
-        # Convert BGR to RGB PIL image for antialiased text rendering
-        pil_frame = Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
-        draw = ImageDraw.Draw(pil_frame)
+        """Renders kinetic karaoke typography and song info overlay with frame caching."""
+        # Build cache key from the lyric state that changes appearance
+        lyric_state = get_active_lyric_frame(current_time, self.lyrics_data)
+        if lyric_state:
+            line_id = lyric_state["line"].get("line_id", lyric_state["line"].get("text", ""))
+            cache_key = (line_id, lyric_state["active_word_index"])
+        else:
+            cache_key = ("__no_lyrics__", -1)
+
+        # If lyric state hasn't changed, reuse cached overlay (HUGE speedup: skip PIL entirely)
+        if cache_key == self._lyric_cache_key and self._lyric_cache_overlay is not None:
+            # Alpha-blend cached overlay onto frame
+            mask = self._lyric_cache_overlay[:, :, 3:4].astype(np.float32) / 255.0
+            overlay_bgr = self._lyric_cache_overlay[:, :, :3]
+            frame_bgr[:] = (frame_bgr * (1.0 - mask) + overlay_bgr * mask).astype(np.uint8)
+            return frame_bgr
+
+        # Cache miss: render full overlay via PIL
+        # Create transparent RGBA overlay (only text, no background frame copy)
+        overlay = Image.new("RGBA", (self.width, self.height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
 
         # 1. Header Metadata (Song title & artist)
         margin_x = int(self.width * 0.05)
@@ -635,19 +665,18 @@ class VideoRenderer:
 
         # Title shadow + text
         draw.text((margin_x + 2, margin_y + 2), self.song_title, font=self.font_title, fill=(0, 0, 0, 180))
-        draw.text((margin_x, margin_y), self.song_title, font=self.font_title, fill=(255, 255, 255))
+        draw.text((margin_x, margin_y), self.song_title, font=self.font_title, fill=(255, 255, 255, 255))
 
         artist_y = margin_y + int(self.height * 0.045 * self.title_scale)
         c_pri = self.palette["primary"]
-        draw.text((margin_x, artist_y), self.artist_name, font=self.font_artist, fill=(c_pri[0], c_pri[1], c_pri[2]))
+        draw.text((margin_x, artist_y), self.artist_name, font=self.font_artist, fill=(c_pri[0], c_pri[1], c_pri[2], 255))
 
         # Watermark
         wm_text = "VIDA AUDIO STUDIO"
         wm_x = self.width - int(self.width * 0.18)
-        draw.text((wm_x, margin_y), wm_text, font=self.font_artist, fill=(160, 160, 180))
+        draw.text((wm_x, margin_y), wm_text, font=self.font_artist, fill=(160, 160, 180, 255))
 
         # 2. Active Lyrics Rendering
-        lyric_state = get_active_lyric_frame(current_time, self.lyrics_data)
         if lyric_state:
             active_line = lyric_state["line"]
             active_word_idx = lyric_state["active_word_index"]
@@ -709,23 +738,46 @@ class VideoRenderer:
                 if w_idx == active_word_idx:
                     # Current active karaoke word: glowing accent color
                     hl_col = self.palette["text_highlight"]
-                    draw.text((cur_x + 1, lyric_y + 1), w_text, font=used_font, fill=(0, 0, 0))
-                    draw.text((cur_x, lyric_y), w_text, font=used_font, fill=hl_col)
+                    draw.text((cur_x + 1, lyric_y + 1), w_text, font=used_font, fill=(0, 0, 0, 255))
+                    draw.text((cur_x, lyric_y), w_text, font=used_font, fill=(hl_col[0], hl_col[1], hl_col[2], 255))
                 elif w_idx < active_word_idx:
                     # Already sung word: full white
-                    draw.text((cur_x, lyric_y), w_text, font=used_font, fill=(255, 255, 255))
+                    draw.text((cur_x, lyric_y), w_text, font=used_font, fill=(255, 255, 255, 255))
                 else:
                     # Upcoming word: subtle muted grey
-                    draw.text((cur_x, lyric_y), w_text, font=used_font, fill=(180, 185, 200))
+                    draw.text((cur_x, lyric_y), w_text, font=used_font, fill=(180, 185, 200, 255))
 
                 cur_x += w_w
 
-        # Convert back to OpenCV BGR
-        return cv2.cvtColor(np.array(pil_frame), cv2.COLOR_RGB2BGR)
+        # Convert overlay to BGRA numpy and cache it
+        overlay_np = cv2.cvtColor(np.array(overlay), cv2.COLOR_RGBA2BGRA)
+        self._lyric_cache_key = cache_key
+        self._lyric_cache_overlay = overlay_np
+
+        # Alpha-blend overlay onto frame
+        mask = overlay_np[:, :, 3:4].astype(np.float32) / 255.0
+        overlay_bgr = overlay_np[:, :, :3]
+        frame_bgr[:] = (frame_bgr * (1.0 - mask) + overlay_bgr * mask).astype(np.uint8)
+        return frame_bgr
+
+    @staticmethod
+    def _detect_nvenc() -> bool:
+        """Checks if NVIDIA h264_nvenc encoder is available via FFmpeg."""
+        try:
+            ffmpeg_exe = get_ffmpeg_exe()
+            result = subprocess.run(
+                [ffmpeg_exe, "-hide_banner", "-encoders"],
+                capture_output=True, text=True, timeout=5
+            )
+            return "h264_nvenc" in result.stdout
+        except Exception:
+            return False
 
     def render_video(self, progress_callback=None) -> str:
         """
         Executes complete video render, piping frames into FFmpeg process.
+        Auto-detects NVIDIA GPU and uses h264_nvenc for YouTube-standard 60fps hardware-accelerated encoding.
+        Falls back to libx264 CPU encoding if GPU unavailable.
         """
         print(f"Starting audio analysis for: {self.audio_path}")
         analyzer = AudioAnalyzer(self.audio_path, fps=self.fps, num_bars=self.bar_count)
@@ -739,6 +791,28 @@ class VideoRenderer:
         os.makedirs(os.path.dirname(os.path.abspath(self.output_path)), exist_ok=True)
 
         ffmpeg_exe = get_ffmpeg_exe()
+
+        # Auto-detect NVIDIA GPU for hardware-accelerated encoding (YouTube standard 60fps)
+        use_nvenc = self._detect_nvenc()
+        if use_nvenc:
+            print("[VIDA Renderer] ⚡ NVIDIA GPU detected — using h264_nvenc hardware encoder")
+            video_codec_args = [
+                "-c:v", "h264_nvenc",
+                "-preset", "p4",         # NVENC quality/speed preset (p1=fastest, p7=best quality)
+                "-rc", "vbr",            # Variable bitrate for YouTube quality
+                "-cq", "18",             # Constant quality target (lower = better, 18 is visually lossless)
+                "-b:v", "15M",           # Target bitrate: 15 Mbps (YouTube 1080p60 recommended)
+                "-maxrate", "20M",       # Max bitrate cap
+                "-bufsize", "30M",       # VBV buffer
+            ]
+        else:
+            print("[VIDA Renderer] 🖥️ No NVIDIA GPU — using libx264 CPU encoder")
+            video_codec_args = [
+                "-c:v", "libx264",
+                "-preset", "faster",
+                "-crf", "18",
+            ]
+
         cmd = [
             ffmpeg_exe,
             "-y",
@@ -749,9 +823,7 @@ class VideoRenderer:
             "-r", str(self.fps),
             "-i", "-",
             "-i", self.audio_path,
-            "-c:v", "libx264",
-            "-preset", "faster",
-            "-crf", "18",
+            *video_codec_args,
             "-pix_fmt", "yuv420p",
             "-c:a", "aac",
             "-b:a", "320k",
@@ -763,6 +835,15 @@ class VideoRenderer:
         log_path = self.output_path + ".ffmpeg.log"
         with open(log_path, "w", encoding="utf-8", errors="ignore") as log_file:
             proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=log_file)
+
+            # Pre-initialize GPU renderer if available
+            gpu_renderer = None
+            if is_cuda_available() and CUDAVideoRenderer is not None:
+                try:
+                    gpu_renderer = CUDAVideoRenderer(self.width, self.height)
+                except Exception as e:
+                    print(f"[VIDA Renderer] Failed to init GPU renderer: {e}. Falling back to CPU.")
+                    gpu_renderer = None
 
             t_start = time.time()
 
@@ -779,32 +860,44 @@ class VideoRenderer:
                         self.bg_video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                         ret, v_frame = self.bg_video_cap.read()
                     if ret and v_frame is not None:
-                        frame = self._process_bg_frame(v_frame)
+                        frame = self._process_bg_frame(v_frame, apply_blur=(f_idx == 0))
                     else:
                         frame = self.bg_frame.copy()
                 else:
                     frame = self.bg_frame.copy()
 
-                # 2. Audio-reactive particle dust
-                c_pri = self.palette["primary"]
-                self.particles.update_and_draw(frame, bass, onset, c_pri)
-
-                # 3. Spectrum visualizer layer
-                if self.theme == "trap_circle":
-                    self.render_trap_circle(frame, spec, bass, onset)
-                elif self.theme in ("neon_bars", "spectrum"):
-                    self.render_neon_bars(frame, spec, bass, onset)
-                elif self.theme in ("horizon_wave", "ocean_wave"):
-                    self.render_horizon_wave(frame, spec, bass, onset)
+                if gpu_renderer:
+                    # ── GPU ACCELERATED RENDERING ──
+                    frame_bgr = gpu_renderer.render_frame(
+                        bg_frame_bgr=frame,
+                        spectrum=spec,
+                        bass=bass,
+                        onset=onset,
+                        palette=self.palette,
+                        theme=self.theme,
+                        peak_caps=self.peak_caps
+                    )
                 else:
-                    self.render_trap_circle(frame, spec, bass, onset)
+                    # ── CPU FALLBACK RENDERING ──
+                    frame_bgr = frame
+                    c_pri = self.palette["primary"]
+                    self.particles.update_and_draw(frame_bgr, bass, onset, c_pri)
 
-                # 4. Kinetic karaoke lyrics & metadata overlay
-                frame = self.render_lyrics_and_ui(frame, t_current)
+                    if self.theme == "trap_circle":
+                        self.render_trap_circle(frame_bgr, spec, bass, onset)
+                    elif self.theme in ("neon_bars", "spectrum"):
+                        self.render_neon_bars(frame_bgr, spec, bass, onset)
+                    elif self.theme in ("horizon_wave", "ocean_wave"):
+                        self.render_horizon_wave(frame_bgr, spec, bass, onset)
+                    else:
+                        self.render_trap_circle(frame_bgr, spec, bass, onset)
+
+                # 4. Kinetic karaoke lyrics & metadata overlay (cached on CPU)
+                frame_bgr = self.render_lyrics_and_ui(frame_bgr, t_current)
 
                 # 5. Write raw bytes to FFmpeg stdin
                 try:
-                    proc.stdin.write(frame.tobytes())
+                    proc.stdin.write(frame_bgr.tobytes())
                 except BrokenPipeError:
                     break
 
@@ -826,6 +919,8 @@ class VideoRenderer:
             proc.wait()
             if self.bg_video_cap is not None:
                 self.bg_video_cap.release()
+            if gpu_renderer is not None:
+                gpu_renderer.release()
 
         if proc.returncode != 0:
             err_text = ""

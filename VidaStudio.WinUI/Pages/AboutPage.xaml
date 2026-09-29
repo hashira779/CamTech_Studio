@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Page
+    x:Class="VidaStudio.Pages.AboutPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <ScrollViewer Padding="24,16,24,32">
+        <StackPanel Spacing="24" MaxWidth="800" HorizontalAlignment="Stretch">
+            <!-- App Hero Card -->
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="28">
+                <StackPanel Spacing="16">
+                    <StackPanel Orientation="Horizontal" Spacing="16">
+                        <Border Width="56" Height="56" CornerRadius="12" Background="#1E1B4B">
+                            <FontIcon Glyph="&#xE714;" FontSize="28" Foreground="#818CF8" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel VerticalAlignment="Center" Spacing="2">
+                            <TextBlock Text="VIDA Studio" FontSize="24" FontWeight="Bold" />
+                            <TextBlock Text="Visual Intelligent Dynamic Audio-Video Studio" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <TextBlock Text="Engineered with modern WinUI 3 (Windows App SDK) + C#/.NET 10 on Windows 11, paired with high-performance Python 3.12 AI microservices, Demucs vocal stem isolation, Khmer ASR neural transcription, and hardware-accelerated 60 FPS FFmpeg video rendering."
+                               FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+
+                    <!-- Badges -->
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Border Background="{ThemeResource SubtleFillColorSecondaryBrush}" CornerRadius="6" Padding="10,4">
+                            <TextBlock Text="WinUI 3 Modern Windows 11" FontSize="11" FontWeight="SemiBold" />
+                        </Border>
+                        <Border Background="{ThemeResource SubtleFillColorSecondaryBrush}" CornerRadius="6" Padding="10,4">
+                            <TextBlock Text="C# / .NET 10.0" FontSize="11" FontWeight="SemiBold" Foreground="#10B981" />
+                        </Border>
+                        <Border Background="{ThemeResource SubtleFillColorSecondaryBrush}" CornerRadius="6" Padding="10,4">
+                            <TextBlock Text="Demucs + Khmer ASR" FontSize="11" FontWeight="SemiBold" Foreground="#818CF8" />
+                        </Border>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Highlights Grid -->
+            <Grid ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="10" Padding="16">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Khmer Unicode Protection" FontWeight="SemiBold" FontSize="14" />
+                        <TextBlock Text="Strict preservation of Khmer base consonants, Coeng subscripts (ជើង \u17D2), and phonetic clusters with zero-width space boundaries."
+                                   FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="1" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="10" Padding="16">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="AUTO PERFECT Quality Engine" FontWeight="SemiBold" FontSize="14" />
+                        <TextBlock Text="Continuous double-check verification comparing vocal energy frequencies with syllable timing to eliminate drift."
+                                   FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

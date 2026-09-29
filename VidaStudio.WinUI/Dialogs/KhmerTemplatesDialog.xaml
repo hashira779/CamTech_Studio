@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentDialog
+    x:Class="VidaStudio.Dialogs.KhmerTemplatesDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="២០ គំរូតន្ត្រីខ្មែរសម្រាប់ YouTube (20 Khmer YouTube Templates)"
+    PrimaryButtonText="Close"
+    DefaultButton="Primary"
+    CornerRadius="12">
+
+    <Grid Width="780" Height="520" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Subtitle Info -->
+        <TextBlock Grid.Row="0"
+                   Text="Curated visual styles for Sinn Sisamouth, acoustic ballads, Angkor heritage, and modern Khmer remixes"
+                   FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+        <!-- Category Selector Tabs -->
+        <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+                <Button x:Name="TabAll" Click="CategoryTab_Click" Tag="all" Style="{ThemeResource AccentButtonStyle}" Padding="10,6">
+                    <TextBlock Text="All 20 Templates" FontSize="11" />
+                </Button>
+                <Button x:Name="TabLegends" Click="CategoryTab_Click" Tag="singers" Style="{ThemeResource DefaultButtonStyle}" Padding="10,6">
+                    <TextBlock Text="🎙️ 11 Golden Era Legends" FontSize="11" Foreground="#F59E0B" FontWeight="SemiBold" />
+                </Button>
+                <Button x:Name="TabGolden" Click="CategoryTab_Click" Tag="📻 Golden Era 1960s" Style="{ThemeResource DefaultButtonStyle}" Padding="10,6">
+                    <TextBlock Text="📻 1960s Golden Era" FontSize="11" />
+                </Button>
+                <Button x:Name="TabAngkor" Click="CategoryTab_Click" Tag="👑 Angkor &amp; Heritage" Style="{ThemeResource DefaultButtonStyle}" Padding="10,6">
+                    <TextBlock Text="👑 Angkor &amp; Heritage" FontSize="11" />
+                </Button>
+                <Button x:Name="TabRomantic" Click="CategoryTab_Click" Tag="🌧️ Romantic &amp; Melancholic" Style="{ThemeResource DefaultButtonStyle}" Padding="10,6">
+                    <TextBlock Text="🌧️ Romantic &amp; Rain" FontSize="11" />
+                </Button>
+                <Button x:Name="TabNature" Click="CategoryTab_Click" Tag="🍃 Nature &amp; Homeland" Style="{ThemeResource DefaultButtonStyle}" Padding="10,6">
+                    <TextBlock Text="🍃 Nature &amp; Homeland" FontSize="11" />
+                </Button>
+                <Button x:Name="TabFestive" Click="CategoryTab_Click" Tag="🎉 Festive &amp; Dance" Style="{ThemeResource DefaultButtonStyle}" Padding="10,6">
+                    <TextBlock Text="🎉 Festive &amp; Dance" FontSize="11" />
+                </Button>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Templates Grid View -->
+        <GridView Grid.Row="2" x:Name="TemplatesGridView" SelectionMode="None">
+            <GridView.ItemTemplate>
+                <DataTemplate>
+                    <Border Width="370" Margin="4" Padding="12" CornerRadius="8"
+                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                        <Grid RowSpacing="6">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <!-- Header: Title & Badge -->
+                            <Grid Grid.Row="0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="{Binding TitleKm}" FontWeight="Bold" FontSize="13" TextTrimming="CharacterEllipsis" />
+                                <Border Grid.Column="1" Background="#1E1B4B" CornerRadius="4" Padding="6,2">
+                                    <TextBlock Text="{Binding Badge}" FontSize="9" FontWeight="Bold" Foreground="#818CF8" />
+                                </Border>
+                            </Grid>
+
+                            <TextBlock Grid.Row="1" Text="{Binding TitleEn}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                            <!-- Description -->
+                            <TextBlock Grid.Row="2" Text="{Binding Desc}" FontSize="11" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+
+                            <!-- Bottom Action Row -->
+                            <Grid Grid.Row="3" Margin="0,4,0,0">
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                    <Border Background="#064E3B" CornerRadius="4" Padding="4,2">
+                                        <TextBlock Text="{Binding Theme}" FontSize="9" Foreground="#34D399" />
+                                    </Border>
+                                    <Border Background="#451A03" CornerRadius="4" Padding="4,2">
+                                        <TextBlock Text="{Binding Palette}" FontSize="9" Foreground="#F59E0B" />
+                                    </Border>
+                                </StackPanel>
+                                <Button Click="ApplyTemplate_Click" HorizontalAlignment="Right" Style="{ThemeResource AccentButtonStyle}" Padding="10,4">
+                                    <TextBlock Text="Apply Style" FontSize="11" FontWeight="SemiBold" />
+                                </Button>
+                            </Grid>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </GridView.ItemTemplate>
+        </GridView>
+    </Grid>
+</ContentDialog>

@@ -39,17 +39,36 @@ def _get_yt_dlp_path() -> str:
 
 
 def extract_youtube_url(text: str) -> Optional[str]:
-    """Extract a YouTube URL from any surrounding text."""
+    """Extract and normalize a YouTube URL from any surrounding text or input format."""
+    if not text:
+        return None
+    text = text.strip()
+
+    # 1. youtu.be/<id>
+    m = re.search(r'(?:https?://)?(?:www\.)?youtu\.be/([a-zA-Z0-9_-]{11})', text, re.IGNORECASE)
+    if m:
+        return f"https://www.youtube.com/watch?v={m.group(1)}"
+
+    # 2. (www|m|music).youtube.com/(watch?v=|shorts/|live/|embed/|v/)([id])
+    m = re.search(r'(?:https?://)?(?:[a-zA-Z0-9_.-]+\.)?youtube(?:-nocookie)?\.com/(?:watch\?[^ \t\r\n]*?v=|shorts/|live/|embed/|v/)([a-zA-Z0-9_-]{11})', text, re.IGNORECASE)
+    if m:
+        return f"https://www.youtube.com/watch?v={m.group(1)}"
+
+    # 3. Direct 11-char video ID
+    if re.match(r'^[a-zA-Z0-9_-]{11}$', text):
+        return f"https://www.youtube.com/watch?v={text}"
+
+    # 4. Standard pattern fallback
     patterns = [
-        r'https?://(?:www\.)?youtube\.com/watch\?v=[\w-]+(?:[&?][\w=%-]*)*',
-        r'https?://youtu\.be/[\w-]+(?:\?[\w=&%-]*)?',
-        r'https?://(?:www\.)?youtube\.com/shorts/[\w-]+',
-        r'https?://music\.youtube\.com/watch\?v=[\w-]+(?:[&?][\w=%-]*)*',
+        r'https?://(?:www\.|m\.|music\.)?youtube\.com/watch\?[^\s"\'<>]+',
+        r'https?://youtu\.be/[^\s"\'<>]+',
+        r'https?://(?:www\.|m\.)?youtube\.com/(?:shorts|live|embed|v)/[^\s"\'<>]+',
     ]
     for p in patterns:
         m = re.search(p, text)
         if m:
             return m.group(0)
+
     return None
 
 
@@ -59,16 +78,12 @@ def is_youtube_url(text: str) -> bool:
 
 
 def _clean_url(url: str) -> str:
-    """Extract pure YouTube URL and strip playlist parameters."""
-    # First extract just the URL from any surrounding text
+    """Extract pure canonical YouTube URL."""
     extracted = extract_youtube_url(url)
     if extracted:
-        url = extracted
-    else:
-        url = url.strip()
-    # Remove &list=... and &start_radio=... parameters
+        return extracted
+    url = url.strip()
     url = re.sub(r'[&?](list|start_radio|index|si)=[^&]*', '', url)
-    # Clean up double && or trailing &
     url = re.sub(r'&&+', '&', url)
     url = re.sub(r'\?&', '?', url)
     url = url.rstrip('&?')

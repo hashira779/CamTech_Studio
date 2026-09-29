@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "VidaStudio (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "VidaStudio (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

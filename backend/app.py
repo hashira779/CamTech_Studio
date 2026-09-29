@@ -89,6 +89,11 @@ async def add_cors_headers(request: Request, call_next):
     response.headers["Access-Control-Allow-Headers"] = "*"
     return response
 
+@app.get("/health")
+@app.get("/api/health")
+def health_check():
+    return {"status": "ok", "app": "VIDA Studio", "engine": "online"}
+
 # In-memory job tracker
 jobs: Dict[str, Dict[str, Any]] = {}
 transcriber_instance: Optional[WhisperTranscriber] = None
@@ -699,22 +704,21 @@ def clean_youtube_title_and_artist(
 @app.post("/api/youtube")
 def download_youtube(req: YouTubeRequest):
     """Downloads audio from a YouTube URL via yt-dlp with auto subtitle extraction."""
-    url = req.url.strip()
-    print(f"[KMVM YouTube] Received URL: '{url}'")
+    raw_url = req.url.strip()
+    print(f"[KMVM YouTube] Received URL: '{raw_url}'")
 
-    # Auto-add https:// if user pasted without it
-    if url and not url.startswith("http"):
-        url = "https://" + url
+    clean_u = extract_youtube_url(raw_url)
+    if not clean_u and not raw_url.startswith("http"):
+        clean_u = extract_youtube_url("https://" + raw_url)
 
-    if not is_youtube_url(url):
-        print(f"[KMVM YouTube] Rejected URL: '{url}'")
+    if not clean_u:
+        print(f"[KMVM YouTube] Rejected URL: '{raw_url}'")
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid YouTube URL. Please paste a full YouTube link (e.g. https://www.youtube.com/watch?v=...). Got: '{url[:80]}'"
+            detail=f"Invalid YouTube link or ID: '{raw_url[:60]}'. Please provide a valid YouTube URL or video ID."
         )
 
-    clean_u = extract_youtube_url(url) or url
-    print(f"[KMVM YouTube] Downloading: {clean_u}")
+    print(f"[KMVM YouTube] Downloading canonical URL: {clean_u}")
     update_youtube_progress(5, "Connecting to YouTube stream...")
     try:
         saved_path, info = download_youtube_audio(clean_u, output_dir=AUDIO_DIR, on_progress=update_youtube_progress)
