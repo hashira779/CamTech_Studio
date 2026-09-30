@@ -4,10 +4,15 @@ Provides REST APIs for file uploads, Whisper AI speech-to-text auto-lyrics,
 LRC subtitle parsing, asynchronous video rendering jobs, and studio UI serving.
 """
 
+import time as _time
+_app_boot_start = _time.time()
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+# Suppress CuPy CUDA warning (CuPy auto-detects CUDA at render time)
+import warnings
+warnings.filterwarnings("ignore", message="CUDA path could not be detected")
 hf_cache_root = os.path.expanduser("~/.cache/huggingface/hub")
 if os.path.exists(hf_cache_root):
     try:
@@ -45,12 +50,42 @@ from backend.lyric_engine import (
     is_khmer_text,
     is_thai_text
 )
-from backend.renderer import VideoRenderer
-from backend.demo_audio import generate_demo_track, generate_khmer_60s_demo
 from kmvm.youtube_downloader import download_youtube_audio, is_youtube_url, extract_youtube_url
-from kmvm.ai_engine import AISongUnderstandingEngine
-from kmvm.thumbnail_generator import ThumbnailGenerator
 from backend.llm_engine import llm_engine
+
+# Lazy imports for heavy modules (saves ~1.5s startup: cv2, PIL, cupy init)
+_VideoRenderer = None
+_AISongUnderstandingEngine = None
+_ThumbnailGenerator = None
+_demo_audio = None
+
+def _get_VideoRenderer():
+    global _VideoRenderer
+    if _VideoRenderer is None:
+        from backend.renderer import VideoRenderer as _VR
+        _VideoRenderer = _VR
+    return _VideoRenderer
+
+def _get_AISongUnderstandingEngine():
+    global _AISongUnderstandingEngine
+    if _AISongUnderstandingEngine is None:
+        from kmvm.ai_engine import AISongUnderstandingEngine as _AI
+        _AISongUnderstandingEngine = _AI
+    return _AISongUnderstandingEngine
+
+def _get_ThumbnailGenerator():
+    global _ThumbnailGenerator
+    if _ThumbnailGenerator is None:
+        from kmvm.thumbnail_generator import ThumbnailGenerator as _TG
+        _ThumbnailGenerator = _TG
+    return _ThumbnailGenerator
+
+def _get_demo_audio():
+    global _demo_audio
+    if _demo_audio is None:
+        from backend import demo_audio as _da
+        _demo_audio = _da
+    return _demo_audio
 
 # Directories
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -70,7 +105,15 @@ os.makedirs(IMAGES_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(FRONTEND_DIR, exist_ok=True)
 
+
 app = FastAPI(title="VIDA Video Studio API", version="1.0.0")
+
+@app.on_event("startup")
+async def _on_startup():
+    elapsed = _time.time() - _app_boot_start
+    msg = f"⚡ VIDA Studio ready in {elapsed:.1f}s"
+    print(msg, flush=True)
+    import logging; logging.getLogger("uvicorn").info(msg)
 
 app.add_middleware(
     CORSMiddleware,
@@ -891,7 +934,7 @@ def analyze_audio_structure(req: AnalyzeRequest):
         raise HTTPException(status_code=404, detail="Audio file not found")
     
     try:
-        engine = AISongUnderstandingEngine(req.audio_path)
+        engine = _get_AISongUnderstandingEngine()(req.audio_path)
         features = engine.analyze_audio_features()
         sections_objs = engine.detect_song_sections(features)
         
@@ -1012,7 +1055,7 @@ def generate_thumbnail_concepts(req: ThumbnailRequest):
     try:
         thumb_dir = os.path.join(OUTPUT_DIR, "thumbnails")
         os.makedirs(thumb_dir, exist_ok=True)
-        gen = ThumbnailGenerator(req.song_title, req.artist_name, req.background_image)
+        gen = _get_ThumbnailGenerator()(req.song_title, req.artist_name, req.background_image)
         concepts = gen.generate_concepts(thumb_dir)
         urls = [f"/outputs/thumbnails/{os.path.basename(c)}" for c in concepts]
         return {
@@ -1100,6 +1143,7 @@ def _execute_render_job(job_id: str, req: RenderRequest):
                     except Exception as lrc_err:
                         print(f"[Render Engine] Warning reading {cand}: {lrc_err}")
 
+        VideoRenderer = _get_VideoRenderer()
         renderer = VideoRenderer(
             audio_path=req.audio_path,
             output_path=output_path,
@@ -1212,7 +1256,7 @@ async def get_demo_assets():
     """Generates and returns ready-to-test demo track with synced lyrics."""
     demo_audio_path = os.path.join(AUDIO_DIR, "demo_synthwave.wav")
     if not os.path.exists(demo_audio_path):
-        generate_demo_track(demo_audio_path, duration_sec=14.0)
+        _get_demo_audio().generate_demo_track(demo_audio_path, duration_sec=14.0)
 
     demo_lyrics = [
         {
@@ -1305,7 +1349,7 @@ async def get_sinisamut_demo():
     """Generates and returns ready-to-test Sinn Sisamouth 60s golden era demo track with synced Khmer lyrics."""
     demo_audio_path = os.path.join(AUDIO_DIR, "demo_sinisamut.wav")
     if not os.path.exists(demo_audio_path):
-        generate_khmer_60s_demo(demo_audio_path, duration_sec=18.0)
+        _get_demo_audio().generate_khmer_60s_demo(demo_audio_path, duration_sec=18.0)
 
     sinisamut_lyrics = [
         {

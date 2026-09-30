@@ -29,6 +29,11 @@ except ImportError:
 
 # Particle rendering kernel: draws all 80 particles in parallel on GPU
 PARTICLE_KERNEL_CODE = r"""
+__device__ float smoothstep(float edge0, float edge1, float x) {
+    float t = fminf(fmaxf((x - edge0) / (edge1 - edge0), 0.0f), 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
 extern "C" __global__
 void render_particles(
     unsigned char* frame,     // BGR frame buffer (H × W × 3)
@@ -73,11 +78,6 @@ void render_particles(
     frame[idx + 0] = min(255, (int)(frame[idx + 0] + acc_b * 255.0f));
     frame[idx + 1] = min(255, (int)(frame[idx + 1] + acc_g * 255.0f));
     frame[idx + 2] = min(255, (int)(frame[idx + 2] + acc_r * 255.0f));
-}
-
-__device__ float smoothstep(float edge0, float edge1, float x) {
-    float t = fminf(fmaxf((x - edge0) / (edge1 - edge0), 0.0f), 1.0f);
-    return t * t * (3.0f - 2.0f * t);
 }
 """
 

@@ -2970,6 +2970,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const modalStatus = document.getElementById('export-modal-status');
     const modalFrames = document.getElementById('export-modal-frames');
     const modalFps = document.getElementById('export-modal-fps');
+    const modalEta = document.getElementById('export-modal-eta');
 
     if (!isRenderMinimized && modal) {
       modal.style.display = 'flex';
@@ -3000,6 +3001,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.fps) {
           if (modalFps) modalFps.textContent = `Speed: ${Math.round(data.fps)} FPS`;
           if (miniFps) miniFps.textContent = `${Math.round(data.fps)} FPS`;
+        }
+        if (modalEta) {
+          if (data.eta_seconds && data.eta_seconds > 0 && pct < 100) {
+            const m = Math.floor(data.eta_seconds / 60);
+            const s = Math.floor(data.eta_seconds % 60);
+            modalEta.textContent = `ETA: ${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+          } else {
+            modalEta.textContent = `ETA: --:--`;
+          }
         }
 
         if (data.status === 'uploading') {

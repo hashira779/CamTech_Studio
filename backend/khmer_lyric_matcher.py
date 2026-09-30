@@ -186,7 +186,11 @@ def gemini_clean_youtube_metadata(
         return None
 
     import urllib.request
-    models_to_try = ["gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-flash-latest"]
+    models_to_try = [
+        "gemini-2.5-flash", "gemini-3.5-flash", "gemini-3.8-flash",
+        "gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-3.5-flash-lite",
+        "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-3.7-flash"
+    ]
 
     prompt = f"""Given this YouTube music video:
 Title: "{raw_title}"
@@ -421,7 +425,11 @@ def transcribe_audio_with_gemini(
         f"5. Rhyme integrity (កាព្យចុងចួន): Cambodian song lyrics strictly follow poetic end-rhymes. Words rhyming with 'ឡើយ' or 'ហើយ' must use 'ត្រានត្រើយ' (or 'ត្រាណត្រើយ'), NEVER 'ត្រង់'."
     )
 
-    models = ["gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-flash-latest"]
+    models = [
+        "gemini-2.5-flash", "gemini-3.5-flash", "gemini-3.8-flash",
+        "gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-3.5-flash-lite",
+        "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-3.7-flash"
+    ]
 
     for model in models:
         try:

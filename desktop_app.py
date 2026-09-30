@@ -122,8 +122,13 @@ def main():
 
     # Run Uvicorn in the MAIN thread so signal handlers (reload=True) work!
     import uvicorn
+    reload_dirs = [
+        os.path.join(base_dir, "backend"),
+        os.path.join(base_dir, "kmvm"),
+        os.path.join(base_dir, "frontend"),
+    ]
     try:
-        uvicorn.run("backend.app:app", host="127.0.0.1", port=port, log_level="info", reload=True)
+        uvicorn.run("backend.app:app", host="127.0.0.1", port=port, log_level="info", reload=True, reload_dirs=reload_dirs)
     except KeyboardInterrupt:
         print("\nStopping VIDA Desktop App...")
 

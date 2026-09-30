@@ -19,6 +19,9 @@ def call_gemini_api(prompt: str, json_mode: bool = False, timeout: int = 8) -> O
         import urllib.request
         import json
         models = [
+            "gemini-2.5-flash",
+            "gemini-3.5-flash",
+            "gemini-3.8-flash",
             "gemini-3.5-flash-lite",
             "gemini-flash-lite-latest",
             "gemini-3.7-flash"

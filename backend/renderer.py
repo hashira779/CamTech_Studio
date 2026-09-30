@@ -160,6 +160,39 @@ PALETTES = {
     }
 }
 
+from numba import njit
+
+@njit(fastmath=True)
+def _draw_particles_numba(frame_bgr, x_arr, y_arr, radii, alphas, b_col, g_col, r_col, width, height):
+    count = x_arr.shape[0]
+    for i in range(count):
+        cx = x_arr[i]
+        cy = y_arr[i]
+        rad = radii[i]
+        a = alphas[i]
+        if a <= 0: continue
+        
+        r2 = rad * rad
+        min_x = max(0, cx - rad)
+        max_x = min(width - 1, cx + rad)
+        min_y = max(0, cy - rad)
+        max_y = min(height - 1, cy + rad)
+        
+        inv_a = 1.0 - a
+        cb = b_col * a
+        cg = g_col * a
+        cr = r_col * a
+        
+        for yy in range(min_y, max_y + 1):
+            dy = yy - cy
+            for xx in range(min_x, max_x + 1):
+                dx = xx - cx
+                if dx*dx + dy*dy <= r2:
+                    frame_bgr[yy, xx, 0] = int(frame_bgr[yy, xx, 0] * inv_a + cb)
+                    frame_bgr[yy, xx, 1] = int(frame_bgr[yy, xx, 1] * inv_a + cg)
+                    frame_bgr[yy, xx, 2] = int(frame_bgr[yy, xx, 2] * inv_a + cr)
+
+
 class ParticleSystem:
     """Manages audio-reactive floating particles and dust motes."""
 
@@ -176,7 +209,7 @@ class ParticleSystem:
         self.base_alpha = np.random.uniform(0.3, 0.8, count).astype(np.float32)
 
     def update_and_draw(self, frame_bgr: np.ndarray, bass_val: float, onset_val: float, color: tuple):
-        """Updates particle positions with bass velocity boost and renders directly onto frame (batch optimized)."""
+        """Updates particle positions with bass velocity boost and renders using JIT machine code."""
         boost = 1.0 + bass_val * 2.5 + onset_val * 1.5
         self.x += self.vx * boost
         self.y += self.vy * boost
@@ -189,16 +222,13 @@ class ParticleSystem:
 
         b_col, g_col, r_col = color[2], color[1], color[0]
 
-        # Vectorized particle drawing: pre-compute all radii, positions, and colors at once
         cur_radii = (self.radius * (1.0 + bass_val * 0.8)).astype(np.int32)
         px_arr = self.x.astype(np.int32)
         py_arr = self.y.astype(np.int32)
         alphas = np.clip(self.base_alpha + bass_val * 0.4, 0.0, 1.0)
 
-        # Batch draw all particles (still uses cv2.circle but with pre-computed values, no per-iteration Python math)
-        for i in range(self.count):
-            p_color = (int(b_col * alphas[i]), int(g_col * alphas[i]), int(r_col * alphas[i]))
-            cv2.circle(frame_bgr, (px_arr[i], py_arr[i]), cur_radii[i], p_color, -1, lineType=cv2.LINE_AA)
+        # Draw all particles instantly using LLVM machine code instead of Python loop
+        _draw_particles_numba(frame_bgr, px_arr, py_arr, cur_radii, alphas, b_col, g_col, r_col, self.width, self.height)
 
 
 class VideoRenderer:
@@ -380,7 +410,7 @@ class VideoRenderer:
                 "C:\\Windows\\Fonts\\calibrib.ttf" if bold else "C:\\Windows\\Fonts\\calibri.ttf"
             ]
         else:
-            candidates = list(font_map.get(script, font_map["latin"]))
+            candidates = list(font_map.get(script, []))
             candidates.extend([
                 "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf",
                 "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf"
@@ -412,7 +442,9 @@ class VideoRenderer:
         resized = cv2.resize(cropped, (self.width, self.height), interpolation=cv2.INTER_AREA)
         if apply_blur:
             resized = cv2.GaussianBlur(resized, (15, 15), 0)  # Reduced kernel from 21 to 15 for speed
-        darkened = (resized.astype(np.float32) * 0.42).astype(np.uint8)
+        
+        # Use highly optimized OpenCV C++ SIMD instead of slow Python numpy float conversion
+        darkened = cv2.convertScaleAbs(resized, alpha=0.42, beta=0)
         
         if self.vignette_mask is None:
             Y, X = np.ogrid[:self.height, :self.width]
@@ -715,9 +747,33 @@ class VideoRenderer:
         interp_spec = np.maximum(0.04, interp_spec)
 
         # Match frontend: waveAnim += 0.02 per frame => at 60fps that's 1.2/sec
-        # Frontend phase: waveAnim * (layer + 1.2) where waveAnim = frame_idx * 0.02
         # So we use: anim_time * fps * 0.02 * (layer + 1.2)
         wave_anim = anim_time * self.fps * 0.02
+
+        # 0. Ambient Background Radial Aura
+        if not hasattr(self, '_aura_base'):
+            r_inner = min(self.width, self.height) * 0.1
+            r_outer = min(self.width, self.height) * 0.7
+            Y, X = np.ogrid[:self.height, :self.width]
+            dist = np.sqrt((X - cx)**2 + (Y - cy)**2)
+            
+            norm_dist = np.clip((dist - r_inner) / (r_outer - r_inner), 0.0, 1.0)
+            
+            # Map distances to the exact stops: 0 -> primary, 0.6 -> secondary, 1.0 -> transparent
+            r_map = np.interp(norm_dist, [0.0, 0.6, 1.0], [c_pri[0], c_sec[0], 0])
+            g_map = np.interp(norm_dist, [0.0, 0.6, 1.0], [c_pri[1], c_sec[1], 0])
+            b_map = np.interp(norm_dist, [0.0, 0.6, 1.0], [c_pri[2], c_sec[2], 0])
+            
+            alpha_base_map = np.interp(norm_dist, [0.0, 0.6, 1.0], [0.15, 0.05, 0.0])
+            alpha_bass_map = np.interp(norm_dist, [0.0, 0.6, 1.0], [0.15, 0.08, 0.0])
+            
+            self._aura_base = np.stack([b_map * alpha_base_map, g_map * alpha_base_map, r_map * alpha_base_map], axis=-1).astype(np.float32)
+            self._aura_bass = np.stack([b_map * alpha_bass_map, g_map * alpha_bass_map, r_map * alpha_bass_map], axis=-1).astype(np.float32)
+            self._y_coords = np.arange(self.height, dtype=np.float32)
+
+        # Apply pre-computed perfect radial aura
+        current_aura = (self._aura_base + self._aura_bass * bass).astype(np.uint8)
+        frame[:] = cv2.add(frame, current_aura)
 
         # 1. Multi-Layer Fluid Wave Harmonic Layers (layer 2, 1, 0 from back to front)
         overlay = self.wave_overlay
@@ -740,20 +796,34 @@ class VideoRenderer:
             pts_bottom = np.array([[self.width, self.height], [0, self.height]], dtype=np.float32)
             poly_pts = np.vstack([pts_top, pts_bottom]).astype(np.int32)
 
-            # Match frontend: gradient fill from opacity*0.85 to opacity*0.25 to 0
+            # Calculate exact dynamic vertical gradient starting from the crest of the wave
+            crest_y = int(y_offset - amplitude)
+            norm_y = np.clip((self._y_coords - crest_y) / float(max(1, self.height - crest_y)), 0.0, 1.0)
+            grad_alpha = np.interp(norm_y, [0.0, 0.5, 1.0], [opacity * 0.85, opacity * 0.25, 0.0]).reshape(self.height, 1, 1)
+
+            # Match frontend: linear gradient fill instead of solid color
             overlay.fill(0)
             cv2.fillPoly(overlay, [poly_pts], layer_bgr)
-            cv2.addWeighted(overlay, float(opacity * 0.40), frame, 1.0, 0, frame)
+            
+            # Apply exact vertical gradient mask to the overlay before blending
+            grad_overlay = (overlay.astype(np.float32) * grad_alpha).astype(np.uint8)
+            cv2.addWeighted(grad_overlay, 1.0, frame, 1.0, 0, frame)
 
             # Glowing crest stroke matching UI: strokeStyle with opacity + 0.35, lineWidth 2.5 - layer*0.4, shadowBlur
             crest_pts = pts_top.astype(np.int32).reshape((-1, 1, 2))
             stroke_thickness = max(1, int(2.5 - layer * 0.4))
-            # Outer glow (simulates shadowBlur)
-            glow_alpha = min(1.0, opacity + 0.35)
-            glow_col = (int(col_b * glow_alpha * 0.5), int(col_g * glow_alpha * 0.5), int(col_r * glow_alpha * 0.5))
-            cv2.polylines(frame, [crest_pts], isClosed=False, color=glow_col, thickness=stroke_thickness + 4, lineType=cv2.LINE_AA)
+            
+            # Fake Gaussian shadowBlur for the wave crests (matches Canvas shadowBlur)
+            base_glow_thick = stroke_thickness
+            for gw in range(4, 0, -1):
+                gw_thick = base_glow_thick + gw * 4
+                gw_alpha = (0.25 / gw) * (opacity + 0.35)
+                gw_col = (int(col_b * gw_alpha), int(col_g * gw_alpha), int(col_r * gw_alpha))
+                cv2.polylines(frame, [crest_pts], isClosed=False, color=gw_col, thickness=gw_thick, lineType=cv2.LINE_AA)
+                
             # Main stroke
-            stroke_col = (int(col_b * glow_alpha), int(col_g * glow_alpha), int(col_r * glow_alpha))
+            stroke_alpha = min(1.0, opacity + 0.35)
+            stroke_col = (int(col_b * stroke_alpha), int(col_g * stroke_alpha), int(col_r * stroke_alpha))
             cv2.polylines(frame, [crest_pts], isClosed=False, color=stroke_col, thickness=stroke_thickness, lineType=cv2.LINE_AA)
 
         # 2. Center Glowing Audio-Pulse Core Emblem
@@ -791,8 +861,15 @@ class VideoRenderer:
         # Pulsing glowing outline ring
         ring_thickness = max(2, int(2.5 + bass * 2))
         pri_bgr = (int(c_pri[2]), int(c_pri[1]), int(c_pri[0]))
+        
+        # Fake Gaussian shadowBlur for the center emblem (matches Canvas shadowBlur=15)
+        for gw in range(5, 0, -1):
+            gw_thick = ring_thickness + gw * 3
+            gw_alpha = 0.2 / gw
+            gw_col = (int(glow_bgr[0]*gw_alpha), int(glow_bgr[1]*gw_alpha), int(glow_bgr[2]*gw_alpha))
+            cv2.circle(frame, (cx, cy), dynamic_radius, gw_col, gw_thick, lineType=cv2.LINE_AA)
+            
         cv2.circle(frame, (cx, cy), dynamic_radius, pri_bgr, ring_thickness, lineType=cv2.LINE_AA)
-        cv2.circle(frame, (cx, cy), dynamic_radius + 2, glow_bgr, 1, lineType=cv2.LINE_AA)
 
     def render_horizon_wave(self, frame: np.ndarray, spectrum: np.ndarray, bass: float, onset: float, anim_time: float = 0.0):
         """Aliases to render_ocean_wave for smooth organic multi-layer wave rendering."""
@@ -820,7 +897,10 @@ class VideoRenderer:
         next_line = lyric_state.get("next_line")
         is_instrumental = active_line.get("is_instrumental", False) if active_line else False
         line_id = active_line.get("line_id", active_line.get("text", ""))
-        cache_key = (line_id, active_word_idx, round(word_progress, 2) if active_word_idx >= 0 else -1)
+        
+        # Optimize cache: round progress to 1 decimal place (10 steps) instead of 2 (100 steps)
+        # This increases cache hits by 10x during karaoke sweeps, massively speeding up PIL rendering.
+        cache_key = (line_id, active_word_idx, round(word_progress, 1) if active_word_idx >= 0 else -1)
 
         # FAST-PATH: Blend only the small cached lyric box slice! (2ms instead of 75ms)
         if cache_key == self._lyric_cache_key and self._lyric_cache_data is not None:
@@ -907,17 +987,32 @@ class VideoRenderer:
         hl_col = self.palette["text_highlight"]
         corner_radius = pad_y
 
-        # Main pill background (vertical linear gradient)
-        # Gradient fill: rgba(15, 23, 42, 0.86) -> rgba(5, 8, 16, 0.94)
+        # Main pill background (Web UI: flat rgba(15, 20, 25, 0.4) + linear gradient sheen)
         bg_layer = Image.new("RGBA", (actual_w, actual_h), (0, 0, 0, 0))
         bg_draw = ImageDraw.Draw(bg_layer)
+        
+        r, g, b = 15, 20, 25
+        base_a = int(0.4 * 255 * alpha)
+        sheen_h = int(actual_h * 0.4)
+        
         for y in range(actual_h):
-            t = y / max(1, actual_h - 1)
-            r = int(15 * (1 - t) + 5 * t)
-            g = int(23 * (1 - t) + 8 * t)
-            b = int(42 * (1 - t) + 16 * t)
-            a = int((219 * (1 - t) + 240 * t) * alpha)
-            bg_draw.line([(0, y), (actual_w, y)], fill=(r, g, b, a))
+            row_r, row_g, row_b, row_a = r, g, b, base_a
+            
+            # Apply sheen overlay (Web UI: rgba(255,255,255, 0.1) fading to 0 over top 40%)
+            if y <= sheen_h and sheen_h > 0:
+                t = y / sheen_h
+                sheen_alpha_f = (0.1 * alpha) * (1.0 - t)
+                
+                s_a = sheen_alpha_f
+                b_a = base_a / 255.0
+                out_a = s_a + b_a * (1.0 - s_a)
+                if out_a > 0:
+                    row_r = int((255 * s_a + r * b_a * (1.0 - s_a)) / out_a)
+                    row_g = int((255 * s_a + g * b_a * (1.0 - s_a)) / out_a)
+                    row_b = int((255 * s_a + b * b_a * (1.0 - s_a)) / out_a)
+                    row_a = int(out_a * 255)
+                    
+            bg_draw.line([(0, y), (actual_w, y)], fill=(row_r, row_g, row_b, row_a))
 
         # Mask it with rounded rectangle
         mask_layer = Image.new("L", (actual_w, actual_h), 0)
@@ -925,21 +1020,13 @@ class VideoRenderer:
         mask_draw.rounded_rectangle([0, 0, actual_w - 1, actual_h - 1], radius=corner_radius, fill=255)
         pill_img.paste(bg_layer, (0, 0), mask_layer)
 
-        # Draw Outline
+        # Draw Outline (Web UI: rgba(255, 255, 255, 0.1))
         draw_pill.rounded_rectangle(
             [0, 0, actual_w - 1, actual_h - 1],
             radius=corner_radius,
             fill=None,
-            outline=(c_p[0], c_p[1], c_p[2], int(107 * alpha)),
+            outline=(255, 255, 255, int(25.5 * alpha)),
             width=1
-        )
-
-        # Specular top highlight sheen (lyrics.js lines 292-295)
-        sheen_h = max(1, int(pad_y * 0.65))
-        draw_pill.rounded_rectangle(
-            [2, 1, actual_w - 3, 1 + sheen_h],
-            radius=max(1, corner_radius - 1),
-            fill=(255, 255, 255, int(20 * alpha)),
         )
 
         # --- Next line preview above the pill (lyrics.js lines 306-317) ---
