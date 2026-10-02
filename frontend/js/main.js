@@ -2800,6 +2800,27 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ============ Export Video ============
+  const selectExportPreset = document.getElementById('select-export-preset');
+  if (selectExportPreset) {
+    const applyPreset = (val) => {
+      if (val === '720p@30') {
+        state.renderResolution = '720p';
+        state.renderFps = 30;
+      } else if (val === '1080p@30') {
+        state.renderResolution = '1080p';
+        state.renderFps = 30;
+      } else if (val === '1080p@60') {
+        state.renderResolution = '1080p';
+        state.renderFps = 60;
+      } else if (val === '480p@30') {
+        state.renderResolution = '480p';
+        state.renderFps = 30;
+      }
+    };
+    applyPreset(selectExportPreset.value);
+    selectExportPreset.addEventListener('change', (e) => applyPreset(e.target.value));
+  }
+
   const btnExport = document.getElementById('btn-export');
   if (btnExport) {
     btnExport.addEventListener('click', async () => {
@@ -2809,8 +2830,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       try {
+        const currentFps = state.renderFps || 30;
+        const currentRes = state.renderResolution || '720p';
         setButtonLoading(btnExport, 'Rendering...');
-        showToast('Export Started', 'Rendering 60 FPS video — this may take a few minutes', 'info', 15000);
+        showToast('Export Started', `Rendering ${currentRes} @ ${currentFps} FPS (Turbo Mode)`, 'info', 15000);
 
         const res = await fetch('/api/render', {
           method: 'POST',
@@ -2820,7 +2843,8 @@ document.addEventListener('DOMContentLoaded', () => {
             theme: state.theme,
             palette: state.palette,
             aspect_ratio: state.aspectRatio,
-            fps: state.renderFps,
+            fps: currentFps,
+            resolution: currentRes,
             song_title: state.songTitle,
             artist_name: state.artistName,
             title_scale: state.titleScale || 1.5,
@@ -2965,12 +2989,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function pollRenderProgress(jobId) {
     const modal = document.getElementById('export-progress-modal');
+    const modalTitle = document.getElementById('export-modal-title');
     const modalPct = document.getElementById('export-modal-pct');
     const modalFill = document.getElementById('export-modal-fill');
     const modalStatus = document.getElementById('export-modal-status');
     const modalFrames = document.getElementById('export-modal-frames');
     const modalFps = document.getElementById('export-modal-fps');
     const modalEta = document.getElementById('export-modal-eta');
+
+    if (modalTitle) modalTitle.textContent = `Rendering ${state.renderResolution || '720p'} @ ${state.renderFps || 30} FPS Video`;
 
     if (!isRenderMinimized && modal) {
       modal.style.display = 'flex';

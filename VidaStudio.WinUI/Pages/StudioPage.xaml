@@ -97,18 +97,17 @@
         <!-- ================= MAIN 3-COLUMN WORKSPACE ================= -->
         <Grid Grid.Row="1" Margin="16,0,16,10">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="340" MinWidth="250" MaxWidth="500" />
+                <ColumnDefinition Width="400" MinWidth="300" MaxWidth="600" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" MinWidth="300" />
                 <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="360" MinWidth="250" MaxWidth="500" />
+                <ColumnDefinition Width="400" MinWidth="300" MaxWidth="600" />
             </Grid.ColumnDefinitions>
 
             <!-- SPLITTERS -->
             <controls:GridSplitter Grid.Column="1" Width="12" Background="Transparent" HorizontalAlignment="Center" ResizeDirection="Columns" />
-            <controls:GridSplitter Grid.Column="3" Width="12" Background="Transparent" HorizontalAlignment="Center" ResizeDirection="Columns" />
 
-            <!-- ================= LEFT PANEL: SEGMENTED MEDIA & AI ================= -->
+            <!-- ================= LEFT PANEL: CLEAN AUTOMATION HUB ================= -->
             <Border Grid.Column="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="10" Padding="12">
                 <Grid RowSpacing="10">
@@ -133,30 +132,33 @@
                         </Button>
                     </Grid>
 
-                    <!-- TAB 1: MEDIA POOL -->
-                    <Grid Grid.Row="1" x:Name="LeftMediaPanel" Visibility="Visible" RowSpacing="10">
+                    <!-- TAB 1: MEDIA POOL (Minimalist Magic UI) -->
+                    <Grid Grid.Row="1" x:Name="LeftMediaPanel" Visibility="Visible" RowSpacing="20">
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="250" />
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
-                        <!-- Native Drag-Drop Zone -->
+                        <!-- Massive Magic Drop Zone -->
                         <Border Grid.Row="0" x:Name="NativeDropZone" Tapped="DropZone_Tapped"
                                 AllowDrop="True" DragOver="DropZone_DragOver" Drop="DropZone_Drop"
                                 Background="{ThemeResource SubtleFillColorSecondaryBrush}"
-                                BorderBrush="#6366F1" BorderThickness="1.5" CornerRadius="8" Padding="10">
-                            <StackPanel HorizontalAlignment="Center" Spacing="4">
-                                <FontIcon Glyph="&#xE898;" FontSize="20" Foreground="#818CF8" HorizontalAlignment="Center" />
-                                <TextBlock Text="Drop Song File Here" FontWeight="SemiBold" FontSize="12" HorizontalAlignment="Center" />
-                                <TextBlock Text="MP3, WAV, M4A, FLAC or click to browse" FontSize="10" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalAlignment="Center" />
+                                BorderBrush="#8B5CF6" BorderThickness="2" CornerRadius="12" Padding="20">
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
+                                <FontIcon Glyph="&#xE898;" FontSize="48" Foreground="#A78BFA" HorizontalAlignment="Center" />
+                                <TextBlock Text="Drop a Song File Here" FontWeight="Bold" FontSize="18" Foreground="#E2E8F0" HorizontalAlignment="Center" />
+                                <TextBlock Text="MP3, WAV, M4A, FLAC or click to browse" FontSize="12" Foreground="#94A3B8" HorizontalAlignment="Center" />
                             </StackPanel>
                         </Border>
 
                         <!-- YouTube Input Capsule -->
-                        <Grid Grid.Row="1" RowSpacing="6">
+                        <Grid Grid.Row="1" RowSpacing="6" Margin="0,-4,0,4">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
@@ -167,7 +169,7 @@
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBox x:Name="YouTubeUrlBox" Grid.Column="0" PlaceholderText="Paste YouTube link..." FontSize="11" Margin="0,0,4,0" />
+                                <TextBox x:Name="YouTubeUrlBox" Grid.Column="0" PlaceholderText="...or paste YouTube link" FontSize="11" Margin="0,0,4,0" Background="#1E1B4B" BorderBrush="#312E81" />
                                 <Button Grid.Column="1" Click="PasteYouTube_Click" Style="{ThemeResource DefaultButtonStyle}" Padding="8,6" Margin="0,0,4,0" ToolTipService.ToolTip="Paste from clipboard">
                                     <TextBlock Text="📋" FontSize="11" />
                                 </Button>
@@ -175,84 +177,66 @@
                                     <TextBlock Text="⬇️ DL" FontSize="11" FontWeight="SemiBold" />
                                 </Button>
                             </Grid>
-                            <ProgressBar Grid.Row="1" x:Name="YouTubeProgressBar" Visibility="Collapsed" IsIndeterminate="True" Height="4" />
+                            <ProgressBar Grid.Row="1" x:Name="YouTubeProgressBar" Visibility="Collapsed" IsIndeterminate="True" Height="4" Foreground="#EC4899" />
                         </Grid>
 
-                        <!-- 3 Quick Presets Buttons -->
-                        <StackPanel Grid.Row="2" Spacing="6">
-                            <Button Click="LoadDemoSynth_Click" Style="{ThemeResource DefaultButtonStyle}" HorizontalAlignment="Stretch" Padding="8,6">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <TextBlock Text="⚡" />
-                                    <TextBlock Text="Load Synth Demo (Cyber Horizon)" FontSize="11" />
-                                </StackPanel>
-                            </Button>
-
-                            <Button Click="LoadDemoSinisamut_Click" HorizontalAlignment="Stretch" Padding="8,6"
-                                    Background="#451A03" BorderBrush="#D97706" BorderThickness="1">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <TextBlock Text="📻" />
-                                    <TextBlock Text="ស៊ីន ស៊ីសាមុត Demo (60s Vinyl)" FontSize="11" FontWeight="SemiBold" Foreground="#FEF3C7" />
-                                </StackPanel>
-                            </Button>
-
-                            <Button Click="OpenKhmerTemplates_Click" HorizontalAlignment="Stretch" Padding="8,8"
-                                    Background="#D97706" BorderBrush="#F59E0B" BorderThickness="1">
-                                <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
-                                    <TextBlock Text="🇰🇭" />
-                                    <TextBlock Text="20 Authentic Khmer YouTube Templates" FontSize="11" FontWeight="Bold" Foreground="White" />
-                                </StackPanel>
-                            </Button>
+                        <!-- Library Selector -->
+                        <StackPanel Grid.Row="2" Spacing="4">
+                            <TextBlock Text="Select Existing Track" FontSize="11" Foreground="#94A3B8" />
+                            <ComboBox x:Name="LibrarySelector" HorizontalAlignment="Stretch" 
+                                      Background="#1E1B4B" BorderBrush="#312E81" 
+                                      DisplayMemberPath="Name" SelectionChanged="LibrarySelector_SelectionChanged" />
                         </StackPanel>
 
                         <!-- Active Loaded Song Badge -->
-                        <Border Grid.Row="3" Background="{ThemeResource SubtleFillColorSecondaryBrush}" CornerRadius="8" Padding="8">
+                        <Border Grid.Row="3" Background="#1E1B4B" BorderBrush="#312E81" BorderThickness="1" CornerRadius="10" Padding="12">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <Border Grid.Column="0" Width="30" Height="30" CornerRadius="6" Background="#1E1B4B" VerticalAlignment="Center">
-                                    <FontIcon Glyph="&#xE8D6;" Foreground="#818CF8" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                <Border Grid.Column="0" Width="40" Height="40" CornerRadius="8" Background="#312E81" VerticalAlignment="Center">
+                                    <FontIcon Glyph="&#xE8D6;" Foreground="#818CF8" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                 </Border>
-                                <StackPanel Grid.Column="1" Margin="8,0,6,0" VerticalAlignment="Center" Spacing="1">
-                                    <TextBlock x:Name="MasterTrackNameText" Text="Loading track..." FontWeight="SemiBold" FontSize="11" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock x:Name="TrackArtistText" Text="Select a song below to play" FontSize="10" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                                <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" Spacing="2">
+                                    <TextBlock x:Name="MasterTrackNameText" Text="Waiting for audio..." FontWeight="Bold" FontSize="14" Foreground="#E2E8F0" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock x:Name="TrackArtistText" Text="Load a track to start the magic" FontSize="11" Foreground="#818CF8" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
-                                <Border Grid.Column="2" Background="#064E3B" CornerRadius="4" Padding="6,2" VerticalAlignment="Center">
-                                    <TextBlock Text="ACTIVE" FontSize="9" FontWeight="Bold" Foreground="#34D399" />
-                                </Border>
                             </Grid>
                         </Border>
 
-                        <!-- Real Library Tracks List -->
-                        <Grid Grid.Row="4" RowSpacing="4">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                            </Grid.RowDefinitions>
-                            <TextBlock Grid.Row="0" Text="Songs in Library (Click to Play)" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <ListView Grid.Row="1" x:Name="LibraryListView" SelectionChanged="LibraryListView_SelectionChanged"
-                                      BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="2">
-                                <ListView.ItemTemplate>
-                                    <DataTemplate x:DataType="services:MediaItem">
-                                        <Grid Margin="0,3" ColumnSpacing="6">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="24" />
-                                                <ColumnDefinition Width="*" />
-                                            </Grid.ColumnDefinitions>
-                                            <Border Grid.Column="0" Width="22" Height="22" CornerRadius="4" Background="{ThemeResource SubtleFillColorSecondaryBrush}">
-                                                <FontIcon Glyph="&#xE8D6;" FontSize="10" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#818CF8" />
-                                            </Border>
-                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                                <TextBlock Text="{x:Bind Name}" FontSize="11" FontWeight="Medium" TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Text="Audio Track · Click to play" FontSize="9" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            </StackPanel>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ListView.ItemTemplate>
-                            </ListView>
-                        </Grid>
+                        <!-- System Font Selector -->
+                        <StackPanel Grid.Row="4" Spacing="4" Margin="0,4,0,8">
+                            <TextBlock Text="Magic Lyric Font" FontSize="11" Foreground="#94A3B8" />
+                            <ComboBox x:Name="FontSelector" HorizontalAlignment="Stretch" SelectedIndex="0" 
+                                      Background="#1E1B4B" BorderBrush="#312E81" SelectionChanged="FontSelector_SelectionChanged" />
+                        </StackPanel>
+
+                        <!-- Custom Logo Picker -->
+                        <StackPanel Grid.Row="5" Spacing="4" Margin="0,0,0,12">
+                            <TextBlock Text="Custom Video Logo" FontSize="11" Foreground="#94A3B8" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="LogoPathBox" IsReadOnly="True" PlaceholderText="Using built-in VibeTunes logo..." FontSize="11" Background="#1E1B4B" BorderBrush="#312E81" Margin="0,0,4,0" />
+                                <Button Grid.Column="1" Click="BrowseLogo_Click" Style="{ThemeResource DefaultButtonStyle}" Padding="12,6">
+                                    <TextBlock Text="Browse..." FontSize="11" />
+                                </Button>
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- Giant Magic Button -->
+                        <Button Grid.Row="6" Click="QuickAutoPerfect_Click" HorizontalAlignment="Stretch" VerticalAlignment="Center" Padding="16,24" Background="#7C3AED" BorderBrush="#8B5CF6" BorderThickness="1" CornerRadius="12">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="✨ CREATE MAGIC VIDEO" FontSize="18" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" />
+                                <TextBlock Text="Auto-Transcription + Auto-Theme + 60FPS Render" FontSize="11" Foreground="#C4B5FD" HorizontalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        
+                        <!-- Empty space filler -->
+                        <Grid Grid.Row="7" />
                     </Grid>
 
                     <!-- TAB 2: AI & VOCAL STEMS -->
@@ -467,10 +451,17 @@
                                         <Border Width="80" Height="80" CornerRadius="40" BorderBrush="#374151" BorderThickness="1" />
                                         <!-- Center Label -->
                                         <Border x:Name="VinylCenterLabel" Width="60" Height="60" CornerRadius="30" Background="#EC4899">
-                                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="1">
-                                                <TextBlock x:Name="BadgePrimaryText" Text="VIDA" FontSize="9" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" />
-                                                <TextBlock x:Name="BadgeSecondaryText" Text="OFFICIAL" FontSize="7" FontWeight="SemiBold" Foreground="#FDF2F8" HorizontalAlignment="Center" />
-                                            </StackPanel>
+                                            <Grid>
+                                                <StackPanel x:Name="BadgeTextStack" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="1">
+                                                    <TextBlock x:Name="BadgePrimaryText" Text="VIDA" FontSize="9" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" />
+                                                    <TextBlock x:Name="BadgeSecondaryText" Text="OFFICIAL" FontSize="7" FontWeight="SemiBold" Foreground="#FDF2F8" HorizontalAlignment="Center" />
+                                                </StackPanel>
+                                                <Ellipse x:Name="BadgeLogoEllipse" Width="52" Height="52" Visibility="Collapsed">
+                                                    <Ellipse.Fill>
+                                                        <ImageBrush x:Name="BadgeLogoBrush" Stretch="UniformToFill" />
+                                                    </Ellipse.Fill>
+                                                </Ellipse>
+                                            </Grid>
                                         </Border>
                                     </Grid>
                                 </Border>
@@ -493,9 +484,32 @@
                             </StackPanel>
                         </Grid>
                     </Border>
+                    
+                    <!-- ================= 2027 MAGIC LOADING OVERLAY ================= -->
+                    <Grid x:Name="MagicLoadingOverlay" Visibility="Collapsed" Background="#D9000000" CornerRadius="10">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="24">
+                            <!-- Pulsing Center Element -->
+                            <Grid Width="120" Height="120" HorizontalAlignment="Center">
+                                <ProgressRing IsActive="True" Width="120" Height="120" Foreground="#8B5CF6" />
+                                <ProgressRing IsActive="True" Width="90" Height="90" Foreground="#EC4899" />
+                                <ProgressRing IsActive="True" Width="60" Height="60" Foreground="#38BDF8" />
+                                <FontIcon Glyph="&#xE8D6;" FontSize="32" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Grid>
+                            
+                            <!-- Glowing Text -->
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="CRAFTING MAGIC" FontSize="28" FontWeight="Black" Foreground="White" HorizontalAlignment="Center" CharacterSpacing="200" />
+                                <TextBlock x:Name="MagicLoadingSubtext" Text="Synthesizing UI and Audio..." FontSize="14" Foreground="#A78BFA" HorizontalAlignment="Center" />
+                            </StackPanel>
+                            
+                            <!-- Loading Bar -->
+                            <ProgressBar x:Name="MagicLoadingBar" IsIndeterminate="True" Width="300" Height="6" Foreground="#8B5CF6" Background="#1E1B4B" CornerRadius="3" />
+                        </StackPanel>
+                    </Grid>
                 </Grid>
             </Border>
-
+            <!-- RIGHT SPLITTER -->
+            <controls:GridSplitter Grid.Column="3" Width="12" Background="Transparent" HorizontalAlignment="Center" ResizeDirection="Columns" />
             <!-- ================= RIGHT PANEL: SEGMENTED INSPECTOR ================= -->
             <Border Grid.Column="4" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="10" Padding="12">

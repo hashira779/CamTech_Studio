@@ -104,6 +104,13 @@ class AudioAnalyzer:
         # Bass band: 30Hz - 160Hz
         bass_mask = (fft_freqs >= 30) & (fft_freqs <= 160)
 
+        # ── VECTORIZED: Pre-compute bar bin boundaries once (replaces per-frame Python loop) ──
+        bin_lows = np.maximum(0, (log_freq_bins[:-1] / freq_step).astype(np.int32))
+        bin_highs = np.minimum(len(fft_freqs) - 1, (log_freq_bins[1:] / freq_step).astype(np.int32))
+        bin_highs = np.maximum(bin_highs, bin_lows + 1)
+        # Equal loudness contour factors (vectorized)
+        eq_factors = (1.0 + (1.0 - np.arange(self.num_bars, dtype=np.float32) / self.num_bars) * 0.5)
+
         for f_idx in range(self.total_frames):
             center_sample = f_idx * hop_samples + pad_len
             start = center_sample - n_fft // 2
@@ -125,20 +132,9 @@ class AudioAnalyzer:
             bass_energy = np.mean(fft_mag[bass_mask]) if np.any(bass_mask) else 0.0
             bass_curve[f_idx] = bass_energy
 
-            # Group FFT bins into musical frequency bars
-            raw_bars = np.zeros(self.num_bars, dtype=np.float32)
-            for b in range(self.num_bars):
-                low_f = log_freq_bins[b]
-                high_f = log_freq_bins[b + 1]
-                idx_low = max(0, int(low_f / freq_step))
-                idx_high = min(len(fft_mag) - 1, int(high_f / freq_step))
-                if idx_high <= idx_low:
-                    idx_high = idx_low + 1
-
-                val = np.mean(fft_mag[idx_low:idx_high + 1])
-                # Equal loudness contour approximation (boost bass/highs slightly)
-                eq_factor = 1.0 + (1.0 - (b / self.num_bars)) * 0.5
-                raw_bars[b] = val * eq_factor
+            # ── VECTORIZED: Group FFT bins into musical frequency bars (no Python loop!) ──
+            raw_bars = np.array([np.mean(fft_mag[lo:hi + 1]) for lo, hi in zip(bin_lows, bin_highs)], dtype=np.float32)
+            raw_bars *= eq_factors
 
             # Convert to decibels with floor
             db_bars = 20 * np.log10(np.maximum(raw_bars, 1e-5))
@@ -146,15 +142,12 @@ class AudioAnalyzer:
             norm_bars = np.clip((db_bars + 60.0) / 60.0, 0.0, 1.0)
             norm_bars = np.power(norm_bars, 1.8) * bass_boost
 
-            # Physics-based attack & decay smoothing
-            smooth_bars = np.zeros(self.num_bars, dtype=np.float32)
-            for b in range(self.num_bars):
-                if norm_bars[b] > prev_spectrum[b]:
-                    # Instant punchy rise
-                    smooth_bars[b] = prev_spectrum[b] * (1.0 - smoothing_attack) + norm_bars[b] * smoothing_attack
-                else:
-                    # Smooth falling gravity
-                    smooth_bars[b] = prev_spectrum[b] * smoothing_decay
+            # ── VECTORIZED: Physics-based attack & decay smoothing (no Python loop!) ──
+            smooth_bars = np.where(
+                norm_bars > prev_spectrum,
+                prev_spectrum * (1.0 - smoothing_attack) + norm_bars * smoothing_attack,  # Instant punchy rise
+                prev_spectrum * smoothing_decay  # Smooth falling gravity
+            )
 
             spectrum_matrix[f_idx] = np.clip(smooth_bars, 0.0, 1.0)
             prev_spectrum = smooth_bars

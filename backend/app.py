@@ -176,6 +176,7 @@ class RenderRequest(BaseModel):
     palette: str = "cyberpunk"
     aspect_ratio: str = "16:9"          # "16:9" or "9:16"
     fps: int = 60
+    resolution: Optional[str] = "1080p" # "1080p", "720p", "480p"
     song_title: str = "VIDA Soundscape"
     artist_name: str = "Original Mix"
     title_scale: float = 1.5
@@ -1072,11 +1073,22 @@ def _execute_render_job(job_id: str, req: RenderRequest):
         jobs[job_id]["status"] = "processing"
         jobs[job_id]["percent"] = 1.0
 
-        # Determine resolution
+        # Determine resolution (1080p, 720p, 480p)
+        res_choice = (getattr(req, "resolution", "1080p") or "1080p").lower()
         if req.aspect_ratio == "9:16":
-            width, height = 1080, 1920
+            if "720" in res_choice:
+                width, height = 720, 1280
+            elif "480" in res_choice:
+                width, height = 480, 854
+            else:
+                width, height = 1080, 1920
         else:
-            width, height = 1920, 1080
+            if "720" in res_choice:
+                width, height = 1280, 720
+            elif "480" in res_choice:
+                width, height = 854, 480
+            else:
+                width, height = 1920, 1080
 
         # Determine descriptive output filename incorporating song title and artist
         candidate_title = (req.song_title or "").strip()

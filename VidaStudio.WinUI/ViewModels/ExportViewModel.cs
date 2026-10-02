@@ -2,6 +2,8 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using VidaStudio.Models;
+using VidaStudio.Services;
+using VidaStudio.Services.Rendering;
 
 namespace VidaStudio.ViewModels;
 
@@ -50,6 +52,12 @@ public partial class ExportViewModel : ObservableObject
             Presets.Add(p);
         }
         SelectedPreset = Presets.FirstOrDefault();
+
+        RenderService.Instance.ProgressChanged += (pct, msg) =>
+        {
+            ExportProgress = pct;
+            StatusMessage = msg;
+        };
     }
 
     [RelayCommand]
@@ -59,20 +67,44 @@ public partial class ExportViewModel : ObservableObject
 
         IsExporting = true;
         ExportProgress = 0;
-        StatusMessage = $"Rendering {SelectedPreset?.Title} at {ExportResolution} (60 FPS: {Enable60Fps})...";
+        StatusMessage = $"Starting render engine: {SelectedPreset?.Title} at {ExportResolution}...";
 
         try
         {
-            for (int i = 0; i <= 100; i += 5)
+            // Determine dimensions from selected preset
+            int width = 1920, height = 1080;
+            if (SelectedPreset?.AspectRatio == "9:16")
             {
-                await Task.Delay(100);
-                ExportProgress = i;
-                if (i == 25) StatusMessage = "Encoding audio & kinetic typography layers...";
-                if (i == 65) StatusMessage = "Hardware accelerated H.264 video rendering...";
-                if (i == 90) StatusMessage = "Generating YouTube and social media thumbnails...";
+                width = 1080; height = 1920;
+            }
+            else if (SelectedPreset?.AspectRatio == "1:1")
+            {
+                width = 1080; height = 1080;
             }
 
-            StatusMessage = "✨ Video exported successfully to outputs folder!";
+            int fps = Enable60Fps ? 60 : 30;
+
+            // TODO: Get actual path from UI state (StudioHub)
+            string inputAudio = @"d:\Project\VIDA\uploads\audio\demo_synthwave.wav";
+            string outPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), $"VIDA_Export_{DateTime.Now:yyyyMMdd_HHmmss}.mp4");
+
+            await RenderService.Instance.StartNativeRenderAsync(
+                audioPath: inputAudio,
+                outputPath: outPath,
+                width: width,
+                height: height,
+                fps: fps,
+                theme: "ocean_wave",    // TODO: Get from UI state
+                palette: "cyberpunk",   // TODO: Get from UI state
+                songTitle: "My Song",   // TODO: Get from UI state
+                artistName: "My Artist" // TODO: Get from UI state
+            );
+
+            StatusMessage = $"✨ Video exported successfully to {outPath}!";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Export Error: {ex.Message}";
         }
         finally
         {

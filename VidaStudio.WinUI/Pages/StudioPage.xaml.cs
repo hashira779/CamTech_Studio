@@ -28,7 +28,6 @@ public sealed partial class StudioPage : Page
     private readonly Random _random = new();
 
     private string _currentAudioPath = string.Empty;
-    private bool _isUserSeeking;
     private string _customYtTitle = string.Empty;
     private string _customYtDesc = string.Empty;
     private string _customYtTags = string.Empty;
@@ -43,7 +42,19 @@ public sealed partial class StudioPage : Page
     {
         InitializeComponent();
 
+        LibrarySelector.ItemsSource = _libraryItems;
+
         _player.PlaybackSession.PlaybackStateChanged += PlaybackSession_PlaybackStateChanged;
+
+        // Try to load default logo into UI preview
+        try
+        {
+            var defaultLogoUri = new Uri("ms-appx:///Assets/VibeTunesLogo.png");
+            BadgeLogoBrush.ImageSource = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(defaultLogoUri);
+            BadgeLogoEllipse.Visibility = Visibility.Visible;
+            BadgeTextStack.Visibility = Visibility.Collapsed;
+        }
+        catch { }
 
         _playbackTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) }; // ~30-60 FPS
         _playbackTimer.Tick += PlaybackTimer_Tick;
@@ -54,12 +65,18 @@ public sealed partial class StudioPage : Page
 
     private async void StudioPage_Loaded(object sender, RoutedEventArgs e)
     {
-        LibraryListView.ItemsSource = _libraryItems;
         TeleprompterListView.ItemsSource = _teleprompterItems;
 
         // Apply initial visualizer & palette
         ApplyColorPalette(_currentColorPalette);
         ApplyThemeVisualizer(_currentTheme);
+
+        // Populate System Fonts for Magic Text
+        var fontFamilies = SkiaSharp.SKFontManager.Default.FontFamilies.OrderBy(f => f).ToList();
+        FontSelector.ItemsSource = fontFamilies;
+        int defaultFontIdx = fontFamilies.IndexOf("Leelawadee UI");
+        if (defaultFontIdx < 0) defaultFontIdx = fontFamilies.IndexOf("Segoe UI");
+        FontSelector.SelectedIndex = defaultFontIdx >= 0 ? defaultFontIdx : 0;
 
         // Start continuous visualizer & animation loop (ambient motion when paused, reactive when playing)
         _playbackTimer.Start();
@@ -121,11 +138,7 @@ public sealed partial class StudioPage : Page
             }
 
             CurrentTimeText.Text = pos.ToString(@"mm\:ss\.ff");
-
-            if (!_isUserSeeking)
-            {
-                WaveformSlider.Value = pos.TotalSeconds;
-            }
+            WaveformSlider.Value = pos.TotalSeconds;
 
             // Rotate center vinyl disc in DirectX (playing speed)
             VinylRotateTransform.Angle = (VinylRotateTransform.Angle + 2.0) % 360;
@@ -148,7 +161,7 @@ public sealed partial class StudioPage : Page
         UpdateVisualizerFrame();
     }
 
-    private void LoadAudioTrack(MediaItem item)
+    private async void LoadAudioTrack(MediaItem item)
     {
         if (string.IsNullOrEmpty(item.Path)) return;
 
@@ -179,8 +192,33 @@ public sealed partial class StudioPage : Page
         string cleanTitle = Path.GetFileNameWithoutExtension(item.Name);
         StageSongTitleText.Text = cleanTitle;
         TitleInputBox.Text = cleanTitle;
+        
+        // Reset artist and lyrics to avoid stale data from previous tracks
+        StageArtistText.Text = "Unknown Artist";
+        ArtistInputBox.Text = "";
+        StageLyricsText.Text = "No lyrics loaded... 🧠 Scan ready.";
+        UpdateLoadedLyrics(new List<LyricLine>());
+        
         BadgeLine1Box.Text = cleanTitle.Length > 12 ? cleanTitle[..12] : cleanTitle;
         ProjectTitleText.Text = $"Project: {cleanTitle} - 60 FPS";
+
+        // Auto-load cached .lrc lyrics if they exist from a previous process
+        string lrcPath = Path.ChangeExtension(resolvedPath, ".lrc");
+        if (File.Exists(lrcPath))
+        {
+            var lyrics = await VidaApiClient.Instance.ImportSubtitleFileAsync(lrcPath);
+            if (lyrics != null && lyrics.Count > 0)
+            {
+                UpdateLoadedLyrics(lyrics);
+                StageLyricsText.Text = lyrics[0].Text;
+                
+                // Show right panel
+                TabRightTeleprompterBtn.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
+                TabRightStyleBtn.Style = (Style)Application.Current.Resources["DefaultButtonStyle"];
+                RightTeleprompterPanel.Visibility = Visibility.Visible;
+                RightStylePanel.Visibility = Visibility.Collapsed;
+            }
+        }
 
         // Native Windows MediaPlayer loading with HTTP streaming fallback
         try
@@ -299,10 +337,19 @@ public sealed partial class StudioPage : Page
             if (dataPackageView.Contains(StandardDataFormats.Text))
             {
                 string text = await dataPackageView.GetTextAsync();
-                YouTubeUrlBox.Text = text.Trim();
-                ShowActivity("Pasted YouTube link from clipboard");
-                await Task.Delay(1000);
-                HideActivity();
+                YouTubeUrlBox.Text = text;
+                
+                // If it looks like a URL, auto-download it immediately
+                if (text.Contains("http://") || text.Contains("https://"))
+                {
+                    DownloadYouTube_Click(sender, e);
+                }
+                else
+                {
+                    ShowActivity("Pasted text from clipboard");
+                    await Task.Delay(1000);
+                    HideActivity();
+                }
             }
         }
         catch (Exception ex)
@@ -353,20 +400,19 @@ public sealed partial class StudioPage : Page
 
     private async void DownloadYouTube_Click(object sender, RoutedEventArgs e)
     {
-        string rawInput = YouTubeUrlBox.Text.Trim();
+        string rawInput = YouTubeUrlBox.Text;
         if (string.IsNullOrEmpty(rawInput))
         {
-            ShowActivity("Please enter or paste a YouTube URL first.");
+            ShowActivity("Please paste a valid YouTube URL first.");
             await Task.Delay(1500);
             HideActivity();
             return;
         }
 
         string url = NormalizeYouTubeUrl(rawInput);
-        YouTubeUrlBox.Text = url;
 
-        YouTubeProgressBar.Visibility = Visibility.Visible;
         ShowActivity("Connecting to YouTube stream...");
+        YouTubeProgressBar.Visibility = Visibility.Visible;
 
         using var cts = new CancellationTokenSource();
         var progressTask = Task.Run(async () =>
@@ -408,20 +454,24 @@ public sealed partial class StudioPage : Page
             string title = result.Value.TryGetProperty("title", out var tProp) ? tProp.GetString() ?? "" : "";
             string artist = result.Value.TryGetProperty("artist", out var aProp) ? aProp.GetString() ?? "" : "";
 
+            var item = new MediaItem { Name = Path.GetFileName(audioPath), Path = audioPath, Type = "audio" };
+            _libraryItems.Insert(0, item);
+            LibrarySelector.SelectedItem = item;
+            LoadAudioTrack(item);
+            
+            // Apply metadata AFTER LoadAudioTrack clears it
             if (!string.IsNullOrEmpty(title))
             {
                 TitleInputBox.Text = title;
                 StageSongTitleText.Text = title;
+                ProjectTitleText.Text = $"Project: {title} - 60 FPS";
             }
             if (!string.IsNullOrEmpty(artist))
             {
                 ArtistInputBox.Text = artist;
                 StageArtistText.Text = artist;
             }
-
-            var item = new MediaItem { Name = Path.GetFileName(audioPath), Path = audioPath, Type = "audio" };
-            _libraryItems.Insert(0, item);
-            LoadAudioTrack(item);
+            
             _player.Play();
 
             // Auto-load any synchronized subtitles or lyrics extracted with the track
@@ -645,6 +695,40 @@ public sealed partial class StudioPage : Page
         ApplyThemeVisualizer(template.Theme);
         ApplyColorPalette(template.Palette);
         ApplyLyricStyle(template.LyricStyle);
+    }
+
+    private async void BrowseLogo_Click(object sender, RoutedEventArgs e)
+    {
+        var picker = new Windows.Storage.Pickers.FileOpenPicker();
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(App.CurrentWindow));
+        picker.ViewMode = Windows.Storage.Pickers.PickerViewMode.Thumbnail;
+        picker.SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.PicturesLibrary;
+        picker.FileTypeFilter.Add(".png");
+        picker.FileTypeFilter.Add(".jpg");
+        picker.FileTypeFilter.Add(".jpeg");
+
+        var file = await picker.PickSingleFileAsync();
+        if (file != null)
+        {
+            LogoPathBox.Text = file.Path;
+            
+            // Update UI preview
+            var bmp = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(file.Path));
+            BadgeLogoBrush.ImageSource = bmp;
+            BadgeLogoEllipse.Visibility = Visibility.Visible;
+            BadgeTextStack.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void FontSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (FontSelector.SelectedItem is string fontName)
+        {
+            var fontFamily = new Microsoft.UI.Xaml.Media.FontFamily(fontName);
+            if (StageLyricsText != null) StageLyricsText.FontFamily = fontFamily;
+            if (StageSongTitleText != null) StageSongTitleText.FontFamily = fontFamily;
+            if (StageArtistText != null) StageArtistText.FontFamily = fontFamily;
+        }
     }
 
     // ================= DYNAMIC REACTIVE THEME & COLOR PALETTE =================
@@ -1594,6 +1678,7 @@ public sealed partial class StudioPage : Page
             string? saved = await VidaApiClient.Instance.UploadAudioFileAsync(file.Path);
             var item = new MediaItem { Name = file.Name, Path = saved ?? file.Path, Type = "audio" };
             _libraryItems.Insert(0, item);
+            LibrarySelector.SelectedItem = item; // Auto-select newly dropped item
             LoadAudioTrack(item);
             _player.Play();
         }
@@ -1617,19 +1702,32 @@ public sealed partial class StudioPage : Page
                 string? saved = await VidaApiClient.Instance.UploadAudioFileAsync(file.Path);
                 var item = new MediaItem { Name = file.Name, Path = saved ?? file.Path, Type = "audio" };
                 _libraryItems.Insert(0, item);
+                LibrarySelector.SelectedItem = item; // Auto-select newly dropped item
                 LoadAudioTrack(item);
                 _player.Play();
             }
         }
     }
 
+    private void LibrarySelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (LibrarySelector.SelectedItem is MediaItem item)
+        {
+            LoadAudioTrack(item);
+            _player.Play();
+        }
+    }
+
     private void LibraryListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        // Stubbed since LibraryListView is removed in the magic UI
+        /*
         if (LibraryListView.SelectedItem is MediaItem item)
         {
             LoadAudioTrack(item);
             _player.Play();
         }
+        */
     }
 
     // ================= TRANSPORT CONTROLS =================
@@ -1677,9 +1775,140 @@ public sealed partial class StudioPage : Page
         _player.Volume = e.NewValue / 100.0;
     }
 
-    private void QuickAutoPerfect_Click(object sender, RoutedEventArgs e)
+    private async void QuickAutoPerfect_Click(object sender, RoutedEventArgs e)
     {
-        Frame.Navigate(typeof(AutoPipelinePage));
+        if (string.IsNullOrEmpty(_currentAudioPath) || !File.Exists(_currentAudioPath))
+        {
+            var noAudioDialog = new ContentDialog
+            {
+                Title = "No Audio Loaded",
+                Content = "Please drop a song file into the media pool first to use the Auto Perfect magic.",
+                CloseButtonText = "OK",
+                XamlRoot = this.XamlRoot
+            };
+            await noAudioDialog.ShowAsync();
+            return;
+        }
+
+        // 1. File Picker for Save Location
+        var savePicker = new Windows.Storage.Pickers.FileSavePicker();
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.CurrentWindow);
+        WinRT.Interop.InitializeWithWindow.Initialize(savePicker, hwnd);
+        savePicker.SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.VideosLibrary;
+        savePicker.FileTypeChoices.Add("MP4 Video", new List<string>() { ".mp4" });
+        savePicker.SuggestedFileName = $"VIDA_Magic_{DateTime.Now:yyyyMMdd_HHmmss}";
+
+        var file = await savePicker.PickSaveFileAsync();
+        if (file == null) return; // User cancelled
+        string outPath = file.Path;
+
+        // 2. Show 2027 Magic UI State
+        ShowActivity("✨ AI Auto Perfect: Extracting Lyrics & Stems...");
+        MagicLoadingOverlay.Visibility = Visibility.Visible;
+        MagicLoadingBar.IsIndeterminate = true;
+        MagicLoadingSubtext.Text = "Transcribing audio via Gemini AI...";
+        QuickAutoPerfect_Click_Visuals(true);
+
+        try
+        {
+            // 3. Transcription (AI)
+            var lyrics = await VidaApiClient.Instance.TranscribeAudioAsync(_currentAudioPath, "km", "gemini-fast");
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                UpdateLoadedLyrics(lyrics);
+                MagicLoadingSubtext.Text = "Auto-styling and preparing Render Engine...";
+            });
+
+            // 4. Auto-Select Theme & Palette randomly from top-tier ones
+            string[] topThemes = { "ocean_wave", "quantum_vortex", "hyper_liquid", "aurora_borealis", "sonic_nebula", "dna_helix" };
+            string[] topPalettes = { "cyberpunk", "angkor", "neon_synth", "royal_palace", "sunset" };
+            
+            string autoTheme = topThemes[_random.Next(topThemes.Length)];
+            string autoPalette = topPalettes[_random.Next(topPalettes.Length)];
+            string selectedFont = FontSelector.SelectedItem as string ?? "Leelawadee UI";
+
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                ApplyThemeVisualizer(autoTheme);
+                ApplyColorPalette(autoPalette);
+            });
+
+            // 5. Start Native Render (Superfast C# Pipeline)
+            RenderService.Instance.ProgressChanged += (pct, msg) =>
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    MagicLoadingBar.IsIndeterminate = false;
+                    MagicLoadingBar.Value = pct;
+                    MagicLoadingSubtext.Text = $"Rendering: {pct:F0}% - {msg}";
+                });
+            };
+
+            await RenderService.Instance.StartNativeRenderAsync(
+                audioPath: _currentAudioPath,
+                outputPath: outPath,
+                width: 1080, height: 1920, fps: 60, // Auto-pick 9:16 Shorts format by default for "magic" modern feel
+                theme: autoTheme,
+                palette: autoPalette,
+                songTitle: StageSongTitleText.Text,
+                artistName: TitleInputBox.Text,
+                lyrics: lyrics,
+                fontName: selectedFont,
+                logoPath: string.IsNullOrWhiteSpace(LogoPathBox.Text) ? @"Assets\VibeTunesLogo.png" : LogoPathBox.Text
+            );
+
+            // 5. Done!
+            var successDialog = new ContentDialog
+            {
+                Title = "✨ Magic Video Created!",
+                Content = $"Your video is ready and rendered at 60FPS in record time.\n\nSaved to: {outPath}",
+                PrimaryButtonText = "Open Folder",
+                CloseButtonText = "Awesome",
+                XamlRoot = this.XamlRoot
+            };
+            
+            var result = await successDialog.ShowAsync();
+            if (result == ContentDialogResult.Primary)
+            {
+                System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{outPath}\"");
+            }
+        }
+        catch (Exception ex)
+        {
+            var errDialog = new ContentDialog
+            {
+                Title = "Magic Failed",
+                Content = $"An error occurred during Auto Perfect: {ex.Message}",
+                CloseButtonText = "OK",
+                XamlRoot = this.XamlRoot
+            };
+            await errDialog.ShowAsync();
+        }
+        finally
+        {
+            HideActivity();
+            MagicLoadingOverlay.Visibility = Visibility.Collapsed;
+            QuickAutoPerfect_Click_Visuals(false);
+        }
+    }
+
+    private void QuickAutoPerfect_Click_Visuals(bool isWorking)
+    {
+        // Find the button and disable it during work
+        // The sender isn't passed here, so we just toggle the UI generically
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (isWorking)
+            {
+                ActivityCapsule.Visibility = Visibility.Visible;
+                ActivityCapsule.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 139, 92, 246)); // Purple glow
+            }
+            else
+            {
+                ActivityCapsule.Visibility = Visibility.Collapsed;
+                ActivityCapsule.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 49, 46, 129));
+            }
+        });
     }
 
     private void NavigateExport_Click(object sender, RoutedEventArgs e)

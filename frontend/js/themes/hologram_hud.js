@@ -141,7 +141,7 @@ export function drawHologramHUD(ctx, w, h, bars, bass) {
       const baseFs1 = Math.floor(pulseRadius * 0.36);
       const fs1 = len1 > 7 ? Math.max(11, Math.floor(baseFs1 * (7 / len1))) : baseFs1;
       ctx.fillStyle = `rgb(${priRgb})`;
-      ctx.font = `800 ${Math.floor((Math.floor((fs1) * (state.titleScale || 1.5))) * (state.titleScale || 1.5))}px 'Kantumruy Pro', 'JetBrains Mono', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Thai', monospace`;
+      ctx.font = `800 ${Math.floor((Math.floor((Math.floor((fs1) * (state.titleScale || 1.5))) * (state.titleScale || 1.5))) * (state.titleScale || 1.5))}px 'Kantumruy Pro', 'JetBrains Mono', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Thai', monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(center1, cx, center2 && center2.trim() ? cy - pulseRadius * 0.15 : cy);
@@ -151,7 +151,7 @@ export function drawHologramHUD(ctx, w, h, bars, bass) {
       const len2 = Math.max(center2.length, 6);
       const baseFs2 = Math.floor(pulseRadius * 0.18);
       const fs2 = len2 > 10 ? Math.max(9, Math.floor(baseFs2 * (10 / len2))) : baseFs2;
-      ctx.font = `600 ${Math.floor((Math.floor((fs2) * (state.titleScale || 1.5))) * (state.titleScale || 1.5))}px 'Kantumruy Pro', 'JetBrains Mono', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Thai', monospace`;
+      ctx.font = `600 ${Math.floor((Math.floor((Math.floor((fs2) * (state.titleScale || 1.5))) * (state.titleScale || 1.5))) * (state.titleScale || 1.5))}px 'Kantumruy Pro', 'JetBrains Mono', 'Noto Sans SC', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans Thai', monospace`;
       ctx.fillStyle = `rgba(${secRgb}, 0.95)`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
