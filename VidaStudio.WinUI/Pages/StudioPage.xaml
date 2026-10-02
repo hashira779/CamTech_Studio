@@ -8,7 +8,8 @@
     xmlns:services="using:VidaStudio.Services"
     xmlns:models="using:VidaStudio.Models"
     xmlns:controls="using:CommunityToolkit.WinUI.Controls"
-    mc:Ignorable="d">
+    mc:Ignorable="d"
+    NavigationCacheMode="Required">
 
     <Grid Background="Transparent">
         <Grid.RowDefinitions>
@@ -449,16 +450,16 @@
                                     <Grid>
                                         <Border Width="110" Height="110" CornerRadius="55" BorderBrush="#1F2937" BorderThickness="1" />
                                         <Border Width="80" Height="80" CornerRadius="40" BorderBrush="#374151" BorderThickness="1" />
-                                        <!-- Center Label -->
-                                        <Border x:Name="VinylCenterLabel" Width="60" Height="60" CornerRadius="30" Background="#EC4899">
+                                        <!-- Center Label / Logo -->
+                                        <Border x:Name="VinylCenterLabel" Width="60" Height="60" CornerRadius="30" Background="#111827" BorderBrush="#38BDF8" BorderThickness="1">
                                             <Grid>
-                                                <StackPanel x:Name="BadgeTextStack" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="1">
+                                                <StackPanel x:Name="BadgeTextStack" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="1" Visibility="Collapsed">
                                                     <TextBlock x:Name="BadgePrimaryText" Text="VIDA" FontSize="9" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" />
                                                     <TextBlock x:Name="BadgeSecondaryText" Text="OFFICIAL" FontSize="7" FontWeight="SemiBold" Foreground="#FDF2F8" HorizontalAlignment="Center" />
                                                 </StackPanel>
-                                                <Ellipse x:Name="BadgeLogoEllipse" Width="52" Height="52" Visibility="Collapsed">
+                                                <Ellipse x:Name="BadgeLogoEllipse" Width="52" Height="52" Visibility="Visible">
                                                     <Ellipse.Fill>
-                                                        <ImageBrush x:Name="BadgeLogoBrush" Stretch="UniformToFill" />
+                                                        <ImageBrush x:Name="BadgeLogoBrush" Stretch="UniformToFill" ImageSource="ms-appx:///Assets/VibeTunesLogo.png" />
                                                     </Ellipse.Fill>
                                                 </Ellipse>
                                             </Grid>
@@ -477,7 +478,7 @@
                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,16" Spacing="4">
                                 <Border x:Name="LyricPillBorder" Background="#AA090D16" CornerRadius="6" Padding="14,6">
                                     <TextBlock x:Name="StageLyricsText" Text="ស្រឡាញ់អូនរហូតដល់ថ្ងៃសូន្យ 🌙✨"
-                                               FontSize="18" FontWeight="SemiBold" Foreground="#FCD34D"
+                                               FontSize="18" FontWeight="SemiBold" Foreground="#FFFFFF"
                                                HorizontalAlignment="Center" />
                                 </Border>
                                 <TextBlock x:Name="LyricTimecodeText" Text="Synced Khmer Lyrics" FontSize="11" Foreground="#64748B" HorizontalAlignment="Center" />

@@ -1,9 +1,0 @@
-System.InvalidCastException: Unable to cast object of type 'Microsoft.UI.Xaml.Visibility' to type 'Microsoft.UI.Xaml.Media.Brush'.
-   at VidaStudio.Pages.SettingsPage.SettingsPage_obj1_Bindings.Update_ViewModel_IsBackendReady(Boolean obj, Int32 phase) in D:\Project\VIDA\VidaStudio.WinUI\obj\Debug\net10.0-windows10.0.26100.0\win-x64\Pages\SettingsPage.g.cs:line 563
-   at VidaStudio.Pages.SettingsPage.SettingsPage_obj1_Bindings.Update_ViewModel(SettingsViewModel obj, Int32 phase) in D:\Project\VIDA\VidaStudio.WinUI\obj\Debug\net10.0-windows10.0.26100.0\win-x64\Pages\SettingsPage.g.cs:line 464
-   at VidaStudio.Pages.SettingsPage.SettingsPage_obj1_Bindings.Update_(SettingsPage obj, Int32 phase) in D:\Project\VIDA\VidaStudio.WinUI\obj\Debug\net10.0-windows10.0.26100.0\win-x64\Pages\SettingsPage.g.cs:line 430
-   at VidaStudio.Pages.SettingsPage.SettingsPage_obj1_Bindings.Update() in D:\Project\VIDA\VidaStudio.WinUI\obj\Debug\net10.0-windows10.0.26100.0\win-x64\Pages\SettingsPage.g.cs:line 371
-   at VidaStudio.Pages.SettingsPage.SettingsPage_obj1_Bindings.Initialize() in D:\Project\VIDA\VidaStudio.WinUI\obj\Debug\net10.0-windows10.0.26100.0\win-x64\Pages\SettingsPage.g.cs:line 365
-   at VidaStudio.Pages.SettingsPage.SettingsPage_obj1_Bindings.Loading(FrameworkElement src, Object data) in D:\Project\VIDA\VidaStudio.WinUI\obj\Debug\net10.0-windows10.0.26100.0\win-x64\Pages\SettingsPage.g.cs:line 404
-   at WinRT._EventSource_global__Windows_Foundation_TypedEventHandler_global__Microsoft_UI_Xaml_FrameworkElement__object_.EventState.<GetEventInvoke>b__1_0(FrameworkElement sender, Object args)
-   at WinRT.GenericTypeInstantiations.Windows_Foundation_TypedEventHandler_2_Microsoft_UI_Xaml_FrameworkElement__object.Do_Abi_Invoke(IntPtr thisPtr, IntPtr sender, IntPtr args)

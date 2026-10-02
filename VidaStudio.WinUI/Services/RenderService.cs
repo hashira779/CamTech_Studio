@@ -76,8 +76,9 @@ public class RenderService
 
     private void ReportProgress(double percent, string status)
     {
-        // Fire event on UI thread
-        if (Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread() is { } dq)
+        // Fire event on UI thread using the main window's dispatcher queue
+        var dq = App.CurrentWindow?.DispatcherQueue;
+        if (dq != null)
         {
             dq.TryEnqueue(() => ProgressChanged?.Invoke(percent, status));
         }

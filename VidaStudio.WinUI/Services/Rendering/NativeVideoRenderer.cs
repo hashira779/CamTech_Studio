@@ -110,6 +110,9 @@ public sealed class NativeVideoRenderer : IDisposable
             }
         });
 
+        // Audio data for current frame buffer
+        float[] spec = new float[analysis.Spectrum.GetLength(1)];
+
         // 5. Render Loop
         for (int fIdx = 0; fIdx < totalFrames; fIdx++)
         {
@@ -117,8 +120,6 @@ public sealed class NativeVideoRenderer : IDisposable
 
             float tCurrent = (float)fIdx / _fps;
             
-            // Audio data for current frame
-            float[] spec = new float[analysis.Spectrum.GetLength(1)];
             for(int i=0; i<spec.Length; i++) spec[i] = analysis.Spectrum[fIdx, i];
             float bass = analysis.Bass[fIdx];
             float onset = analysis.Onsets[fIdx];
@@ -192,11 +193,14 @@ public sealed class NativeVideoRenderer : IDisposable
 
     private void StartFfmpegPipe()
     {
-        string ffmpegExe = "ffmpeg"; // Assume in PATH or bundled
+        string ffmpegExe = "ffmpeg";
+        string venvFfmpeg = System.IO.Path.Combine(BackendService.Instance.GetProjectRoot(), "venv", "Scripts", "ffmpeg.exe");
+        if (System.IO.File.Exists(venvFfmpeg)) ffmpegExe = venvFfmpeg;
+        else if (System.IO.File.Exists(@"C:\ffmpeg\bin\ffmpeg.exe")) ffmpegExe = @"C:\ffmpeg\bin\ffmpeg.exe";
         string args = $"-y -f rawvideo -vcodec rawvideo -s {_width}x{_height} -pix_fmt yuv420p -r {_fps} " +
                       $"-i - -i \"{_audioPath}\" " +
-                      $"-c:v libx264 -preset fast -crf 18 " +
-                      $"-c:a aac -b:a 320k -shortest " +
+                      $"-c:v libx264 -preset ultrafast -crf 20 " +
+                      $"-c:a aac -b:a 192k -shortest " +
                       $"\"{_outputPath}\"";
 
         var psi = new ProcessStartInfo
@@ -248,15 +252,15 @@ public sealed class NativeVideoRenderer : IDisposable
                     byte b = rowSrc[x * 4 + 2];
 
                     int yVal = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
-                    yPlane[yDstOffset + x] = (byte)Math.Clamp(yVal, 0, 255);
+                    yPlane[yDstOffset + x] = yVal < 0 ? (byte)0 : (yVal > 255 ? (byte)255 : (byte)yVal);
 
                     if (y % 2 == 0 && x % 2 == 0)
                     {
                         int uVal = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
                         int vVal = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
                         
-                        uPlane[uvDstOffset + (x / 2)] = (byte)Math.Clamp(uVal, 0, 255);
-                        vPlane[uvDstOffset + (x / 2)] = (byte)Math.Clamp(vVal, 0, 255);
+                        uPlane[uvDstOffset + (x / 2)] = uVal < 0 ? (byte)0 : (uVal > 255 ? (byte)255 : (byte)uVal);
+                        vPlane[uvDstOffset + (x / 2)] = vVal < 0 ? (byte)0 : (vVal > 255 ? (byte)255 : (byte)vVal);
                     }
                 }
             });

@@ -97,7 +97,7 @@
                 </NavigationViewItem>
             </NavigationView.FooterMenuItems>
 
-            <Frame x:Name="NavFrame" />
+            <Frame x:Name="NavFrame" CacheSize="10" />
         </NavigationView>
 
         <!-- Drag and Drop Overlay -->

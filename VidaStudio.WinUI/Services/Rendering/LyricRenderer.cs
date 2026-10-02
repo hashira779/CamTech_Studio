@@ -1,3 +1,4 @@
+#pragma warning disable CS0618
 using SkiaSharp;
 using SkiaSharp.HarfBuzz;
 using VidaStudio.Models;

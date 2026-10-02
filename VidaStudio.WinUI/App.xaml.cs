@@ -23,11 +23,36 @@ public partial class App : Application
         InitializeComponent();
         UnhandledException += (sender, e) =>
         {
-            try { System.IO.File.WriteAllText(@"d:\Project\VIDA\crash.txt", e.Exception.ToString()); } catch { }
+            e.Handled = true;
+            string msg = e.Exception?.ToString() ?? "Unknown error";
+            try { System.IO.File.WriteAllText(@"d:\Project\VIDA\crash.txt", msg); } catch { }
+            try
+            {
+                if (CurrentWindow?.Content is FrameworkElement fe && fe.XamlRoot != null)
+                {
+                    fe.DispatcherQueue.TryEnqueue(async () =>
+                    {
+                        var dlg = new ContentDialog
+                        {
+                            Title = "⚠️ Unexpected Error",
+                            Content = new ScrollViewer
+                            {
+                                Content = new TextBlock { Text = msg, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, IsTextSelectionEnabled = true },
+                                MaxHeight = 400
+                            },
+                            CloseButtonText = "OK",
+                            XamlRoot = fe.XamlRoot
+                        };
+                        await dlg.ShowAsync();
+                    });
+                }
+            }
+            catch { }
         };
         AppDomain.CurrentDomain.UnhandledException += (sender, e) =>
         {
-            try { System.IO.File.WriteAllText(@"d:\Project\VIDA\crash.txt", e.ExceptionObject?.ToString()); } catch { }
+            string msg = e.ExceptionObject?.ToString() ?? "Unknown fatal error";
+            try { System.IO.File.WriteAllText(@"d:\Project\VIDA\crash.txt", msg); } catch { }
         };
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {

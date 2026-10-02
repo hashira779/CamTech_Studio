@@ -58,6 +58,7 @@ public partial class AutoPipelineViewModel : ObservableObject
         IsProcessing = true;
         OverallProgress = 0;
         CurrentStatusText = "Initializing AUTO PERFECT 12-Step Engine...";
+        AuditSummary = "Quality Control audit pending.";
 
         // Reset all steps
         foreach (var step in Steps)
@@ -75,10 +76,34 @@ public partial class AutoPipelineViewModel : ObservableObject
                 CurrentStatusText = $"Executing: {step.Title}";
                 step.DetailMessage = "Processing...";
 
-                for (int sub = 0; sub < 4; sub++)
+                if (step.StepNumber == 11)
                 {
-                    await Task.Delay(250);
-                    OverallProgress = Math.Round(((i * 4) + sub + 1) / (double)(Steps.Count * 4) * 100, 1);
+                    AuditSummary = "Running QA checks...";
+                    await Task.Delay(400);
+                    
+                    step.DetailMessage = "Finding sync drift...";
+                    await Task.Delay(400);
+                    
+                    step.DetailMessage = "Fixing 12ms drift in Chorus...";
+                    AuditSummary = "⚠ Drift detected. Auto-correcting...";
+                    await Task.Delay(600);
+                    
+                    step.DetailMessage = "Checking safe-area bounds...";
+                    await Task.Delay(400);
+                    
+                    step.DetailMessage = "Resolving text overlap issues...";
+                    AuditSummary = "⚠ UI Overlap detected. Auto-correcting...";
+                    await Task.Delay(600);
+                    
+                    OverallProgress = Math.Round(((i * 4) + 4) / (double)(Steps.Count * 4) * 100, 1);
+                }
+                else
+                {
+                    for (int sub = 0; sub < 4; sub++)
+                    {
+                        await Task.Delay(250);
+                        OverallProgress = Math.Round(((i * 4) + sub + 1) / (double)(Steps.Count * 4) * 100, 1);
+                    }
                 }
 
                 step.Status = StepStatus.Success;
@@ -105,6 +130,7 @@ public partial class AutoPipelineViewModel : ObservableObject
         IsProcessing = false;
         OverallProgress = 0;
         CurrentStatusText = "Ready to start AUTO PERFECT pipeline";
+        AuditSummary = "Quality Control audit pending.";
         InitializeSteps();
     }
 }

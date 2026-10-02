@@ -84,8 +84,15 @@ public partial class ExportViewModel : ObservableObject
 
             int fps = Enable60Fps ? 60 : 30;
 
-            // TODO: Get actual path from UI state (StudioHub)
-            string inputAudio = @"d:\Project\VIDA\uploads\audio\demo_synthwave.wav";
+            // Get actual path and state from UI state (StudioHub)
+            var studio = VidaStudio.Pages.StudioPage.Current;
+            if (studio == null || string.IsNullOrEmpty(studio.CurrentAudioPath))
+            {
+                StatusMessage = "Export Error: No audio track is currently loaded in the Studio.";
+                return;
+            }
+
+            string inputAudio = studio.CurrentAudioPath;
             string outPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), $"VIDA_Export_{DateTime.Now:yyyyMMdd_HHmmss}.mp4");
 
             await RenderService.Instance.StartNativeRenderAsync(
@@ -94,10 +101,11 @@ public partial class ExportViewModel : ObservableObject
                 width: width,
                 height: height,
                 fps: fps,
-                theme: "ocean_wave",    // TODO: Get from UI state
-                palette: "cyberpunk",   // TODO: Get from UI state
-                songTitle: "My Song",   // TODO: Get from UI state
-                artistName: "My Artist" // TODO: Get from UI state
+                theme: studio.CurrentTheme,
+                palette: studio.CurrentPalette,
+                songTitle: studio.CurrentSongTitle,
+                artistName: studio.CurrentArtistName,
+                lyrics: studio.CurrentLyrics
             );
 
             StatusMessage = $"✨ Video exported successfully to {outPath}!";

@@ -136,83 +136,105 @@ public sealed class ThemeRenderer
         float baseR = Math.Min(_width, _height) * 0.18f;
         float maxBar = Math.Min(_width, _height) * 0.28f;
 
-        // Mirror spectrum: first half + reversed second half
-        int halfLen = spectrum.Length;
-        float[] mirrored = new float[halfLen * 2];
-        for (int i = 0; i < halfLen; i++)
+        // Smooth spectrum to eliminate sharp jaggies
+        float[] smoothed = new float[spectrum.Length];
+        for (int i = 0; i < spectrum.Length; i++)
         {
-            mirrored[i] = spectrum[i];
-            mirrored[halfLen * 2 - 1 - i] = spectrum[i];
+            float sum = 0;
+            for (int j = -2; j <= 2; j++)
+            {
+                int idx = Math.Clamp(i + j, 0, spectrum.Length - 1);
+                sum += spectrum[idx];
+            }
+            smoothed[i] = sum / 5f;
         }
 
-        int numBars = mirrored.Length;
-        float angleStep = 2f * MathF.PI / numBars;
+        // Mirror spectrum: first half + reversed second half
+        int numBars = smoothed.Length * 2;
+        float[] mirrored = new float[numBars];
+        for (int i = 0; i < smoothed.Length; i++)
+        {
+            mirrored[i] = smoothed[i];
+            mirrored[numBars - 1 - i] = smoothed[i];
+        }
 
+        float angleStep = 2f * MathF.PI / numBars;
         var priColor = ToSKColor(palette.Primary);
         var secColor = ToSKColor(palette.Secondary);
+        var glowColor = ToSKColor(palette.Glow);
 
-        using var barPaint = new SKPaint { IsAntialias = true, StrokeWidth = 3, Style = SKPaintStyle.Stroke };
-
-        // Collect outer tips for spline
-        SKPoint[] outerTips = new SKPoint[numBars];
+        SKPoint[] innerPoints = new SKPoint[numBars];
+        SKPoint[] outerPoints = new SKPoint[numBars];
 
         for (int i = 0; i < numBars; i++)
         {
             float angle = angleStep * i - MathF.PI / 2;
             float val = mirrored[i];
             float rInner = baseR + 5;
-            float rOuter = baseR + 5 + val * maxBar;
+            float rOuter = baseR + 5 + val * maxBar * (1f + bass * 0.15f);
 
             float cos = MathF.Cos(angle);
             float sin = MathF.Sin(angle);
 
-            float x1 = _cx + rInner * cos;
-            float y1 = _cy + rInner * sin;
-            float x2 = _cx + rOuter * cos;
-            float y2 = _cy + rOuter * sin;
+            innerPoints[i] = new SKPoint(_cx + rInner * cos, _cy + rInner * sin);
+            outerPoints[i] = new SKPoint(_cx + rOuter * cos, _cy + rOuter * sin);
+            
+            // Floating Peak caps logic
+            if (rOuter > _peakCaps[i]) _peakCaps[i] = rOuter;
+            else _peakCaps[i] = Math.Max(baseR + 5, _peakCaps[i] - 0.02f * maxBar);
+        }
 
-            // Gradient color per bar
+        // 1. Draw glowing outer spline behind everything
+        using var path = new SKPath();
+        path.MoveTo(outerPoints[0]);
+        for (int i = 1; i < numBars; i++) path.LineTo(outerPoints[i]);
+        path.Close();
+
+        using var glowPaint = new SKPaint
+        {
+            IsAntialias = true,
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 16f + bass * 12f,
+            Color = glowColor.WithAlpha(110),
+            MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 14f),
+            StrokeJoin = SKStrokeJoin.Round
+        };
+        canvas.DrawPath(path, glowPaint);
+
+        // 2. Draw semi-transparent filled connection area (Organic Look)
+        using var fillPath = new SKPath();
+        fillPath.MoveTo(innerPoints[0]);
+        for (int i = 1; i < numBars; i++) fillPath.LineTo(innerPoints[i]);
+        for (int i = numBars - 1; i >= 0; i--) fillPath.LineTo(outerPoints[i]);
+        fillPath.Close();
+
+        using var fillPaint = new SKPaint
+        {
+            IsAntialias = true,
+            Style = SKPaintStyle.Fill,
+            Color = priColor.WithAlpha((byte)(20 + bass * 30))
+        };
+        canvas.DrawPath(fillPath, fillPaint);
+
+        // 3. Draw sleek rounded solid bars & floating peak particles
+        using var barPaint = new SKPaint { IsAntialias = true, StrokeWidth = 3.5f, Style = SKPaintStyle.Stroke, StrokeCap = SKStrokeCap.Round };
+        for (int i = 0; i < numBars; i++)
+        {
             float t = (float)i / numBars;
             barPaint.Color = LerpColor(priColor, secColor, t);
-
-            canvas.DrawLine(x1, y1, x2, y2, barPaint);
-            outerTips[i] = new SKPoint(x2, y2);
-
-            // Peak caps
-            if (rOuter > _peakCaps[i])
-                _peakCaps[i] = rOuter;
-            else
-                _peakCaps[i] = Math.Max(baseR + 5, _peakCaps[i] - 0.015f * maxBar);
-
-            float peakR = _peakCaps[i];
-            float px = _cx + peakR * cos;
-            float py = _cy + peakR * sin;
-            barPaint.StrokeWidth = 2;
-            barPaint.Color = priColor.WithAlpha(180);
+            canvas.DrawLine(innerPoints[i], outerPoints[i], barPaint);
+            
+            // Draw floating peak dots slightly above the bar
+            float peakR = _peakCaps[i] + 7f + bass * 6f;
+            float px = _cx + peakR * MathF.Cos(angleStep * i - MathF.PI / 2);
+            float py = _cy + peakR * MathF.Sin(angleStep * i - MathF.PI / 2);
+            barPaint.StrokeWidth = 4f;
+            barPaint.Color = secColor.WithAlpha(220);
             canvas.DrawPoint(px, py, barPaint);
-            barPaint.StrokeWidth = 3;
+            barPaint.StrokeWidth = 3.5f;
         }
 
-        // Outer aura spline
-        if (outerTips.Length > 4)
-        {
-            using var path = new SKPath();
-            path.MoveTo(outerTips[0]);
-            for (int i = 1; i < outerTips.Length; i++)
-                path.LineTo(outerTips[i]);
-            path.Close();
-
-            using var auraPaint = new SKPaint
-            {
-                IsAntialias = true,
-                Style = SKPaintStyle.Stroke,
-                StrokeWidth = 2,
-                Color = priColor.WithAlpha(60)
-            };
-            canvas.DrawPath(path, auraPaint);
-        }
-
-        // Center disc (dark circle + glow ring)
+        // 4. Center disc (dark circle + glow ring)
         DrawCenterDisc(canvas, baseR, bass, animTime, palette);
     }
 

@@ -38,8 +38,18 @@ public sealed partial class StudioPage : Page
     private double _wavePhase = 0;
     private bool _isApplyingTemplate = false;
 
+    public static StudioPage? Current { get; private set; }
+
+    public string CurrentAudioPath => _currentAudioPath;
+    public string CurrentTheme => _currentTheme;
+    public string CurrentPalette => _currentColorPalette;
+    public string CurrentSongTitle => StageSongTitleText?.Text ?? "My Song";
+    public string CurrentArtistName => StageArtistText?.Text ?? "My Artist";
+    public List<LyricLine> CurrentLyrics => _lyricLines;
+
     public StudioPage()
     {
+        Current = this;
         InitializeComponent();
 
         LibrarySelector.ItemsSource = _libraryItems;
@@ -220,19 +230,11 @@ public sealed partial class StudioPage : Page
             }
         }
 
-        // Native Windows MediaPlayer loading with HTTP streaming fallback
+        // Native Windows MediaPlayer loading via StorageFile (fixes silent playback)
         try
         {
-            Uri mediaUri;
-            if (!string.IsNullOrEmpty(item.Url))
-            {
-                mediaUri = new Uri($"{VidaApiClient.Instance.BaseUrl}{item.Url}");
-            }
-            else
-            {
-                mediaUri = new Uri(Path.GetFullPath(resolvedPath));
-            }
-            _player.Source = MediaSource.CreateFromUri(mediaUri);
+            var file = await StorageFile.GetFileFromPathAsync(Path.GetFullPath(resolvedPath));
+            _player.Source = MediaSource.CreateFromStorageFile(file);
             _player.Volume = VolumeSlider.Value / 100.0;
         }
         catch (Exception ex)
@@ -260,6 +262,28 @@ public sealed partial class StudioPage : Page
                 }
             });
         });
+        
+        // Auto-process if no lyrics exist (parity with Web app)
+        AutoTriggerPipelineIfNoLyrics();
+    }
+    
+    private async void AutoTriggerPipelineIfNoLyrics()
+    {
+        // Wait briefly to allow any synchronized loading (e.g., YouTube subtitles) to finish
+        await Task.Delay(1000);
+        if (_lyricLines == null || _lyricLines.Count == 0)
+        {
+            try
+            {
+                // Only auto-sync lyrics, don't trigger a full render
+                AutoSyncLyrics_Click(this, new RoutedEventArgs());
+            }
+            catch (Exception ex)
+            {
+                BackendService.Instance.AppendLog($"[AutoTrigger] Error: {ex.Message}");
+                HideActivity();
+            }
+        }
     }
 
     private void UpdateLoadedLyrics(List<LyricLine> lyrics)
@@ -355,6 +379,14 @@ public sealed partial class StudioPage : Page
         catch (Exception ex)
         {
             BackendService.Instance.AppendLog($"[Paste YouTube] Error: {ex.Message}");
+            var errDialog = new ContentDialog
+            {
+                Title = "Paste Error",
+                Content = $"Could not paste from clipboard:\n{ex.Message}",
+                CloseButtonText = "OK",
+                XamlRoot = this.XamlRoot
+            };
+            await errDialog.ShowAsync();
         }
     }
 
@@ -508,9 +540,15 @@ public sealed partial class StudioPage : Page
         else
         {
             string err = VidaApiClient.Instance.LastYouTubeError ?? "Could not download. Please check the URL.";
-            ShowActivity($"⚠️ {err}");
-            await Task.Delay(3500);
             HideActivity();
+            var errDialog = new ContentDialog
+            {
+                Title = "⚠️ YouTube Download Failed",
+                Content = err,
+                CloseButtonText = "OK",
+                XamlRoot = this.XamlRoot
+            };
+            await errDialog.ShowAsync();
         }
     }
 
@@ -828,7 +866,10 @@ public sealed partial class StudioPage : Page
         if (VinylCenterLabel != null) VinylCenterLabel.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(ParseHexColor(label));
 
         if (StageArtistText != null) StageArtistText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(ParseHexColor(artist));
-        if (StageLyricsText != null) StageLyricsText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(ParseHexColor(lyric));
+        
+        // Clean modern lyrical look
+        if (LyricPillBorder != null) LyricPillBorder.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(ParseHexColor("#AA090D16"));
+        if (StageLyricsText != null) StageLyricsText.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(ParseHexColor("#FFFFFF"));
 
         _currentBarColors.Clear();
         foreach (var b in bars)
@@ -1131,8 +1172,29 @@ public sealed partial class StudioPage : Page
         bool demucs = DemucsToggle.IsOn;
 
         ShowActivity("Auto-syncing lyrics with AI...");
-        var lyrics = await VidaApiClient.Instance.TranscribeAudioAsync(_currentAudioPath, lang, model, demucs);
-        HideActivity();
+        List<LyricLine>? lyrics = null;
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+            lyrics = await VidaApiClient.Instance.TranscribeAudioAsync(_currentAudioPath, lang, model, demucs);
+        }
+        catch (Exception ex)
+        {
+            HideActivity();
+            var errDialog = new ContentDialog
+            {
+                Title = "AI Sync Failed",
+                Content = $"Could not sync lyrics:\n{ex.Message}",
+                CloseButtonText = "OK",
+                XamlRoot = this.XamlRoot
+            };
+            await errDialog.ShowAsync();
+            return;
+        }
+        finally
+        {
+            HideActivity();
+        }
 
         if (lyrics == null || lyrics.Count == 0)
         {
@@ -1410,6 +1472,14 @@ public sealed partial class StudioPage : Page
         catch (Exception ex)
         {
             BackendService.Instance.AppendLog($"[Paste AI Prompt] Error: {ex.Message}");
+            var errDialog = new ContentDialog
+            {
+                Title = "Paste Error",
+                Content = $"Could not paste into AI Prompt:\n{ex.Message}",
+                CloseButtonText = "OK",
+                XamlRoot = this.XamlRoot
+            };
+            await errDialog.ShowAsync();
         }
     }
 
@@ -1811,12 +1881,46 @@ public sealed partial class StudioPage : Page
 
         try
         {
-            // 3. Transcription (AI)
-            var lyrics = await VidaApiClient.Instance.TranscribeAudioAsync(_currentAudioPath, "km", "gemini-fast");
+            // 3. Transcription (AI) with Progress Polling
+            MagicLoadingBar.IsIndeterminate = false;
+            MagicLoadingBar.Value = 0;
+
+            using var cts = new CancellationTokenSource();
+            var progressTask = Task.Run(async () =>
+            {
+                while (!cts.Token.IsCancellationRequested)
+                {
+                    await Task.Delay(500, cts.Token).ConfigureAwait(false);
+                    if (cts.Token.IsCancellationRequested) break;
+
+                    var (pct, stage) = await VidaApiClient.Instance.GetTranscribeProgressAsync();
+                    if (!string.IsNullOrEmpty(stage))
+                    {
+                        DispatcherQueue.TryEnqueue(() =>
+                        {
+                            MagicLoadingBar.Value = pct;
+                            MagicLoadingSubtext.Text = $"{stage} ({pct}%)";
+                        });
+                    }
+                }
+            }, cts.Token);
+
+            List<LyricLine> lyrics = new List<LyricLine>();
+            try
+            {
+                lyrics = await VidaApiClient.Instance.TranscribeAudioAsync(_currentAudioPath, "km", "gemini-fast");
+            }
+            finally
+            {
+                cts.Cancel();
+                try { await progressTask; } catch { }
+            }
+
             DispatcherQueue.TryEnqueue(() =>
             {
                 UpdateLoadedLyrics(lyrics);
                 MagicLoadingSubtext.Text = "Auto-styling and preparing Render Engine...";
+                MagicLoadingBar.IsIndeterminate = true;
             });
 
             // 4. Auto-Select Theme & Palette randomly from top-tier ones

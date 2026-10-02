@@ -45,33 +45,29 @@ public sealed partial class MainWindow : Window
 
     private void NavView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
+        Type? targetPage = null;
+
         if (args.IsSettingsSelected)
         {
-            NavFrame.Navigate(typeof(SettingsPage));
+            targetPage = typeof(SettingsPage);
         }
         else if (args.SelectedItem is NavigationViewItem item)
         {
-            switch (item.Tag?.ToString())
+            targetPage = item.Tag?.ToString() switch
             {
-                case "studio":
-                    NavFrame.Navigate(typeof(StudioPage));
-                    break;
-                case "auto":
-                    NavFrame.Navigate(typeof(AutoPipelinePage));
-                    break;
-                case "styles":
-                    NavFrame.Navigate(typeof(StylesPage));
-                    break;
-                case "export":
-                    NavFrame.Navigate(typeof(ExportPage));
-                    break;
-                case "about":
-                    NavFrame.Navigate(typeof(AboutPage));
-                    break;
-                default:
-                    NavFrame.Navigate(typeof(StudioPage));
-                    break;
-            }
+                "studio" => typeof(StudioPage),
+                "auto" => typeof(AutoPipelinePage),
+                "styles" => typeof(StylesPage),
+                "export" => typeof(ExportPage),
+                "about" => typeof(AboutPage),
+                _ => typeof(StudioPage)
+            };
+        }
+
+        // Don't re-navigate if we're already on the target page
+        if (targetPage != null && NavFrame.Content?.GetType() != targetPage)
+        {
+            NavFrame.Navigate(targetPage);
         }
     }
 
@@ -105,8 +101,11 @@ public sealed partial class MainWindow : Window
                     string? uploadedPath = await VidaApiClient.Instance.UploadAudioFileAsync(file.Path);
                     if (!string.IsNullOrEmpty(uploadedPath))
                     {
-                        // Navigate to studio and load
-                        NavFrame.Navigate(typeof(StudioPage));
+                        // Only navigate if not already on StudioPage
+                        if (NavFrame.Content?.GetType() != typeof(StudioPage))
+                        {
+                            NavFrame.Navigate(typeof(StudioPage));
+                        }
                     }
                 }
             }

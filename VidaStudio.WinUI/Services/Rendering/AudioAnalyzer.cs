@@ -234,9 +234,10 @@ public sealed class AudioAnalyzer
 
     private static string FindFfmpeg()
     {
-        // Try imageio_ffmpeg bundled path, then common locations
+        string venvFfmpeg = Path.Combine(BackendService.Instance.GetProjectRoot(), "venv", "Scripts", "ffmpeg.exe");
         string[] candidates =
         [
+            venvFfmpeg,
             Path.Combine(AppContext.BaseDirectory, "ffmpeg.exe"),
             @"C:\ffmpeg\bin\ffmpeg.exe",
             "ffmpeg" // system PATH

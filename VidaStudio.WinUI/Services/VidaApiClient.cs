@@ -191,6 +191,24 @@ public class VidaApiClient
         return result;
     }
 
+    public async Task<(int percent, string stage)> GetTranscribeProgressAsync()
+    {
+        try
+        {
+            var response = await _http.GetAsync($"{BaseUrl}/api/transcribe/progress");
+            if (response.IsSuccessStatusCode)
+            {
+                var json = await response.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(json);
+                int pct = doc.RootElement.TryGetProperty("percent", out var p) ? p.GetInt32() : 0;
+                string stage = doc.RootElement.TryGetProperty("stage", out var s) ? s.GetString() ?? "" : "";
+                return (pct, stage);
+            }
+        }
+        catch { }
+        return (0, "");
+    }
+
     public string? LastYouTubeError { get; private set; }
 
     public async Task<JsonElement?> DownloadYouTubeAsync(string url)

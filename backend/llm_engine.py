@@ -760,6 +760,53 @@ class LocalLLMEngine:
     def translate_to_khmer(self, english_text: str) -> str:
         return self.translate_text(english_text, target_lang="Khmer")
 
+    def translate_lyrics_data(self, lyrics_data: List[Dict[str, Any]], target_lang: str = "Khmer") -> List[Dict[str, Any]]:
+        """Translates an array of lyrics_data objects to the target language using Gemini."""
+        if not lyrics_data:
+            return lyrics_data
+
+        # Create a simplified array with only line_id and text to save tokens
+        simplified_lines = []
+        for i, l in enumerate(lyrics_data):
+            simplified_lines.append({
+                "id": l.get("line_id", i),
+                "text": l.get("text", "")
+            })
+            
+        import json
+        payload_str = json.dumps(simplified_lines, ensure_ascii=False)
+        
+        prompt = (
+            f"You are a professional lyric translator. Translate the following lyrics to {target_lang}. "
+            "Keep the meaning, poetic tone, and context intact. "
+            "IMPORTANT: Return ONLY a valid JSON array of objects. Each object MUST have an 'id' (matching the original) and a 'text' (the translated text).\n"
+            f"Input:\n{payload_str}"
+        )
+        
+        try:
+            res_str = call_gemini_api(prompt, json_mode=True, timeout=15)
+            if not res_str:
+                return lyrics_data
+                
+            translated_lines = json.loads(res_str)
+            # Create a lookup map by id
+            trans_map = {str(item.get("id")): item.get("text", "") for item in translated_lines if "id" in item}
+            
+            # Map back to original structure
+            result_data = []
+            for i, l in enumerate(lyrics_data):
+                new_l = dict(l)
+                line_id = str(l.get("line_id", i))
+                if line_id in trans_map and trans_map[line_id].strip():
+                    new_l["text"] = trans_map[line_id]
+                    # Clear word-level timings because they are no longer valid for translated text
+                    new_l["words"] = []
+                result_data.append(new_l)
+            return result_data
+        except Exception as e:
+            print(f"[Lyric Translator] Translation failed: {e}")
+            return lyrics_data
+
 llm_engine = LocalLLMEngine()
 
 

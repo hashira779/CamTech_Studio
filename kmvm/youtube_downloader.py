@@ -154,8 +154,9 @@ def download_youtube_audio(url: str, output_dir: str, on_progress=None) -> Tuple
     ffmpeg_dir = _get_ffmpeg_dir()
     clean_url = _clean_url(url)
 
-    output_template = os.path.join(output_dir, "%(title)s.%(ext)s")
-
+    # Use %(id)s instead of %(title)s to guarantee safe filename cross-platform
+    # (avoiding OSError [Errno 22] on Windows due to characters like | ? " : in titles)
+    output_template = os.path.join(output_dir, "%(id)s.%(ext)s")
     def notify_progress(pct: int, msg: str):
         if on_progress:
             try:
@@ -310,7 +311,16 @@ def download_youtube_audio(url: str, output_dir: str, on_progress=None) -> Tuple
             if stdout_lines:
                 for line in reversed(stdout_lines):
                     candidate = line.strip()
-                    if candidate and os.path.exists(candidate):
+                    if not candidate: continue
+                    
+                    exists = False
+                    try:
+                        exists = os.path.exists(candidate)
+                    except OSError:
+                        # Windows throws Errno 22 / WinError 123 if string has invalid characters (like colons in logs)
+                        pass
+                        
+                    if exists:
                         ext = os.path.splitext(candidate)[1].lower()
                         if ext in {".mp3", ".wav", ".m4a", ".opus", ".webm", ".ogg", ".aac", ".flac"}:
                             audio_file = convert_to_mp3(candidate)
