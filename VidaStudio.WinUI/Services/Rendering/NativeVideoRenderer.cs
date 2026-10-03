@@ -23,6 +23,7 @@ public sealed class NativeVideoRenderer : IDisposable
     private readonly string _songTitle;
     private readonly string _artistName;
     private readonly string _fontName;
+    private readonly bool _useGpu;
     private readonly string? _logoPath;
     private readonly List<LyricLine> _lyrics;
     
@@ -39,7 +40,7 @@ public sealed class NativeVideoRenderer : IDisposable
         string audioPath, string outputPath, int width = 1920, int height = 1080, int fps = 60,
         string theme = "ocean_wave", string palette = "cyberpunk", string? bgImagePath = null,
         string? logoPath = null, string songTitle = "", string artistName = "",
-        List<LyricLine>? lyrics = null, string fontName = "Leelawadee UI")
+        List<LyricLine>? lyrics = null, string fontName = "Leelawadee UI", bool useGpu = false)
     {
         _audioPath = audioPath;
         _outputPath = outputPath;
@@ -51,6 +52,7 @@ public sealed class NativeVideoRenderer : IDisposable
         _songTitle = songTitle;
         _artistName = artistName;
         _fontName = fontName;
+        _useGpu = useGpu;
         _logoPath = logoPath;
         _lyrics = lyrics ?? new List<LyricLine>();
 
@@ -92,12 +94,16 @@ public sealed class NativeVideoRenderer : IDisposable
         StartFfmpegPipe();
         using var pipeStream = _ffmpegProcess!.StandardInput.BaseStream;
 
-        int ySize = _width * _height;
-        int uvSize = ySize / 4;
+        // Frame byte count for RGBA: width * height * 4 bytes per pixel
+        int frameByteCount = _width * _height * 4;
         
-        // Use an unbounded channel (producer/consumer queue) for writing frames to FFmpeg in the background
-        // This prevents the render thread from waiting for FFmpeg.
-        var frameChannel = Channel.CreateUnbounded<byte[]>();
+        // Use a bounded channel (producer/consumer queue) for writing frames to FFmpeg.
+        // We MUST cap the queue to prevent OutOfMemoryException if the CPU draws faster than FFmpeg encodes.
+        // A capacity of 15 limits memory usage to ~124MB (15 frames * 8.29MB).
+        var frameChannel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(15)
+        {
+            FullMode = BoundedChannelFullMode.Wait
+        });
 
         var sw = Stopwatch.StartNew();
 
@@ -106,12 +112,21 @@ public sealed class NativeVideoRenderer : IDisposable
         {
             await foreach (var frame in frameChannel.Reader.ReadAllAsync(cancellationToken))
             {
-                await pipeStream.WriteAsync(frame.AsMemory(), cancellationToken);
+                // CRITICAL: ArrayPool.Rent may return a buffer LARGER than requested.
+                // We MUST only write the exact frameByteCount bytes, not the full rented array.
+                await pipeStream.WriteAsync(frame.AsMemory(0, frameByteCount), cancellationToken);
+                System.Buffers.ArrayPool<byte>.Shared.Return(frame);
             }
         });
 
         // Audio data for current frame buffer
         float[] spec = new float[analysis.Spectrum.GetLength(1)];
+
+        // Pre-allocate background paint to avoid GC in hot loop
+        using var bgPaint = new SKPaint();
+        using var cf = SKColorFilter.CreateBlendMode(SKColors.Black.WithAlpha(150), SKBlendMode.Darken);
+        bgPaint.ColorFilter = cf;
+        var bgDestRect = new SKRect(0, 0, _width, _height);
 
         // 5. Render Loop
         for (int fIdx = 0; fIdx < totalFrames; fIdx++)
@@ -129,11 +144,7 @@ public sealed class NativeVideoRenderer : IDisposable
             // Draw Background (Static or solid color)
             if (_bgBitmap != null)
             {
-                var dest = new SKRect(0, 0, _width, _height);
-                using var bgPaint = new SKPaint();
-                using var cf = SKColorFilter.CreateBlendMode(SKColors.Black.WithAlpha(150), SKBlendMode.Darken);
-                bgPaint.ColorFilter = cf;
-                canvas.DrawBitmap(_bgBitmap, dest, bgPaint);
+                canvas.DrawBitmap(_bgBitmap, bgDestRect, bgPaint);
             }
             else
             {
@@ -149,16 +160,16 @@ public sealed class NativeVideoRenderer : IDisposable
             // Draw Lyrics and UI
             _lyricRenderer.Render(canvas, tCurrent, _songTitle, _artistName, _lyrics, palette);
 
-            // 6. Read Pixels and Convert to YUV420p
+            // 6. Read Pixels directly as BGRA (let FFmpeg handle YUV conversion natively)
             canvas.Flush();
             using var pixmap = surface.PeekPixels();
             
-            // Allocate a new frame buffer for the queue
-            byte[] yuvFrame = new byte[ySize + uvSize * 2];
-            ConvertToYuv420p(pixmap, yuvFrame);
+            // Allocate a buffer from the shared pool to eliminate GC allocations
+            byte[] bgraFrame = System.Buffers.ArrayPool<byte>.Shared.Rent(frameByteCount);
+            Marshal.Copy(pixmap.GetPixels(), bgraFrame, 0, frameByteCount);
 
-            // 7. Write to Queue (Instant return)
-            frameChannel.Writer.TryWrite(yuvFrame);
+            // 7. Write to Queue (Wait if full so we don't drop frames or leak memory)
+            await frameChannel.Writer.WriteAsync(bgraFrame, cancellationToken);
 
             // 8. Progress Reporting
             if (fIdx % 15 == 0 || fIdx == totalFrames - 1)
@@ -197,9 +208,24 @@ public sealed class NativeVideoRenderer : IDisposable
         string venvFfmpeg = System.IO.Path.Combine(BackendService.Instance.GetProjectRoot(), "venv", "Scripts", "ffmpeg.exe");
         if (System.IO.File.Exists(venvFfmpeg)) ffmpegExe = venvFfmpeg;
         else if (System.IO.File.Exists(@"C:\ffmpeg\bin\ffmpeg.exe")) ffmpegExe = @"C:\ffmpeg\bin\ffmpeg.exe";
-        string args = $"-y -f rawvideo -vcodec rawvideo -s {_width}x{_height} -pix_fmt yuv420p -r {_fps} " +
+        string videoCodec = "-c:v libx264 -preset ultrafast -crf 20";
+        try 
+        {
+            // Auto-detect best hardware encoder
+            var searcher = new System.Management.ManagementObjectSearcher("SELECT Name FROM Win32_VideoController");
+            foreach (System.Management.ManagementBaseObject obj in searcher.Get())
+            {
+                string gpuName = obj["Name"]?.ToString()?.ToLowerInvariant() ?? "";
+                if (gpuName.Contains("nvidia")) { videoCodec = "-c:v h264_nvenc -preset p1 -b:v 8M"; break; }
+                if (gpuName.Contains("amd") || gpuName.Contains("radeon")) { videoCodec = "-c:v h264_amf -b:v 8M"; break; }
+                if (gpuName.Contains("intel")) { videoCodec = "-c:v h264_qsv -preset veryfast -b:v 8M"; break; }
+            }
+        }
+        catch { /* Fallback to libx264 if WMI fails */ }
+
+        string args = $"-y -f rawvideo -vcodec rawvideo -s {_width}x{_height} -pix_fmt rgba -r {_fps} " +
                       $"-i - -i \"{_audioPath}\" " +
-                      $"-c:v libx264 -preset ultrafast -crf 20 " +
+                      $"{videoCodec} -pix_fmt yuv420p " +
                       $"-c:a aac -b:a 192k -shortest " +
                       $"\"{_outputPath}\"";
 

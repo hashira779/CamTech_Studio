@@ -785,93 +785,103 @@ def download_youtube(req: YouTubeRequest):
     try:
         saved_path, info = download_youtube_audio(clean_u, output_dir=AUDIO_DIR, on_progress=update_youtube_progress)
     except Exception as e:
+        import traceback
+        err = traceback.format_exc()
+        print(f"[KMVM FATAL ERROR] {err}", flush=True)
         update_youtube_progress(0, f"Download error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Download error: {str(e)}")
 
-    if not saved_path or not os.path.exists(saved_path):
-        update_youtube_progress(0, "Failed to extract audio stream.")
-        raise HTTPException(status_code=500, detail="Failed to extract audio stream from YouTube.")
-    
-    update_youtube_progress(90, "🤖 Gemini AI analyzing song title & artist...")
-    filename = os.path.basename(saved_path)
-    raw_title = info.get("title", os.path.splitext(filename)[0]) if info else os.path.splitext(filename)[0]
-    raw_uploader = (info.get("uploader") or info.get("channel") or "") if info else ""
-    raw_artist = (info.get("artist") or raw_uploader) if info else ""
-    duration = float(info.get("duration", 0.0)) if info else 0.0
+    try:
+        if not saved_path or not os.path.exists(saved_path):
+            update_youtube_progress(0, "Failed to extract audio stream.")
+            raise HTTPException(status_code=500, detail="Failed to extract audio stream from YouTube.")
+        
+        update_youtube_progress(90, "🤖 Gemini AI analyzing song title & artist...")
+        filename = os.path.basename(saved_path)
+        raw_title = info.get("title", os.path.splitext(filename)[0]) if info else os.path.splitext(filename)[0]
+        raw_uploader = (info.get("uploader") or info.get("channel") or "") if info else ""
+        raw_artist = (info.get("artist") or raw_uploader) if info else ""
+        duration = float(info.get("duration", 0.0)) if info else 0.0
 
-    # Auto-extract clean Song Title and clean Singer / Artist via Gemini AI + Rule-based fallback
-    clean_title, clean_artist = clean_youtube_title_and_artist(raw_title, uploader=raw_uploader, raw_artist=raw_artist, use_gemini=True)
-    print(f"[KMVM YouTube] Metadata resolved: Title='{clean_title}', Artist='{clean_artist}'")
+        # Auto-extract clean Song Title and clean Singer / Artist via Gemini AI + Rule-based fallback
+        clean_title, clean_artist = clean_youtube_title_and_artist(raw_title, uploader=raw_uploader, raw_artist=raw_artist, use_gemini=True)
+        print(f"[KMVM YouTube] Metadata resolved: Title='{clean_title}', Artist='{clean_artist}'")
 
-    update_youtube_progress(95, "🤖 Gemini AI retrieving synchronized lyrics...")
-    # Auto-detect subtitles / lyrics downloaded with the video
-    lyrics = None
-    target_pref = "km" if is_khmer_text(raw_title + " " + clean_title) else None
-    sub_path = find_matching_subtitles(saved_path, target_lang=target_pref)
-    if sub_path and os.path.exists(sub_path):
-        try:
-            lyrics = parse_subtitle_file(sub_path)
-            # Guard against YouTube's auto-generated non-Khmer (Thai, English) captions on Khmer songs
-            if lyrics and is_khmer_text(raw_title + " " + clean_title):
-                sample_text = " ".join([l.get("text", "") for l in lyrics[:10]])
-                if not is_khmer_text(sample_text):
-                    print(f"[KMVM Lyrics] ⚠️ Discarded non-Khmer auto-subtitles for Khmer song '{clean_title}': '{sample_text[:60]}'")
-                    lyrics = None
-            if lyrics:
-                print(f"[KMVM Lyrics] Automatically loaded subtitle for {filename}: {os.path.basename(sub_path)} ({len(lyrics)} lines)")
-        except Exception as e:
-            print(f"[KMVM Lyrics] Subtitle parse warning: {e}")
-
-    # Fallback to authentic Khmer Lyric Matcher (Gemini Cloud AI / DB / Description)
-    if not lyrics and is_khmer_text(raw_title + " " + clean_title):
-        try:
+        update_youtube_progress(95, "🤖 Gemini AI retrieving synchronized lyrics...")
+        # Auto-detect subtitles / lyrics downloaded with the video
+        lyrics = None
+        target_pref = "km" if is_khmer_text(raw_title + " " + clean_title) else None
+        sub_path = find_matching_subtitles(saved_path, target_lang=target_pref)
+        if sub_path and os.path.exists(sub_path):
             try:
-                from backend.khmer_lyric_matcher import match_or_fetch_khmer_lyrics
-            except ImportError:
-                from khmer_lyric_matcher import match_or_fetch_khmer_lyrics
-            desc = info.get("description", "") if info else ""
-            matcher_res = match_or_fetch_khmer_lyrics(
-                audio_path=saved_path,
-                title=clean_title,
-                artist=clean_artist,
-                duration=duration,
-                description=desc
-            )
-            if matcher_res:
-                lrc_path, aligned = matcher_res
-                lyrics = parse_subtitle_file(lrc_path)
-                print(f"[Khmer Lyric Matcher] ✅ Auto-matched authentic lyrics for '{clean_title}': {len(lyrics)} lines")
-        except Exception as match_err:
-            print(f"[Khmer Lyric Matcher] Warning: {match_err}")
+                lyrics = parse_subtitle_file(sub_path)
+                # Guard against YouTube's auto-generated non-Khmer (Thai, English) captions on Khmer songs
+                if lyrics and is_khmer_text(raw_title + " " + clean_title):
+                    sample_text = " ".join([l.get("text", "") for l in lyrics[:10]])
+                    if not is_khmer_text(sample_text):
+                        print(f"[KMVM Lyrics] ⚠️ Discarded non-Khmer auto-subtitles for Khmer song '{clean_title}': '{sample_text[:60]}'")
+                        lyrics = None
+                if lyrics:
+                    print(f"[KMVM Lyrics] Automatically loaded subtitle for {filename}: {os.path.basename(sub_path)} ({len(lyrics)} lines)")
+            except Exception as e:
+                print(f"[KMVM Lyrics] Subtitle parse warning: {e}")
 
-    # Sanitize filename on disk if it still contains '#' or '?'
-    clean_fn = re.sub(r'[#\?%]+', '', filename).strip()
-    if clean_fn != filename and clean_fn:
-        new_saved_path = os.path.join(os.path.dirname(saved_path), clean_fn)
-        try:
-            if os.path.exists(new_saved_path):
-                os.remove(new_saved_path)
-            os.rename(saved_path, new_saved_path)
-            saved_path = new_saved_path
-            filename = clean_fn
-        except Exception as e:
-            print(f"[KMVM YouTube] Rename note: {e}")
+        # Fallback to authentic Khmer Lyric Matcher (Gemini Cloud AI / DB / Description)
+        if not lyrics and is_khmer_text(raw_title + " " + clean_title):
+            try:
+                try:
+                    from backend.khmer_lyric_matcher import match_or_fetch_khmer_lyrics
+                except ImportError:
+                    from khmer_lyric_matcher import match_or_fetch_khmer_lyrics
+                desc = info.get("description", "") if info else ""
+                matcher_res = match_or_fetch_khmer_lyrics(
+                    audio_path=saved_path,
+                    title=clean_title,
+                    artist=clean_artist,
+                    duration=duration,
+                    description=desc
+                )
+                if matcher_res:
+                    lrc_path, aligned = matcher_res
+                    lyrics = parse_subtitle_file(lrc_path)
+                    print(f"[Khmer Lyric Matcher] ✅ Auto-matched authentic lyrics for '{clean_title}': {len(lyrics)} lines")
+            except Exception as match_err:
+                print(f"[Khmer Lyric Matcher] Warning: {match_err}")
 
-    encoded_filename = urllib.parse.quote(filename)
+        # Sanitize filename on disk if it still contains '#' or '?'
+        clean_fn = re.sub(r'[#\?%]+', '', filename).strip()
+        if clean_fn != filename and clean_fn:
+            new_saved_path = os.path.join(os.path.dirname(saved_path), clean_fn)
+            try:
+                if os.path.exists(new_saved_path):
+                    os.remove(new_saved_path)
+                os.rename(saved_path, new_saved_path)
+                saved_path = new_saved_path
+                filename = clean_fn
+            except Exception as e:
+                print(f"[KMVM YouTube] Rename note: {e}")
 
-    update_youtube_progress(100, f"Ready: {clean_title}")
+        encoded_filename = urllib.parse.quote(filename)
 
-    return {
-        "status": "success",
-        "audio_path": saved_path,
-        "audio_url": f"/uploads/audio/{encoded_filename}",
-        "filename": filename,
-        "title": clean_title,
-        "artist": clean_artist,
-        "duration": duration,
-        "lyrics": lyrics,
-        "has_lyrics": bool(lyrics)
-    }
+        update_youtube_progress(100, f"Ready: {clean_title}")
+
+        return {
+            "status": "success",
+            "audio_path": saved_path,
+            "audio_url": f"/uploads/audio/{encoded_filename}",
+            "filename": filename,
+            "title": clean_title,
+            "artist": clean_artist,
+            "duration": duration,
+            "lyrics": lyrics,
+            "has_lyrics": bool(lyrics)
+        }
+    except Exception as e:
+        import traceback
+        err = traceback.format_exc()
+        print(f"[KMVM FATAL ERROR] {err}", flush=True)
+        update_youtube_progress(0, f"Processing error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}\n{err}")
 
 @app.get("/api/youtube/progress")
 def get_youtube_progress():

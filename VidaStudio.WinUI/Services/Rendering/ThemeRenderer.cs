@@ -196,7 +196,7 @@ public sealed class ThemeRenderer
             Style = SKPaintStyle.Stroke,
             StrokeWidth = 16f + bass * 12f,
             Color = glowColor.WithAlpha(110),
-            MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 14f),
+            // MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 14f), // CPU Blur is incredibly slow
             StrokeJoin = SKStrokeJoin.Round
         };
         canvas.DrawPath(path, glowPaint);
@@ -259,7 +259,7 @@ public sealed class ThemeRenderer
         {
             IsAntialias = true,
             Style = SKPaintStyle.Fill,
-            MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 8)
+            // MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 8) // Disabled for speed
         };
 
         for (int i = 0; i < numBars; i++)
@@ -461,7 +461,7 @@ public sealed class ThemeRenderer
         {
             IsAntialias = true,
             Style = SKPaintStyle.Fill,
-            MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 20)
+            // MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 20) // Disabled for speed
         };
 
         int numBlobs = Math.Min(16, spectrum.Length);
@@ -704,7 +704,7 @@ public sealed class ThemeRenderer
         {
             IsAntialias = true,
             Style = SKPaintStyle.Fill,
-            MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 30)
+            // MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 30) // Disabled for speed
         };
 
         // Large nebula clouds

@@ -59,6 +59,7 @@
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="CommunityToolkit.WinUI.Controls.Sizers" Version="8.2.251219" />
+    <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="*" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="*" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools.WinApp" Version="*" />
@@ -67,6 +68,7 @@
     <PackageReference Include="NAudio" Version="2.*" />
     <PackageReference Include="MathNet.Numerics" Version="5.*" />
     <PackageReference Include="SkiaSharp.HarfBuzz" Version="3.*" />
+    <PackageReference Include="System.Management" Version="10.0.12" />
   </ItemGroup>
 
   <!--

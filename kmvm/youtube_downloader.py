@@ -191,6 +191,7 @@ def download_youtube_audio(url: str, output_dir: str, on_progress=None) -> Tuple
         ]
         result = subprocess.run(
             info_cmd,
+            stdin=subprocess.DEVNULL,
             capture_output=True, text=True, timeout=60, encoding="utf-8"
         )
         if result.returncode == 0:
@@ -276,6 +277,7 @@ def download_youtube_audio(url: str, output_dir: str, on_progress=None) -> Tuple
 
             process = subprocess.Popen(
                 cmd,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -400,7 +402,7 @@ def convert_to_mp3(src_path: str) -> str:
         import imageio_ffmpeg
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
         cmd = [ffmpeg_exe, "-y", "-i", src_path, "-vn", "-acodec", "libmp3lame", "-q:a", "2", mp3_path]
-        res = subprocess.run(cmd, capture_output=True, timeout=60)
+        res = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, timeout=60)
         if res.returncode == 0 and os.path.exists(mp3_path):
             print(f"[KMVM Audio] ✓ Converted to MP3: {os.path.basename(mp3_path)}", flush=True)
             return mp3_path

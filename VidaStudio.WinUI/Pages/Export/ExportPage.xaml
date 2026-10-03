@@ -6,7 +6,8 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:models="using:VidaStudio.Models"
-    mc:Ignorable="d">
+    mc:Ignorable="d"
+    NavigationCacheMode="Required">
 
     <ScrollViewer Padding="24,16,24,32">
         <StackPanel Spacing="24" MaxWidth="1100" HorizontalAlignment="Stretch">
@@ -116,20 +117,34 @@
             <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
                 <StackPanel Spacing="14">
+
+                    <!-- Status Header Row -->
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
 
                         <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
                             <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" FontWeight="SemiBold" FontSize="15"
                                        TextWrapping="Wrap" />
-                            <TextBlock Text="Exports will be saved to Project/outputs/" FontSize="12"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBlock x:Name="OutputPathText" Text="{x:Bind ViewModel.OutputPathDisplay, Mode=OneWay}" FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
                         </StackPanel>
 
-                        <Button Grid.Column="1" Click="StartExport_Click"
+                        <!-- Cancel Button (visible during export) -->
+                        <Button Grid.Column="1" x:Name="CancelExportBtn" Click="CancelExport_Click"
+                                Visibility="{x:Bind ViewModel.IsExporting, Mode=OneWay, Converter={StaticResource BoolToVisConverter}}"
+                                VerticalAlignment="Center" Padding="16,8">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xE711;" FontSize="14" />
+                                <TextBlock Text="Cancel" FontWeight="SemiBold" />
+                            </StackPanel>
+                        </Button>
+
+                        <!-- Export Button (hidden during export) -->
+                        <Button Grid.Column="2" Click="StartExport_Click"
                                 IsEnabled="{x:Bind ViewModel.IsExporting, Mode=OneWay, Converter={StaticResource InverseBoolConverter}}"
                                 Style="{ThemeResource AccentButtonStyle}" VerticalAlignment="Center" Padding="20,10">
                             <StackPanel Orientation="Horizontal" Spacing="8">
@@ -139,8 +154,55 @@
                         </Button>
                     </Grid>
 
+                    <!-- Progress Bar -->
                     <ProgressBar Value="{x:Bind ViewModel.ExportProgress, Mode=OneWay}" Maximum="100" Height="6" CornerRadius="3"
                                  Visibility="{x:Bind ViewModel.IsExporting, Mode=OneWay, Converter={StaticResource BoolToVisConverter}}" />
+
+                    <!-- Live Render Stats (visible during export) -->
+                    <Grid Visibility="{x:Bind ViewModel.IsExporting, Mode=OneWay, Converter={StaticResource BoolToVisConverter}}"
+                          ColumnSpacing="24">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" Spacing="2">
+                            <TextBlock Text="Progress" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBlock Text="{x:Bind ViewModel.ProgressText, Mode=OneWay}" FontSize="14" FontWeight="SemiBold" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="2">
+                            <TextBlock Text="Render Speed" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBlock Text="{x:Bind ViewModel.RenderFpsText, Mode=OneWay}" FontSize="14" FontWeight="SemiBold" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Spacing="2">
+                            <TextBlock Text="Elapsed" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBlock Text="{x:Bind ViewModel.ElapsedText, Mode=OneWay}" FontSize="14" FontWeight="SemiBold" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="3" Spacing="2">
+                            <TextBlock Text="ETA" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBlock Text="{x:Bind ViewModel.EtaText, Mode=OneWay}" FontSize="14" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Completion Actions (visible after successful export) -->
+                    <StackPanel Orientation="Horizontal" Spacing="10"
+                                Visibility="{x:Bind ViewModel.IsExportComplete, Mode=OneWay, Converter={StaticResource BoolToVisConverter}}">
+                        <Button Click="OpenExportedFile_Click" Style="{ThemeResource AccentButtonStyle}" Padding="16,8">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xE8A7;" FontSize="14" />
+                                <TextBlock Text="Open Video" FontWeight="SemiBold" />
+                            </StackPanel>
+                        </Button>
+                        <Button Click="OpenExportFolder_Click" Padding="16,8">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xE838;" FontSize="14" />
+                                <TextBlock Text="Open Folder" FontWeight="SemiBold" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+
                 </StackPanel>
             </Border>
         </StackPanel>

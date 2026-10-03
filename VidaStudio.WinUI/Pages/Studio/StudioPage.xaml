@@ -408,65 +408,8 @@
                         </Border.Background>
 
                         <Grid>
-                            <!-- Audio-Reactive Spectrum Bars -->
-                            <StackPanel x:Name="SpectrumPanel" Orientation="Horizontal"
-                                        HorizontalAlignment="Center" VerticalAlignment="Bottom"
-                                        Margin="0,0,0,40" Spacing="5" Height="100">
-                                <!-- 24 Spectrum Bars -->
-                                <Rectangle Width="4" Height="25" Fill="#818CF8" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="45" Fill="#818CF8" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="65" Fill="#6366F1" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="30" Fill="#6366F1" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="80" Fill="#A855F7" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="50" Fill="#A855F7" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="95" Fill="#EC4899" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="70" Fill="#EC4899" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="40" Fill="#F43F5E" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="85" Fill="#F43F5E" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="60" Fill="#F59E0B" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="90" Fill="#F59E0B" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="60" Fill="#F59E0B" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="85" Fill="#F43F5E" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="40" Fill="#F43F5E" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="70" Fill="#EC4899" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="95" Fill="#EC4899" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="50" Fill="#A855F7" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="80" Fill="#A855F7" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="30" Fill="#6366F1" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="65" Fill="#6366F1" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="45" Fill="#818CF8" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                                <Rectangle Width="4" Height="25" Fill="#818CF8" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" />
-                            </StackPanel>
-
-                            <!-- Center Rotating Vinyl Disc Badge -->
-                            <Grid x:Name="CenterBadgeGrid" Width="140" Height="140" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                <!-- Vinyl Disc Outer Ring -->
-                                <Border x:Name="VinylOuterBorder" Width="140" Height="140" CornerRadius="70" Background="#111827"
-                                        BorderBrush="#38BDF8" BorderThickness="3">
-                                    <Border.RenderTransform>
-                                        <RotateTransform x:Name="VinylRotateTransform" CenterX="70" CenterY="70" Angle="0" />
-                                    </Border.RenderTransform>
-                                    <!-- Inner Grooves -->
-                                    <Grid>
-                                        <Border Width="110" Height="110" CornerRadius="55" BorderBrush="#1F2937" BorderThickness="1" />
-                                        <Border Width="80" Height="80" CornerRadius="40" BorderBrush="#374151" BorderThickness="1" />
-                                        <!-- Center Label / Logo -->
-                                        <Border x:Name="VinylCenterLabel" Width="60" Height="60" CornerRadius="30" Background="#111827" BorderBrush="#38BDF8" BorderThickness="1">
-                                            <Grid>
-                                                <StackPanel x:Name="BadgeTextStack" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="1" Visibility="Collapsed">
-                                                    <TextBlock x:Name="BadgePrimaryText" Text="VIDA" FontSize="9" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" />
-                                                    <TextBlock x:Name="BadgeSecondaryText" Text="OFFICIAL" FontSize="7" FontWeight="SemiBold" Foreground="#FDF2F8" HorizontalAlignment="Center" />
-                                                </StackPanel>
-                                                <Ellipse x:Name="BadgeLogoEllipse" Width="52" Height="52" Visibility="Visible">
-                                                    <Ellipse.Fill>
-                                                        <ImageBrush x:Name="BadgeLogoBrush" Stretch="UniformToFill" ImageSource="ms-appx:///Assets/VibeTunesLogo.png" />
-                                                    </Ellipse.Fill>
-                                                </Ellipse>
-                                            </Grid>
-                                        </Border>
-                                    </Grid>
-                                </Border>
-                            </Grid>
+                            <!-- Dynamic Visualizer Host -->
+                            <Grid x:Name="VisualizerHostGrid" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
 
                             <!-- On-Screen Song Title & Artist Card -->
                             <StackPanel x:Name="OnScreenTitlesPanel" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="28,24,0,0" Spacing="3">
@@ -586,19 +529,10 @@
                             <!-- Theme Visualizer Picker (12 Themes) -->
                             <StackPanel Spacing="4">
                                 <TextBlock Text="Theme Visualizer" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                <ComboBox x:Name="VisualizerThemeCombo" SelectionChanged="VisualizerThemeCombo_SelectionChanged" SelectedIndex="8" HorizontalAlignment="Stretch" FontSize="11">
-                                    <ComboBoxItem Content="🌀 2026 Quantum Warp Vortex" Tag="quantum_vortex" />
-                                    <ComboBoxItem Content="🧠 2027 Neural AI Synapse" Tag="neural_synapse" />
-                                    <ComboBoxItem Content="🌊 2028 Hyper-Liquid Wave" Tag="hyper_liquid" />
-                                    <ComboBoxItem Content="🇰🇭 2029 Cyber-Angkor Sacred Mandala" Tag="angkor_mandala" />
-                                    <ComboBoxItem Content="🎛️ 2029 Cyberpunk Hologram HUD" Tag="hologram_hud" />
-                                    <ComboBoxItem Content="🌌 Aurora Borealis Silk" Tag="aurora_borealis" />
-                                    <ComboBoxItem Content="🧬 DNA Helix Waveform" Tag="dna_helix" />
-                                    <ComboBoxItem Content="🪐 Sonic Nebula Galaxy" Tag="sonic_nebula" />
-                                    <ComboBoxItem Content="Trap Nation Pulse" Tag="trap_circle" />
-                                    <ComboBoxItem Content="Cyber Equalizer" Tag="neon_bars" />
-                                    <ComboBoxItem Content="Ocean Wave" Tag="ocean_wave" />
-                                    <ComboBoxItem Content="Spectrum Analyzer" Tag="spectrum" />
+                                <ComboBox x:Name="VisualizerThemeCombo" SelectionChanged="VisualizerThemeCombo_SelectionChanged" SelectedIndex="0" HorizontalAlignment="Stretch" FontSize="11">
+                                    <ComboBoxItem Content="🌟 Pro Spectrum (GPU Accelerated)" Tag="pro_spectrum" />
+                                    <ComboBoxItem Content="Trap Nation Pulse (Modern Orb)" Tag="modern_orb" />
+                                    <ComboBoxItem Content="Classic Spectrum Analyzer" Tag="spectrum" />
                                 </ComboBox>
                             </StackPanel>
 

@@ -17,4 +17,19 @@ public sealed partial class ExportPage : Page
     {
         await ViewModel.StartExportCommand.ExecuteAsync(null);
     }
+
+    private void CancelExport_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.CancelExport();
+    }
+
+    private void OpenExportedFile_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.OpenExportedFile();
+    }
+
+    private void OpenExportFolder_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.OpenExportFolder();
+    }
 }
