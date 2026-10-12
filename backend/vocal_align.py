@@ -39,6 +39,320 @@ def get_cached_vocals_path(audio_path: str) -> Optional[str]:
     return None
 
 
+_SIGNAL_CACHE: Dict[Tuple[str, float], Tuple[Any, int, float, bool]] = {}
+_ONSET_CACHE: Dict[Tuple[str, float], List[float]] = {}
+
+
+def _load_vocal_signal(audio_path: str) -> Tuple[Any, int, float, bool]:
+    """Returns (mono vocal-focused signal @16kHz, sr, duration, is_isolated_stem), cached per file."""
+    import numpy as np
+    from scipy.signal import butter, sosfilt
+
+    vocal_stem = get_cached_vocals_path(audio_path)
+    is_isolated = vocal_stem is not None
+    target_path = vocal_stem if is_isolated else audio_path
+    key = (os.path.abspath(target_path), os.path.getmtime(target_path))
+    if key in _SIGNAL_CACHE:
+        return _SIGNAL_CACHE[key]
+
+    try:
+        from backend.audio_analyzer import decode_audio_to_numpy
+    except ImportError:
+        from audio_analyzer import decode_audio_to_numpy
+    data, sr, duration = decode_audio_to_numpy(target_path, target_sr=16000)
+    if data.ndim > 1:
+        data = np.mean(data, axis=1)
+    data = data.astype(np.float32, copy=False)
+
+    if not is_isolated:
+        try:
+            sos = butter(4, [280, 3400], btype='bandpass', fs=sr, output='sos')
+            data = sosfilt(sos, data).astype(np.float32, copy=False)
+        except Exception:
+            pass
+
+    if len(_SIGNAL_CACHE) >= 2:
+        _SIGNAL_CACHE.clear()
+    _SIGNAL_CACHE[key] = (data, sr, duration, is_isolated)
+    return _SIGNAL_CACHE[key]
+
+
+def detect_vocal_onsets(
+    audio_path: str,
+    vocal_segments: Optional[List[Tuple[float, float]]] = None
+) -> List[float]:
+    """
+    Detects sung syllable onsets (seconds) using band-limited log spectral flux on the
+    isolated vocal stem (or vocal-band filtered mix). Onsets outside detected vocal
+    activity are discarded so drums/instrument hits don't count as singing.
+    """
+    if not audio_path or not os.path.exists(audio_path):
+        return []
+    try:
+        import numpy as np
+        from scipy.signal import find_peaks
+
+        data, sr, _, _ = _load_vocal_signal(audio_path)
+        stem = get_cached_vocals_path(audio_path) or audio_path
+        key = (os.path.abspath(stem), os.path.getmtime(stem))
+        if key in _ONSET_CACHE:
+            onsets = _ONSET_CACHE[key]
+        else:
+            n_fft = 1024
+            hop = int(sr * 0.01)
+            if len(data) < n_fft * 2:
+                return []
+            frames = np.lib.stride_tricks.sliding_window_view(data, n_fft)[::hop]
+            window = np.hanning(n_fft).astype(np.float32)
+            lo_bin = int(150 * n_fft / sr)
+            hi_bin = int(4000 * n_fft / sr)
+            bands = []
+            for c in range(0, len(frames), 2000):
+                spec = np.abs(np.fft.rfft(frames[c:c + 2000] * window, axis=1))[:, lo_bin:hi_bin]
+                bands.append(np.log1p(10.0 * spec).astype(np.float32))
+            band = np.concatenate(bands, axis=0)
+
+            flux = np.maximum(0.0, np.diff(band, axis=0)).sum(axis=1)
+            flux = np.concatenate([[0.0], flux])
+            flux = np.convolve(flux, np.ones(3) / 3.0, mode='same')
+            norm = np.percentile(flux, 95)
+            if norm <= 0:
+                return []
+            flux = flux / norm
+
+            local_win = 25  # ±0.25s adaptive threshold
+            local_mean = np.convolve(flux, np.ones(2 * local_win + 1) / (2 * local_win + 1), mode='same')
+            threshold = np.maximum(local_mean * 1.15 + 0.06, 0.18)
+            peaks, _ = find_peaks(flux, height=threshold, distance=8)
+            onsets = [round((float(p) * hop + n_fft / 2) / sr, 3) for p in peaks]
+            if len(_ONSET_CACHE) >= 4:
+                _ONSET_CACHE.clear()
+            _ONSET_CACHE[key] = onsets
+
+        if vocal_segments is None:
+            vocal_segments = detect_vocal_segments(audio_path)
+        if not vocal_segments:
+            return list(onsets)
+
+        filtered = []
+        seg_idx = 0
+        for t in onsets:
+            while seg_idx < len(vocal_segments) and vocal_segments[seg_idx][1] + 0.1 < t:
+                seg_idx += 1
+            if seg_idx >= len(vocal_segments):
+                break
+            s, e = vocal_segments[seg_idx]
+            if s - 0.12 <= t <= e + 0.1:
+                filtered.append(t)
+        return filtered
+    except Exception as e:
+        log.warning(f"[Onset Engine] Notice: {e}")
+        return []
+
+
+def snap_words_to_onsets(
+    words: List[Dict[str, Any]],
+    line_start: float,
+    line_end: float,
+    onsets: List[float],
+    max_shift: float = 0.45
+) -> List[Dict[str, Any]]:
+    """
+    Moves each word's start onto the singer's nearest real syllable onset using an
+    order-preserving DP (words never swap order, each onset used at most once).
+    Unmatched words are re-interpolated between matched anchors, and word ends are
+    chained to the next word's start so the karaoke sweep follows the voice.
+    The first word stays pinned to the line start.
+    """
+    n = len(words)
+    if n < 2 or not onsets or line_end <= line_start:
+        return words
+
+    import bisect
+    expected = [float(w.get("start", line_start)) for w in words]
+    avg_dur = (line_end - line_start) / n
+    tol = max(0.08, min(max_shift, avg_dur * 0.6))
+
+    lo_i = bisect.bisect_right(onsets, line_start + 0.06)
+    hi_i = bisect.bisect_left(onsets, line_end - 0.08)
+    cands = onsets[lo_i:hi_i]
+    if not cands:
+        return words
+
+    m = len(cands)
+    INF = float("inf")
+    # D[i][j]: best cost placing words 1..i using the first j candidates
+    D = [[0.0] * (m + 1) for _ in range(n)]
+    back = [[0] * (m + 1) for _ in range(n)]
+    for i in range(1, n):
+        D[i][0] = D[i - 1][0] + tol
+        back[i][0] = 1
+        for j in range(1, m + 1):
+            best, choice = D[i][j - 1], 0
+            skip_word = D[i - 1][j] + tol
+            if skip_word < best:
+                best, choice = skip_word, 1
+            dist = abs(cands[j - 1] - expected[i])
+            if dist <= tol:
+                match = D[i - 1][j - 1] + dist
+                if match < best:
+                    best, choice = match, 2
+            D[i][j] = best
+            back[i][j] = choice
+
+    anchors: Dict[int, float] = {0: float(line_start)}
+    i, j = n - 1, m
+    while i > 0:
+        choice = back[i][j]
+        if choice == 2:
+            anchors[i] = cands[j - 1]
+            i -= 1
+            j -= 1
+        elif choice == 1:
+            i -= 1
+        else:
+            j -= 1
+
+    if len(anchors) == 1:
+        return words
+
+    expected_end = max(expected[-1] + 0.05, float(words[-1].get("end", line_end)))
+    anchor_idx = sorted(anchors) + [n]
+    anchor_val = dict(anchors)
+    anchor_val[n] = float(line_end)
+    exp_ext = expected + [expected_end]
+
+    new_starts = [0.0] * n
+    for a, b in zip(anchor_idx, anchor_idx[1:]):
+        new_starts[a] = anchor_val[a]
+        span_e = exp_ext[b] - exp_ext[a]
+        span_n = anchor_val[b] - anchor_val[a]
+        for k in range(a + 1, b):
+            frac = (exp_ext[k] - exp_ext[a]) / span_e if span_e > 1e-6 else (k - a) / (b - a)
+            new_starts[k] = anchor_val[a] + frac * span_n
+
+    result = []
+    for k, w in enumerate(words):
+        st = round(new_starts[k], 2)
+        et = round(new_starts[k + 1], 2) if k + 1 < n else round(float(line_end), 2)
+        if k + 1 < n:
+            orig_dur = float(w.get("end", expected[k + 1])) - expected[k]
+            if expected[k + 1] - float(w.get("end", expected[k + 1])) > 0.15:
+                et = min(et, round(st + max(0.1, orig_dur), 2))
+        nw = dict(w)
+        nw["start"] = st
+        nw["end"] = max(round(st + 0.04, 2), et)
+        result.append(nw)
+    return result
+
+
+def _word_text(w: Any) -> str:
+    if isinstance(w, dict):
+        return str(w.get("word", w.get("text", "")))
+    return str(w)
+
+
+def _weighted_words(texts: List[str], start: float, end: float) -> List[Dict[str, Any]]:
+    try:
+        from backend.lyric_engine import compute_weighted_word_timestamps
+    except ImportError:
+        try:
+            from lyric_engine import compute_weighted_word_timestamps
+        except ImportError:
+            compute_weighted_word_timestamps = None
+    if compute_weighted_word_timestamps is not None:
+        return compute_weighted_word_timestamps(texts, start, end)
+    return _interpolate_words_simple(" ".join(texts), start, end)
+
+
+def _retime_words(
+    words: List[Any],
+    old_start: float,
+    old_end: float,
+    new_start: float,
+    new_end: float
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """
+    Maps word timestamps onto a new line span. Real per-word timing (e.g. from Whisper)
+    is preserved via an affine remap; otherwise syllable-weighted timing is generated.
+    Returns (words, has_real_timing).
+    """
+    texts = [_word_text(w) for w in words]
+    if not texts:
+        return [], False
+
+    real = len(words) >= 2 and all(
+        isinstance(w, dict) and isinstance(w.get("start"), (int, float)) and isinstance(w.get("end"), (int, float))
+        for w in words
+    )
+    if real:
+        starts = [float(w["start"]) for w in words]
+        real = (
+            all(b > a for a, b in zip(starts, starts[1:]))
+            and starts[0] >= old_start - 0.5
+            and float(words[-1]["end"]) <= old_end + 0.5
+        )
+    if not real:
+        return _weighted_words(texts, new_start, new_end), False
+
+    src_s = float(words[0]["start"])
+    src_e = max(src_s + 0.05, float(words[-1]["end"]))
+    # Absolute ASR timing is trusted; only translate when the line moved substantially,
+    # and only compress (never stretch) when it overflows the new span.
+    offset = new_start - src_s if abs(new_start - src_s) > 0.3 else 0.0
+    overflow = (src_e + offset) - new_end
+    scale = (new_end - new_start) / max(1e-6, src_e + offset - new_start) if overflow > 0 else 1.0
+    out = []
+    prev_s = new_start - 0.04
+    for k, (w, t) in enumerate(zip(words, texts)):
+        ws = new_start + (float(w["start"]) + offset - new_start) * scale
+        we = new_start + (float(w["end"]) + offset - new_start) * scale
+        ws = new_start if k == 0 else min(max(ws, prev_s + 0.04), new_end - 0.04)
+        we = min(max(we, ws + 0.04), new_end)
+        prev_s = ws
+        nw = dict(w)
+        nw.pop("text", None)
+        nw.update({"word": t, "start": round(ws, 2), "end": round(we, 2)})
+        out.append(nw)
+    out[-1]["end"] = round(new_end, 2)
+    return out, True
+
+
+def time_line_words(
+    text: str,
+    start: float,
+    end: float,
+    onsets: Optional[List[float]] = None,
+    vocal_spans: Optional[List[Tuple[float, float]]] = None
+) -> List[Dict[str, Any]]:
+    """
+    Builds word timestamps for a line. When vocal_spans (the sung phrases inside the line)
+    are given, words are spread over sung time only so the sweep pauses during breaths.
+    Word starts are then snapped onto real vocal onsets.
+    """
+    words = _interpolate_words_simple(text, start, end)
+    if vocal_spans and len(vocal_spans) > 1 and len(words) > 1:
+        spans = [(max(s, start), min(e, end)) for s, e in vocal_spans if min(e, end) > max(s, start)]
+        sung = sum(e - s for s, e in spans)
+        if spans and sung > 0.2:
+            def to_audio(pt: float) -> float:
+                acc = 0.0
+                for s, e in spans:
+                    if acc + (e - s) >= pt:
+                        return s + (pt - acc)
+                    acc += e - s
+                return spans[-1][1]
+
+            local = _weighted_words([w["word"] for w in words], 0.0, sung)
+            for k, (w, lw) in enumerate(zip(words, local)):
+                w["start"] = round(start if k == 0 else to_audio(lw["start"]), 2)
+                w["end"] = round(to_audio(lw["end"] - 1e-6), 2)
+            words[-1]["end"] = round(end, 2)
+    if onsets:
+        words = snap_words_to_onsets(words, start, end, onsets)
+    return words
+
+
 def detect_vocal_segments(
     audio_path: str,
     min_vocal_dur: float = 0.5,
@@ -57,31 +371,9 @@ def detect_vocal_segments(
     """
     try:
         import numpy as np
-        from scipy.signal import butter, sosfilt
 
-        # 1. Check for cached isolated vocal stem
-        vocal_stem = get_cached_vocals_path(audio_path)
-        is_isolated = vocal_stem is not None
-        target_path = vocal_stem if is_isolated else audio_path
-
-        try:
-            from backend.audio_analyzer import decode_audio_to_numpy
-        except ImportError:
-            from audio_analyzer import decode_audio_to_numpy
-        data, sr, duration = decode_audio_to_numpy(target_path, target_sr=16000)
-
-        if data.ndim > 1:
-            data = np.mean(data, axis=1)
-
-        # 2. Vocal frequency bandpass (280 - 3400 Hz) to isolate singing formants
-        if not is_isolated:
-            try:
-                sos = butter(4, [280, 3400], btype='bandpass', fs=sr, output='sos')
-                vocal_data = sosfilt(sos, data)
-            except Exception:
-                vocal_data = data
-        else:
-            vocal_data = data
+        # Isolated stem if cached, else vocal-band (280-3400 Hz) filtered mix
+        vocal_data, sr, duration, is_isolated = _load_vocal_signal(audio_path)
 
         # 3. Compute frame-level RMS energy (20ms hop, 50ms window) in pure NumPy
         hop = int(sr * 0.02)
@@ -250,6 +542,95 @@ def _interpolate_words_simple(text: str, start: float, end: float) -> List[Dict[
     return result
 
 
+def _assign_lines_to_phrases(
+    phrases: List[Tuple[float, float]],
+    weights: List[float]
+) -> Optional[List[Tuple[int, int]]]:
+    """
+    Globally assigns each lyric line a contiguous run of sung phrases [q, p) via DP, so
+    every line starts exactly on a real vocal onset. Minimises relative deviation between
+    each line's sung time and its syllable-weighted expectation, penalises long silences
+    inside a line (lines never straddle instrumental breaks), and allows stray phrases
+    (ad-libs, hums) to be left without lyrics at a cost. Returns None if not enough phrases.
+    """
+    P, K = len(phrases), len(weights)
+    if K == 0 or P < K:
+        return None
+
+    durs = [e - s for s, e in phrases]
+    total = sum(durs)
+    W = sum(weights) or 1.0
+    expected = [max(0.6, w / W * total) for w in weights]
+    mean_exp = total / K
+
+    dur_pre = [0.0]
+    for d in durs:
+        dur_pre.append(dur_pre[-1] + d)
+    gap_pre = [0.0]
+    for a in range(1, P):
+        g = phrases[a][0] - phrases[a - 1][1]
+        gap_pre.append(gap_pre[-1] + max(0.0, g - 0.6) ** 1.5)
+
+    INF = float("inf")
+    dp = [[INF] * (P + 1) for _ in range(K + 1)]
+    back: List[List[Optional[int]]] = [[None] * (P + 1) for _ in range(K + 1)]
+    dp[0][0] = 0.0
+    max_run = 8
+    for k in range(K + 1):
+        for p in range(1, P + 1):
+            skip = dp[k][p - 1] + 0.35 + 0.6 * durs[p - 1] / mean_exp
+            if skip < dp[k][p]:
+                dp[k][p] = skip
+                back[k][p] = -1
+            if k == 0:
+                continue
+            exp_k = expected[k - 1]
+            for q in range(max(k - 1, p - max_run), p):
+                prev = dp[k - 1][q]
+                if prev == INF:
+                    continue
+                sung = dur_pre[p] - dur_pre[q]
+                inner_gaps = gap_pre[p - 1] - gap_pre[q]
+                cost = prev + ((sung - exp_k) / exp_k) ** 2 + 0.8 * inner_gaps
+                if cost < dp[k][p]:
+                    dp[k][p] = cost
+                    back[k][p] = q
+
+    if dp[K][P] == INF:
+        return None
+
+    runs: List[Tuple[int, int]] = []
+    k, p = K, P
+    while k > 0 or p > 0:
+        q = back[k][p]
+        if q is None:
+            return None
+        if q == -1:
+            p -= 1
+        else:
+            runs.append((q, p))
+            k, p = k - 1, q
+    runs.reverse()
+    return runs if len(runs) == K else None
+
+
+def _ensure_vocal_stem(audio_path: str) -> None:
+    """Isolates vocals with Demucs before alignment when a CUDA GPU is available (CPU is too slow)."""
+    if not audio_path or not os.path.exists(audio_path) or get_cached_vocals_path(audio_path):
+        return
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return
+        try:
+            from backend.vocal_separator import separate_vocals_demucs
+        except ImportError:
+            from vocal_separator import separate_vocals_demucs
+        separate_vocals_demucs(audio_path, device="cuda")
+    except Exception as e:
+        log.info(f"[Force Align] Vocal stem unavailable, aligning on full mix: {e}")
+
+
 def force_align_lyrics_to_audio(
     lyrics_lines: List[str],
     audio_path: str,
@@ -279,8 +660,27 @@ def force_align_lyrics_to_audio(
         except Exception:
             duration = 180.0
 
-    # Step 1: Detect actual vocal segments in audio
+    # Step 1: Detect actual vocal segments in audio (isolated vocal stem gives far cleaner phrases)
+    _ensure_vocal_stem(audio_path)
     vocal_segments = detect_vocal_segments(audio_path)
+
+    # Step 1b: Letter-level CTC forced alignment on the singer's voice (preferred when available).
+    try:
+        from backend.ctc_align import ctc_align_lyrics, is_available as _ctc_available
+    except ImportError:
+        try:
+            from ctc_align import ctc_align_lyrics, is_available as _ctc_available
+        except ImportError:
+            ctc_align_lyrics = None
+            _ctc_available = lambda: False
+    if ctc_align_lyrics and _ctc_available() and audio_path and os.path.exists(audio_path):
+        try:
+            ctc_aligned = ctc_align_lyrics(lyrics_lines, audio_path, vocal_segments=vocal_segments)
+        except Exception as e:
+            log.info(f"[Force Align] CTC aligner raised, falling back: {e}")
+            ctc_aligned = None
+        if ctc_aligned and len(ctc_aligned) >= max(2, len(lyrics_lines) // 2):
+            return ctc_aligned
 
     # Fallback to proportional spacing if audio contains zero detected voice
     if not vocal_segments or len(vocal_segments) < 2:
@@ -308,6 +708,30 @@ def force_align_lyrics_to_audio(
     total_vocal_duration = sum(e - s for s, e in vocal_segments)
     log.info(f"[Force Align] Detected {len(vocal_segments)} vocal phrases. First vocal onset: {first_onset:.2f}s, "
              f"Total vocal time: {total_vocal_duration:.1f}s / {duration:.1f}s")
+
+    onsets = detect_vocal_onsets(audio_path, vocal_segments)
+    line_weights = [float(max(4, len(l.replace(" ", "")))) for l in lyrics_lines]
+    runs = _assign_lines_to_phrases(vocal_segments, line_weights)
+    if runs:
+        aligned = []
+        for idx, (line, (q, p)) in enumerate(zip(lyrics_lines, runs)):
+            spans = vocal_segments[q:p]
+            start_t = spans[0][0]
+            end_t = spans[-1][1] + 0.25
+            if idx + 1 < len(runs):
+                end_t = min(end_t, vocal_segments[runs[idx + 1][0]][0] - 0.05)
+            end_t = max(end_t, start_t + 0.6)
+            start_t, end_t = round(start_t, 2), round(min(end_t, duration), 2)
+            aligned.append({
+                "line_id": idx,
+                "start": start_t,
+                "end": end_t,
+                "text": line,
+                "words": time_line_words(line, start_t, end_t, onsets=onsets, vocal_spans=spans)
+            })
+        log.info(f"[Force Align] ✅ Phrase-DP aligned {len(aligned)} lines onto {len(vocal_segments)} sung phrases, "
+                 f"{len(onsets)} syllable onsets.")
+        return aligned
 
     # Step 2: Partition audio into major Singing Blocks separated by true instrumental solos (gap >= 7.5s)
     singing_blocks = []
@@ -449,8 +873,11 @@ def calibrate_lyrics_with_vocal_activity(
             vocal_segments = None
 
     calibrated = []
+    spans: List[Tuple[float, float]] = []
+    real_timing: List[bool] = []
     prev_end = 0.0
     first_onset = detect_first_vocal_onset(audio_path or "", vocal_segments)
+    onsets = detect_vocal_onsets(audio_path, vocal_segments) if audio_path else []
 
     # 0. Global Drift Pre-Compensation:
     # Only shift forward if lyrics mistakenly started at 0.0s during an instrumental intro (> 4s)
@@ -568,32 +995,13 @@ def calibrate_lyrics_with_vocal_activity(
         calibrated_end = round(calibrated_end, 2)
         prev_end = calibrated_end
 
-        # 3. Word-level karaoke re-distribution
-        line_dur = max(0.15, calibrated_end - calibrated_start)
-        recalculated_words = []
-        if words and isinstance(words, list) and len(words) > 0:
-            word_weights = []
-            for w in words:
-                w_str = w.get("word", "") if isinstance(w, dict) else str(w)
-                vowels = sum(1 for c in w_str if c in 'aeiouyàáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹ\u17B6\u17B7\u17B8\u17B9\u17BA\u17BB\u17BC\u17BD\u17BE\u17BF\u17C0\u17C1\u17C2\u17C3\u17C4\u17C5')
-                weight = max(1.0, len(w_str) + vowels * 0.5)
-                word_weights.append(weight)
-            total_w = sum(word_weights) or 1.0
-
-            cur_t = calibrated_start
-            for w_idx, (w, ww) in enumerate(zip(words, word_weights)):
-                w_str = w.get("word", "") if isinstance(w, dict) else str(w)
-                w_dur = line_dur * (ww / total_w)
-                w_st = round(cur_t, 2)
-                w_et = round(cur_t + w_dur, 2)
-                if w_idx == len(words) - 1:
-                    w_et = calibrated_end
-                cur_t += w_dur
-                recalculated_words.append({
-                    "word": w_str,
-                    "start": w_st,
-                    "end": max(w_st + 0.04, w_et)
-                })
+        # 3. Word-level karaoke timing: keep real per-word timing, else syllable-weighted
+        if words and isinstance(words, list):
+            recalculated_words, is_real = _retime_words(
+                words, raw_s, raw_e, calibrated_start, calibrated_end
+            )
+        else:
+            recalculated_words, is_real = [], False
 
         calibrated.append({
             "line_id": line.get("line_id", i),
@@ -602,6 +1010,8 @@ def calibrate_lyrics_with_vocal_activity(
             "text": text,
             "words": recalculated_words or words
         })
+        spans.append((calibrated_start, calibrated_end))
+        real_timing.append(is_real)
 
     # 4. Anti-Cascading Smoothing Pass:
     # If the singer started the next phrase quickly, TRIM the previous phrase's end
@@ -612,7 +1022,6 @@ def calibrate_lyrics_with_vocal_activity(
 
         if curr_line["start"] < prev_line["end"] + 0.04:
             if curr_line["start"] >= prev_line["start"] + 0.4:
-                # Trim previous line cleanly
                 prev_line["end"] = round(curr_line["start"] - 0.04, 2)
             else:
                 curr_line["start"] = round(prev_line["end"] + 0.04, 2)
@@ -620,20 +1029,19 @@ def calibrate_lyrics_with_vocal_activity(
         if curr_line["end"] <= curr_line["start"] + 0.3:
             curr_line["end"] = round(curr_line["start"] + 0.6, 2)
 
-        # Redistribute word timestamps preserving syllable weights.
-        # Previous implementation used equal distribution (line_dur / n_words)
-        # which destroyed the carefully computed phonetic weights.
-        if curr_line.get("words") and len(curr_line["words"]) > 0:
-            word_texts = [w.get("word", "") if isinstance(w, dict) else str(w) for w in curr_line["words"]]
-            redistributed = _interpolate_words_simple(
-                " ".join(word_texts),
-                curr_line["start"],
-                curr_line["end"]
+    # 5. Re-fit words to final line spans and snap them onto the singer's syllable onsets
+    for j, line in enumerate(calibrated):
+        words = line.get("words") or []
+        if not words or not isinstance(words[0], dict):
+            continue
+        old_s, old_e = spans[j]
+        if (line["start"], line["end"]) != (old_s, old_e):
+            words, _ = _retime_words(words, old_s, old_e, line["start"], line["end"])
+        if onsets:
+            words = snap_words_to_onsets(
+                words, line["start"], line["end"], onsets,
+                max_shift=0.2 if real_timing[j] else 0.45
             )
-            # Preserve original word strings while applying new timestamps
-            for w_idx, w in enumerate(curr_line["words"]):
-                if w_idx < len(redistributed):
-                    w["start"] = redistributed[w_idx]["start"]
-                    w["end"] = redistributed[w_idx]["end"]
+        line["words"] = words
 
     return calibrated

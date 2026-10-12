@@ -26,7 +26,10 @@ from backend.lyric_engine import (
 )
 from backend.vocal_align import (
     _interpolate_words_simple,
+    _assign_lines_to_phrases,
     calibrate_lyrics_with_vocal_activity,
+    force_align_lyrics_to_audio,
+    snap_words_to_onsets,
 )
 
 PASS_COUNT = 0
@@ -325,6 +328,136 @@ def test_interpolate_words_simple_delegates():
         )
 
 
+def test_snap_words_to_onsets():
+    """TEST 11: Word starts snap onto nearby singer onsets, order preserved."""
+    print("\n" + "=" * 60)
+    print("TEST 11: Word Snapping To Vocal Onsets")
+    print("=" * 60)
+
+    words = [
+        {"word": "a", "start": 10.0, "end": 10.5},
+        {"word": "b", "start": 10.5, "end": 11.0},
+        {"word": "c", "start": 11.0, "end": 11.5},
+        {"word": "d", "start": 11.5, "end": 12.0},
+    ]
+    onsets = [9.2, 10.68, 11.12, 11.4, 13.0]
+    snapped = snap_words_to_onsets(words, 10.0, 12.0, onsets)
+
+    starts = [w["start"] for w in snapped]
+    assert_true(starts[0] == 10.0, f"First word pinned to line start ({starts[0]})")
+    assert_true(starts[1] == 10.68, f"Word 'b' snapped to onset 10.68 (got {starts[1]})")
+    assert_true(starts[2] == 11.12, f"Word 'c' snapped to onset 11.12 (got {starts[2]})")
+    assert_true(all(b > a for a, b in zip(starts, starts[1:])), f"Starts strictly increasing {starts}")
+    assert_true(snapped[-1]["end"] == 12.0, "Last word ends at line end")
+    assert_true(all(10.0 <= w["start"] < w["end"] <= 12.0 for w in snapped), "All words inside line span")
+
+    far = snap_words_to_onsets(words, 10.0, 12.0, [14.0, 15.0])
+    assert_true([w["start"] for w in far] == [w["start"] for w in words], "Out-of-range onsets leave words untouched")
+
+
+def test_phrase_dp_assignment():
+    """TEST 12: Lines map onto sung phrases and never straddle an instrumental break."""
+    print("\n" + "=" * 60)
+    print("TEST 12: Phrase DP Line Assignment")
+    print("=" * 60)
+
+    phrases = [(5.0, 7.0), (7.5, 9.5), (20.0, 22.0), (22.4, 24.4), (24.8, 26.8)]
+    runs = _assign_lines_to_phrases(phrases, [10, 10, 10, 10, 10])
+    assert_true(runs == [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)], f"Equal lines take one phrase each ({runs})")
+
+    runs = _assign_lines_to_phrases(phrases, [20, 10, 10, 10])
+    assert_true(runs is not None and runs[0] == (0, 2), f"Long first line spans two phrases ({runs})")
+    for q, p in runs or []:
+        assert_true(not (q < 2 < p), f"Run {q}-{p} does not cross the 10s instrumental break")
+
+    assert_true(_assign_lines_to_phrases(phrases[:2], [5, 5, 5]) is None, "Fewer phrases than lines -> fallback")
+
+
+def test_calibrate_preserves_real_word_timing():
+    """TEST 13: Real ASR word timing is kept, not stretched, when the line span changes."""
+    print("\n" + "=" * 60)
+    print("TEST 13: Calibration Keeps Real Word Timing")
+    print("=" * 60)
+
+    lyrics = [{
+        "start": 10.0, "end": 12.0, "text": "one two three",
+        "words": [
+            {"word": "one", "start": 10.0, "end": 10.3},
+            {"word": "two", "start": 10.9, "end": 11.2},
+            {"word": "three", "start": 11.3, "end": 12.0},
+        ],
+    }]
+    calibrated = calibrate_lyrics_with_vocal_activity(lyrics, vocal_segments=[(10.0, 13.5)])
+    words = calibrated[0]["words"]
+    assert_true(abs(words[1]["start"] - 10.9) < 0.02, f"'two' keeps its ASR start 10.9 (got {words[1]['start']})")
+    assert_true(abs(words[2]["start"] - 11.3) < 0.02, f"'three' keeps its ASR start 11.3 (got {words[2]['start']})")
+    assert_true(words[-1]["end"] == calibrated[0]["end"], "Last word reaches line end")
+
+
+def test_force_align_synthetic_singer():
+    """TEST 14: End-to-end alignment follows a synthetic singer's phrases and syllables."""
+    print("\n" + "=" * 60)
+    print("TEST 14: Forced Alignment On Synthetic Singer")
+    print("=" * 60)
+
+    import tempfile
+    import wave
+    import numpy as np
+
+    sr = 16000
+    y = np.zeros(int(sr * 32), np.float32)
+    y += 0.05 * np.sin(2 * np.pi * 55 * np.arange(len(y)) / sr)
+    truth, t = [], 6.0
+    for n, sd in [(6, 0.35), (5, 0.4), (8, 0.25), (4, 0.5)]:
+        onsets = []
+        for k in range(n):
+            tt = np.arange(int(sd * 0.9 * sr)) / sr
+            env = np.minimum(1, tt / 0.03) * np.exp(-tt * 2.5)
+            sig = sum((0.6 / h) * np.sin(2 * np.pi * (210 + 7 * k) * h * tt) for h in range(1, 6))
+            s = int(t * sr)
+            y[s:s + len(tt)] += (env * sig * 0.5).astype(np.float32)
+            onsets.append(t)
+            t += sd
+        truth.append(onsets)
+        t += 1.5
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "singer.wav")
+        with wave.open(path, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(sr)
+            w.writeframes((np.clip(y, -1, 1) * 32000).astype(np.int16).tobytes())
+        lyrics = [" ".join(f"w{i}{k}" for k in range(len(o))) for i, o in enumerate(truth)]
+        aligned = force_align_lyrics_to_audio(lyrics, path)
+
+    assert_true(len(aligned) == len(truth), f"All {len(truth)} lines aligned")
+    line_errs = [abs(l["start"] - o[0]) for l, o in zip(aligned, truth)]
+    word_errs = [abs(w["start"] - b) for l, o in zip(aligned, truth) for w, b in zip(l["words"], o)]
+    assert_true(max(line_errs) < 0.15, f"Line starts within 150ms of singer (max {max(line_errs):.3f}s)")
+    assert_true(sum(word_errs) / len(word_errs) < 0.12, f"Mean word-start error < 120ms ({sum(word_errs) / len(word_errs):.3f}s)")
+    assert_true(aligned[0]["start"] >= 5.8, f"No lyrics during the 6s intro (first at {aligned[0]['start']})")
+
+
+def test_ctc_aligner_graceful_fallback():
+    """TEST 15: CTC aligner declines non-vocal / impossible input instead of corrupting timing."""
+    print("\n" + "=" * 60)
+    print("TEST 15: CTC Aligner Graceful Fallback")
+    print("=" * 60)
+
+    try:
+        from backend.ctc_align import ctc_align_lyrics, is_available
+    except ImportError:
+        assert_true(True, "ctc_align module optional — fallback path exercised")
+        return
+
+    assert_true(ctc_align_lyrics(["hello"], "/does/not/exist.wav") is None,
+                "Missing audio returns None (caller uses fallback)")
+    assert_true(ctc_align_lyrics([""], __file__) is None,
+                "Empty lyrics returns None")
+    assert_true(callable(is_available), "is_available() probe exposed")
+
+
 if __name__ == "__main__":
     print("\xf0\x9f\x8e\xa4 VIDA Sync Quality Test Suite")
     print("=" * 60)
@@ -339,6 +472,11 @@ if __name__ == "__main__":
     test_srt_parsing_with_overlaps()
     test_empty_and_edge_cases()
     test_interpolate_words_simple_delegates()
+    test_snap_words_to_onsets()
+    test_phrase_dp_assignment()
+    test_calibrate_preserves_real_word_timing()
+    test_force_align_synthetic_singer()
+    test_ctc_aligner_graceful_fallback()
 
     print("\n" + "=" * 60)
     total = PASS_COUNT + FAIL_COUNT

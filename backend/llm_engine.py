@@ -1100,11 +1100,13 @@ def align_and_correct_lyrics_with_reference(
             aligned_lines[u_i]['end'] = round(prev_end + (k_idx + 1) * 3.5 - 0.3, 2)
 
     # Step 6: VAD Acoustic Snap (if audio is accessible)
+    vocal_onsets_fine: List[float] = []
     if audio_path and os.path.exists(audio_path):
         try:
-            from backend.vocal_align import detect_vocal_segments
+            from backend.vocal_align import detect_vocal_segments, detect_vocal_onsets
             vocal_segments = detect_vocal_segments(audio_path)
             if vocal_segments:
+                vocal_onsets_fine = detect_vocal_onsets(audio_path, vocal_segments)
                 vocal_onsets = [seg[0] for seg in vocal_segments]
                 for l in aligned_lines:
                     orig_s = l['start']
@@ -1125,6 +1127,7 @@ def align_and_correct_lyrics_with_reference(
             print(f"[Lyric Align] VAD notice: {vad_e}")
 
     # Step 7: Monotonicity & Word-Level Formatting
+    from backend.vocal_align import time_line_words
     final_lyrics: List[Dict[str, Any]] = []
     prev_end = 0.0
     for i, line in enumerate(aligned_lines):
@@ -1136,15 +1139,7 @@ def align_and_correct_lyrics_with_reference(
         prev_end = et
 
         text = line['text']
-        words_raw = text.split()
-        words = []
-        if words_raw:
-            dur = et - st
-            w_step = dur / len(words_raw)
-            for w_idx, w_text in enumerate(words_raw):
-                ws = round(st + w_idx * w_step, 2)
-                we = round(st + (w_idx + 1) * w_step, 2)
-                words.append({"text": w_text, "start": ws, "end": we})
+        words = time_line_words(text, round(st, 2), round(et, 2), onsets=vocal_onsets_fine)
 
         final_lyrics.append({
             "line_id": i,
