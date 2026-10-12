@@ -168,10 +168,18 @@ public partial class ExportViewModel : ObservableObject
                 fps: fps,
                 theme: studio.CurrentTheme,
                 palette: studio.CurrentPalette,
+                bgImagePath: studio.CurrentBgImagePath,
+                logoPath: studio.CurrentLogoPath,
                 songTitle: studio.CurrentSongTitle,
                 artistName: studio.CurrentArtistName,
                 lyrics: studio.CurrentLyrics,
-                useGpu: EnableGpuAcceleration
+                fontName: studio.CurrentFontName,
+                useGpu: EnableGpuAcceleration,
+                logoBadgeMode: studio.CurrentLogoBadgeMode,
+                logoBgRemoval: studio.CurrentLogoBgRemoval,
+                logoSpin: studio.CurrentLogoSpin,
+                logoBassPulse: studio.CurrentLogoBassPulse,
+                amplitudeScale: studio.CurrentAmplitudeScale
             );
 
             _exportStopwatch.Stop();

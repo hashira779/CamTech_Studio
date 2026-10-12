@@ -179,6 +179,88 @@ body.daw-theme {
   color: var(--accent-hover);
 }
 
+/* Top DAW Navigation Menus */
+.menu-items {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.nav-menu-item {
+  position: relative;
+}
+.menu-trigger-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.menu-trigger-btn:hover,
+.nav-menu-item.active .menu-trigger-btn {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+.menu-dropdown-content {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 225px;
+  background: rgba(13, 17, 27, 0.98);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: 8px;
+  padding: 5px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.8), 0 0 20px rgba(56, 189, 248, 0.15);
+  backdrop-filter: blur(20px);
+  z-index: 10010;
+}
+.nav-menu-item.active .menu-dropdown-content,
+.nav-menu-item:hover .menu-dropdown-content {
+  display: block;
+}
+.menu-action-btn {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.menu-action-btn:hover {
+  background: rgba(56, 189, 248, 0.18);
+  color: #fff;
+  transform: translateX(2px);
+}
+.menu-highlight-btn {
+  color: #f472b6;
+  font-weight: 700;
+  background: rgba(236, 72, 153, 0.1);
+  border: 1px solid rgba(236, 72, 153, 0.25);
+  margin: 3px 0;
+}
+.menu-highlight-btn:hover {
+  background: linear-gradient(135deg, rgba(236, 72, 153, 0.25), rgba(168, 85, 247, 0.25));
+  color: #fff;
+}
+.menu-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 4px 0;
+}
+
 /* Center Project Title & Format Badge */
 .project-title-capsule {
   display: flex;
@@ -1819,5 +1901,251 @@ body.is-resizing button {
 }
 .pstep-arrow {
   color: rgba(255, 255, 255, 0.25);
+}
+
+/* ==========================================================================
+   SRT Subtitle Editor — Cue Editor & Export UI
+   ========================================================================== */
+
+/* Toolbar Buttons */
+.srt-toolbar-btn {
+  border-radius: 5px;
+  padding: 4px 9px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  transition: all 0.15s ease;
+  font-family: var(--font-sans);
+  white-space: nowrap;
+}
+.srt-toolbar-btn:hover {
+  filter: brightness(1.25);
+  transform: translateY(-1px);
+}
+.srt-toolbar-btn:active {
+  transform: translateY(0);
+  filter: brightness(0.95);
+}
+
+/* Cue Row */
+.srt-cue-row {
+  display: grid;
+  grid-template-columns: 48px 1fr 2fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+}
+.srt-cue-row:hover {
+  background: rgba(20, 30, 50, 0.85);
+  border-color: rgba(56, 189, 248, 0.15);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+}
+.srt-cue-row.srt-cue-selected {
+  background: rgba(14, 165, 233, 0.08);
+  border-color: rgba(14, 165, 233, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(14, 165, 233, 0.1), 0 0 16px rgba(14, 165, 233, 0.08);
+}
+
+/* Cue Number/Checkbox */
+.srt-cue-num {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.srt-cue-checkbox {
+  width: 13px;
+  height: 13px;
+  cursor: pointer;
+  accent-color: var(--accent);
+  border-radius: 3px;
+}
+.srt-cue-index {
+  font-size: 10px;
+  color: #475569;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  user-select: none;
+}
+
+/* Timing Section */
+.srt-cue-timing {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.srt-time-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.srt-time-group label {
+  font-size: 8px;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+.srt-time-input {
+  background: rgba(8, 12, 22, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  color: #38bdf8;
+  padding: 4px 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  width: 110px;
+  outline: none;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+.srt-time-input:hover {
+  border-color: rgba(56, 189, 248, 0.3);
+}
+.srt-time-input:focus {
+  border-color: rgba(56, 189, 248, 0.6);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.1);
+  cursor: text;
+}
+.srt-time-arrow {
+  font-size: 11px;
+  color: #334155;
+  font-weight: 600;
+  padding: 0 2px;
+  margin-top: 8px;
+}
+.srt-cue-duration {
+  font-size: 9px;
+  color: #64748b;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 2px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  margin-top: 8px;
+}
+
+/* Text Editor */
+.srt-cue-text-wrapper {
+  display: flex;
+  align-items: center;
+}
+.srt-cue-text {
+  width: 100%;
+  background: rgba(8, 12, 22, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+  color: #e2e8f0;
+  padding: 6px 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  transition: all 0.2s;
+  min-height: 26px;
+}
+.srt-cue-text:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+}
+.srt-cue-text:focus {
+  border-color: rgba(168, 85, 247, 0.45);
+  background: rgba(10, 14, 24, 0.9);
+  box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.08);
+}
+
+/* Action Buttons */
+.srt-cue-actions {
+  display: flex;
+  gap: 3px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.srt-cue-row:hover .srt-cue-actions {
+  opacity: 1;
+}
+.srt-cue-action-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.15s;
+  color: #94a3b8;
+}
+.srt-cue-action-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: scale(1.1);
+}
+.srt-cue-delete:hover {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+.srt-cue-duplicate:hover {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: rgba(56, 189, 248, 0.4);
+}
+.srt-cue-insert-after:hover {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+/* Responsive adjustments for smaller panels */
+@media (max-width: 780px) {
+  .srt-cue-row {
+    grid-template-columns: 36px 1fr 1.5fr auto;
+    gap: 5px;
+    padding: 6px 8px;
+  }
+  .srt-time-input {
+    width: 90px;
+    font-size: 10px;
+    padding: 3px 4px;
+  }
+  .srt-cue-text {
+    font-size: 11px;
+    padding: 4px 6px;
+  }
+/* Active Cue Highlight during audio playback */
+.srt-cue-row.srt-cue-active {
+  background: rgba(14, 165, 233, 0.16) !important;
+  border-color: rgba(56, 189, 248, 0.5) !important;
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.25), inset 0 0 8px rgba(56, 189, 248, 0.15);
+}
+.srt-cue-row.srt-cue-active .srt-cue-index {
+  color: #38bdf8;
+  font-weight: 700;
+}
+
+/* AI Status Pulsing Dot */
+@keyframes srtAiPulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+.srt-ai-pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #38bdf8;
+  display: inline-block;
+  box-shadow: 0 0 8px #38bdf8;
+  animation: srtAiPulse 1.2s infinite ease-in-out;
 }
 

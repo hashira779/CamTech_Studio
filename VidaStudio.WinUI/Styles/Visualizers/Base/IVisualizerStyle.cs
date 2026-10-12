@@ -15,17 +15,27 @@ public class VisualizerPreviewContext
     public Color SecondaryColor { get; set; }
     public float Bass { get; set; }
     public double[] Spectrum { get; set; } = new double[0];
+    public string LogoPath { get; set; } = string.Empty;
+    public string LogoBadgeMode { get; set; } = "trap_nation";
+    public string LogoBgRemoval { get; set; } = "auto";
+    public bool LogoSpin { get; set; } = true;
+    public bool LogoBassPulse { get; set; } = true;
 }
 
 public class Win2DVisualizerContext
 {
     public float Width { get; set; }
     public float Height { get; set; }
+    public double AmplitudeScale { get; set; } = 0.4;
     public float Bass { get; set; }
     public float[] Spectrum { get; set; } = new float[0];
     public Color PrimaryColor { get; set; }
     public Color SecondaryColor { get; set; }
     public CanvasBitmap? LogoBitmap { get; set; }
+    public string LogoBadgeMode { get; set; } = "trap_nation";
+    public string LogoBgRemoval { get; set; } = "auto";
+    public bool LogoSpin { get; set; } = true;
+    public bool LogoBassPulse { get; set; } = true;
 }
 
 public interface IVisualizerStyle

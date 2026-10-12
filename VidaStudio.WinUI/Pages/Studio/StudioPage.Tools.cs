@@ -163,7 +163,7 @@ public sealed partial class StudioPage : Page
             DispatcherQueue.TryEnqueue(() => { MagicLoadingSubtext.Text = "Painting AI background masterpiece..."; });
             
             string songTitle = string.IsNullOrWhiteSpace(StageSongTitleText.Text) ? "Music" : StageSongTitleText.Text;
-            string artistName = string.IsNullOrWhiteSpace(ArtistInputBox.Text) ? "Unknown Artist" : ArtistInputBox.Text;
+            string artistName = string.IsNullOrWhiteSpace(ArtistInputBox.Text) ? "" : ArtistInputBox.Text;
             string prompt = $"A cinematic masterpiece background wallpaper for a music video. The song is '{songTitle}' by '{artistName}'. Highly detailed, 8k resolution, trending on artstation, {autoPalette} colors, aesthetic mood, no text, clean.";
             string encodedPrompt = Uri.EscapeDataString(prompt);
             string bgUrl = $"https://image.pollinations.ai/prompt/{encodedPrompt}?width=1080&height=1920&nologo=true";
@@ -175,6 +175,7 @@ public sealed partial class StudioPage : Page
                 using var http = new System.Net.Http.HttpClient();
                 var bgBytes = await http.GetByteArrayAsync(bgUrl);
                 await File.WriteAllBytesAsync(aiBgPath, bgBytes);
+                _currentBgImagePath = aiBgPath;
                 
                 // Update UI Stage with the new AI background
                 DispatcherQueue.TryEnqueue(() =>
@@ -215,7 +216,12 @@ public sealed partial class StudioPage : Page
                 artistName: artistName,
                 lyrics: lyrics,
                 fontName: selectedFont,
-                logoPath: string.IsNullOrWhiteSpace(LogoPathBox.Text) ? @"Assets\VibeTunesLogo.png" : LogoPathBox.Text
+                logoPath: CurrentLogoPath,
+                logoBadgeMode: CurrentLogoBadgeMode,
+                logoBgRemoval: CurrentLogoBgRemoval,
+                logoSpin: CurrentLogoSpin,
+                logoBassPulse: CurrentLogoBassPulse,
+                amplitudeScale: CurrentAmplitudeScale
             );
 
             // 5. Done!

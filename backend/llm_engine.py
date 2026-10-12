@@ -19,12 +19,12 @@ def call_gemini_api(prompt: str, json_mode: bool = False, timeout: int = 8) -> O
         import urllib.request
         import json
         models = [
-            "gemini-2.5-flash",
-            "gemini-3.5-flash",
-            "gemini-3.8-flash",
-            "gemini-3.5-flash-lite",
             "gemini-flash-lite-latest",
-            "gemini-3.7-flash"
+            "gemini-3-flash-preview",
+            "gemini-3.1-flash-lite",
+            "gemini-3.1-flash-lite-preview",
+            "gemma-4-26b-a4b-it",
+            "gemini-flash-latest"
         ]
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
         if json_mode:
@@ -877,6 +877,9 @@ def align_and_correct_lyrics_with_reference(
     raw_lines = [l.strip() for l in reference_text.splitlines() if l.strip()]
     ref_lines: List[str] = []
     for l in raw_lines:
+        # Ignore LRC metadata header tags
+        if re.match(r'^\[(?:ti|ar|al|by|offset|length|re|ve):.*?\]', l, re.IGNORECASE):
+            continue
         cleaned = re.sub(r'^(?:#+|\*+|-+|\d+[\.\)]|[A-Za-z]+\s*\d+:)\s*', '', l).strip()
         cleaned = re.sub(r'^\[\d{1,2}:\d{2}(?:\.\d+)?\]\s*', '', cleaned)
         cleaned = re.sub(r'^\d{2}:\d{2}(?:\.\d+)?\s*-->\s*\d{2}:\d{2}(?:\.\d+)?\s*', '', cleaned)
@@ -951,12 +954,21 @@ def align_and_correct_lyrics_with_reference(
             candidate_cues.append(dict(cue))
 
     if not candidate_cues:
-        # Fallback if zero timing cues exist: distribute across audio duration
+        # Use Acoustic Vocal Alignment to anchor lyrics to real singer onsets
+        if audio_path and os.path.exists(audio_path):
+            try:
+                from backend.vocal_align import force_align_lyrics_to_audio
+                aligned = force_align_lyrics_to_audio(ref_lines, audio_path=audio_path)
+                if aligned and len(aligned) > 0:
+                    return aligned, {"changes_count": len(aligned), "model_used": "Acoustic Vocal Forced Alignment", "source": "vad_alignment"}
+            except Exception as e:
+                pass
+
         duration = 180.0
         if audio_path and os.path.exists(audio_path):
             try:
-                import soundfile as sf
-                duration = sf.info(audio_path).duration
+                from backend.audio_analyzer import decode_audio_to_numpy
+                _, _, duration = decode_audio_to_numpy(audio_path, target_sr=8000)
             except Exception:
                 pass
         step = max(3.0, (duration - 6.0) / max(1, total_ref))

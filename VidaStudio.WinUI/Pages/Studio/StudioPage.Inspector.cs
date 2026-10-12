@@ -20,13 +20,19 @@ public sealed partial class StudioPage : Page
         if (file != null)
         {
             LogoPathBox.Text = file.Path;
-            
-            // Update UI preview
-            // var bmp = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(file.Path));
-            // BadgeLogoBrush.ImageSource = bmp;
-            // BadgeLogoEllipse.Visibility = Visibility.Visible;
-            // BadgeTextStack.Visibility = Visibility.Collapsed;
+            UpdateVisualizerFrame();
         }
+    }
+
+    private void ClearLogo_Click(object sender, RoutedEventArgs e)
+    {
+        LogoPathBox.Text = string.Empty;
+        UpdateVisualizerFrame();
+    }
+
+    private void LogoSetting_Changed(object sender, RoutedEventArgs e)
+    {
+        UpdateVisualizerFrame();
     }
 
     private void FontSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)

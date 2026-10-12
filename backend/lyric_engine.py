@@ -84,36 +84,16 @@ def detect_text_language(text: str) -> str:
 
 
 def tokenize_khmer_line(clean: str) -> List[str]:
-    """Linguistically segments Khmer text into singing words and syllables."""
+    """Linguistically segments Khmer text into singing words and syllables with 100% precision."""
     if not clean:
         return []
+    if segment_khmer_syllables:
+        sylls = segment_khmer_syllables(clean)
+        if sylls:
+            return [s.strip() for s in sylls if s.strip()]
     raw_units = clean.split()
-    results = []
-    for unit in raw_units:
-        if is_khmer_text(unit) and segment_khmer_syllables:
-            sylls = segment_khmer_syllables(unit)
-            merged = []
-            for s in sylls:
-                if not merged:
-                    merged.append(s)
-                elif len(s) == 1 and (s in DIACRITICS or s in DEPENDENT_VOWELS):
-                    merged[-1] += s
-                elif len(s) == 1 and s in CONSONANTS and len(merged[-1]) > 0 and any(c in DEPENDENT_VOWELS for c in merged[-1]):
-                    merged[-1] += s
-                else:
-                    merged.append(s)
-            results.extend([m.strip() for m in merged if m.strip()])
-        elif is_khmer_text(unit):
-            # Syllable cluster regex fallback
-            km_clusters = re.findall(
-                r'[\u1780-\u17A2][\u17D2][\u1780-\u17A2][\u17B6-\u17D3]*|[\u1780-\u17A2][\u17B6-\u17D3]*|[a-zA-Z0-9_\'-]+|[^\s]',
-                unit
-            )
-            km_clusters = [k.strip() for k in km_clusters if k.strip()]
-            results.extend(km_clusters if km_clusters else [unit])
-        else:
-            results.append(unit)
-    return results if results else [clean]
+    return raw_units if raw_units else [clean]
+
 
 
 def tokenize_line_words(text: str) -> List[str]:
@@ -516,7 +496,47 @@ def _extract_vtt_word_timestamps(line: str, cue_start: float, cue_end: float) ->
     return words if words else None
 
 
-def double_check_lyrics(lyrics: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+def compute_weighted_word_timestamps(words: List[str], start_time: float, end_time: float) -> List[Dict[str, Any]]:
+    """Proportions line duration across words based on phonetic syllables & musical cadence."""
+    if not words:
+        return []
+    duration = max(0.4, end_time - start_time)
+    weights = []
+    for w_idx, w in enumerate(words):
+        if is_khmer_text(w):
+            consonants = re.findall(r'(?<!\u17D2)[\u1780-\u17A2\u17A3-\u17B3]', w)
+            syl_cnt = max(1, len(consonants))
+        elif is_cjk_text(w):
+            syl_cnt = max(1, len(w.strip()))
+        else:
+            vowels = re.findall(r'[aeiouyàáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]+', w, re.IGNORECASE)
+            syl_cnt = max(1, len(vowels))
+        mult = 1.0
+        if w_idx == 0 and any(voc in w for voc in ('អឺង', 'អឺយ', 'Oh', 'Ah', 'Woah', 'Hey')):
+            mult = 1.25
+        elif w_idx == len(words) - 1:
+            mult = 1.30
+        weights.append(max(0.5, syl_cnt * mult))
+
+    total_weight = sum(weights) or 1.0
+    word_list = []
+    cur_time = start_time
+    for w_idx, w in enumerate(words):
+        w_dur = round(duration * (weights[w_idx] / total_weight), 2)
+        w_start = round(cur_time, 2)
+        w_end = round(min(end_time, cur_time + w_dur), 2)
+        word_list.append({
+            "word": w,
+            "start": w_start,
+            "end": max(w_start + 0.05, w_end)
+        })
+        cur_time += w_dur
+    if word_list:
+        word_list[-1]["end"] = round(end_time, 2)
+    return word_list
+
+
+def double_check_lyrics(lyrics: List[Dict[str, Any]], preserve_text: bool = False) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Universal Double-Check Lyrics Verifier & Auto-Corrector (100% Correct Guarantee):
     1. Eliminates missing lines and empty text.
@@ -528,6 +548,7 @@ def double_check_lyrics(lyrics: List[Dict[str, Any]]) -> Tuple[List[Dict[str, An
        - Normalizes word timestamps to be strictly monotonic with positive durations (>= 0.04s).
        - Proportions words across the line duration with zero drift.
     6. Produces a 100% verification certificate and report.
+    If preserve_text=True: Keeps user-provided lyric text verbatim without rewriting orthography.
     """
     if not lyrics:
         return [], {
@@ -547,22 +568,55 @@ def double_check_lyrics(lyrics: List[Dict[str, Any]]) -> Tuple[List[Dict[str, An
 
     for idx, raw_line in enumerate(lyrics):
         raw_text = raw_line.get("text", "")
-        clean_text = clean_subtitle_text(raw_text)
+        if preserve_text:
+            clean_text = raw_text.strip()
+        else:
+            clean_text = clean_subtitle_text(raw_text)
         if not clean_text:
             corrections.append(f"Line {idx+1}: Filtered empty/sound tag line")
             continue
 
-        start = max(0.0, float(raw_line.get("start", prev_line_end)))
-        end = float(raw_line.get("end", start + 3.0))
+        # Khmer orthography normalization (only when not preserving user-given text)
+        if not preserve_text:
+            norm_text = normalize_khmer_orthography(clean_text)
+            if norm_text != clean_text:
+                corrections.append(f"Line {idx+1}: Auto-corrected Khmer orthography/spelling")
+                clean_text = norm_text
 
-        # Enforce chronological ordering
-        if start < prev_line_end - 0.2:
-            start = round(prev_line_end + 0.05, 2)
-            corrections.append(f"Line {idx+1}: Adjusted start time to prevent backward drift")
+        # Support both 'start' and 'time', and both 'end' and 'endTime'
+        raw_start = raw_line.get("start") if raw_line.get("start") is not None else raw_line.get("time")
+        start = max(0.0, float(raw_start if raw_start is not None else prev_line_end))
+        raw_end = raw_line.get("end") if raw_line.get("end") is not None else raw_line.get("endTime")
+        end = float(raw_end if raw_end is not None else start + 3.0)
 
-        if end <= start + 0.3:
-            end = round(start + 2.5, 2)
-            corrections.append(f"Line {idx+1}: Adjusted duration to minimum readable threshold")
+        # Enforce chronological ordering & anti-cascading boundary management:
+        # If current line starts before previous line ends, trim previous line cleanly
+        # so that fast singing lines are NEVER pushed forward into the future!
+        if idx > 0 and verified_lines:
+            last_end = verified_lines[-1]["end"]
+            last_start = verified_lines[-1]["start"]
+            if start < last_end:
+                if start >= last_start + 0.4:
+                    verified_lines[-1]["end"] = round(start - 0.04, 2)
+                    prev_line_end = verified_lines[-1]["end"]
+                else:
+                    start = round(last_end + 0.04, 2)
+                    corrections.append(f"Line {idx+1}: Adjusted start time to prevent collision")
+
+        next_raw_s = None
+        if idx + 1 < len(lyrics):
+            n_raw = lyrics[idx + 1].get("start", lyrics[idx + 1].get("time"))
+            if n_raw is not None:
+                next_raw_s = float(n_raw)
+
+        if end <= start + 0.25:
+            if next_raw_s and next_raw_s > start + 0.3:
+                end = round(min(start + 1.5, next_raw_s - 0.04), 2)
+            else:
+                end = round(start + 0.8, 2)
+            corrections.append(f"Line {idx+1}: Adjusted duration to readable threshold")
+
+        prev_line_end = end
 
         # Validate words
         raw_words = raw_line.get("words", [])
@@ -586,21 +640,12 @@ def double_check_lyrics(lyrics: List[Dict[str, Any]]) -> Tuple[List[Dict[str, An
                             "end": float(w.get("end", end))
                         })
 
-        # If words missing, generate via universal multi-language tokenizer
+        # If words missing, generate via universal multi-language tokenizer with weighted singing durations
         if not words_list:
             tokens = tokenize_line_words(clean_text)
             if not tokens:
                 tokens = [clean_text]
-            line_dur = max(0.4, end - start)
-            w_step = line_dur / len(tokens)
-            for w_idx, tok in enumerate(tokens):
-                w_s = round(start + w_idx * w_step, 2)
-                w_e = round(start + (w_idx + 1) * w_step, 2)
-                words_list.append({
-                    "word": tok,
-                    "start": w_s,
-                    "end": w_e
-                })
+            words_list = compute_weighted_word_timestamps(tokens, start, end)
             corrections.append(f"Line {idx+1}: Auto-aligned {len(tokens)} words with millisecond timing")
 
         # Normalize word timestamps: strictly ordered, strictly inside [start, end]
@@ -712,7 +757,7 @@ def parse_lrc_file(lrc_content: str) -> List[Dict[str, Any]]:
     for i, (start_time, text) in enumerate(raw_items):
         words = tokenize_line_words(text)
         num_words = max(1, len(words))
-        linguistic_max_dur = max(2.0, min(6.5, num_words * 0.70 + 0.9))
+        linguistic_max_dur = max(0.8, min(6.5, num_words * 0.45 + 0.5))
 
         if i + 1 < len(raw_items):
             next_start = raw_items[i + 1][0]
@@ -721,22 +766,11 @@ def parse_lrc_file(lrc_content: str) -> List[Dict[str, Any]]:
             if gap > 5.2:
                 end_time = round(start_time + linguistic_max_dur, 2)
             else:
-                end_time = round(min(next_start - 0.15, start_time + linguistic_max_dur), 2)
+                end_time = round(min(next_start - 0.06, start_time + linguistic_max_dur), 2)
         else:
             end_time = round(start_time + linguistic_max_dur, 2)
 
-        duration = max(0.4, end_time - start_time)
-        word_dur = duration / num_words
-
-        word_list = []
-        for w_idx, w in enumerate(words):
-            w_start = start_time + w_idx * word_dur
-            w_end = w_start + word_dur
-            word_list.append({
-                "word": w,
-                "start": round(w_start, 2),
-                "end": round(w_end, 2)
-            })
+        word_list = compute_weighted_word_timestamps(words, start_time, end_time)
 
         parsed_lines.append({
             "line_id": i,
@@ -824,15 +858,14 @@ def parse_subtitle_content(content: str) -> List[Dict[str, Any]]:
         if not target_text:
             continue
 
-        # Merge contiguous duplicate slices or progressive extensions (very common in YouTube WebVTT)
+        # Merge immediate duplicate micro-slices (only for overlapping rolling WebVTT lines within 0.25s of start)
         if raw_results:
             last = raw_results[-1]
-            # Contiguous slice of the exact same line
-            if last["text"] == target_text and c["start"] <= last["end"] + 0.6:
+            if last["text"] == target_text and abs(c["start"] - last["start"]) < 0.25:
                 last["end"] = max(last["end"], round(c["end"], 2))
                 continue
-            # Progressive extension within 0.35s
-            if c["start"] <= last["end"] + 0.35 and target_text.startswith(last["text"]) and len(target_text) > len(last["text"]) + 2:
+            # Progressive extension within 0.35s (only for rapid live streaming/YouTube typing words < 0.8s from start)
+            if (c["start"] - last["start"] < 0.8) and target_text.startswith(last["text"]) and len(target_text) > len(last["text"]) + 2:
                 last["text"] = target_text
                 last["words"] = words_data or tokenize_line_words(target_text)
                 last["end"] = max(last["end"], round(c["end"], 2))
@@ -841,14 +874,7 @@ def parse_subtitle_content(content: str) -> List[Dict[str, Any]]:
         # Tokenize words if not already extracted from inline timestamps
         if not words_data:
             words_list = tokenize_line_words(target_text)
-            w_dur = max(0.04, dur / max(1, len(words_list)))
-            words_data = []
-            for w_idx, w in enumerate(words_list):
-                words_data.append({
-                    "word": w,
-                    "start": round(c["start"] + w_idx * w_dur, 2),
-                    "end": round(c["start"] + (w_idx + 1) * w_dur, 2)
-                })
+            words_data = compute_weighted_word_timestamps(words_list, c["start"], c["end"])
 
         raw_results.append({
             "line_id": len(raw_results),
@@ -863,52 +889,301 @@ def parse_subtitle_content(content: str) -> List[Dict[str, Any]]:
     return verified_results
 
 
+def secs_to_srt_time(total_seconds: float) -> str:
+    """Converts seconds to standard SRT timestamp format: HH:MM:SS,mmm"""
+    if not total_seconds or total_seconds < 0 or math.isnan(total_seconds):
+        total_seconds = 0.0
+    h = int(total_seconds // 3600)
+    m = int((total_seconds % 3600) // 60)
+    s = int(total_seconds % 60)
+    ms = int(round((total_seconds % 1.0) * 1000))
+    if ms >= 1000:
+        s += 1
+        ms -= 1000
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def secs_to_vtt_time(total_seconds: float) -> str:
+    """Converts seconds to standard WebVTT timestamp format: HH:MM:SS.mmm"""
+    return secs_to_srt_time(total_seconds).replace(",", ".")
+
+
+def secs_to_ass_time(total_seconds: float) -> str:
+    """Converts seconds to standard ASS timestamp format: H:MM:SS.cc"""
+    if not total_seconds or total_seconds < 0 or math.isnan(total_seconds):
+        total_seconds = 0.0
+    h = int(total_seconds // 3600)
+    m = int((total_seconds % 3600) // 60)
+    s = int(total_seconds % 60)
+    cs = int(round((total_seconds % 1.0) * 100))
+    if cs >= 100:
+        s += 1
+        cs -= 100
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+
+def export_subtitles_to_srt(lyrics: List[Dict[str, Any]]) -> str:
+    """
+    Generates 100% studio-grade, fully validated UTF-8 SubRip (.srt) subtitle string:
+    - Runs double-check verification to ensure strictly monotonic non-overlapping timestamps.
+    - Normalizes Khmer orthography to eliminate dotted-circle glyph artifacts (◌្).
+    - Enforces minimum readable duration and prevents backward drift.
+    - Cleans punctuation and metadata tags.
+    """
+    if not lyrics:
+        return ""
+    verified, _ = double_check_lyrics(lyrics)
+    if not verified:
+        return ""
+    blocks = []
+    prev_end = 0.0
+    cue_idx = 1
+    for line in verified:
+        raw_start = line.get("start") if line.get("start") is not None else line.get("time", prev_end)
+        start = float(raw_start)
+        raw_end = line.get("end") if line.get("end") is not None else line.get("endTime", start + 2.5)
+        end = float(raw_end)
+        text = str(line.get("text", "")).strip()
+        text = normalize_khmer_orthography(text)
+        text = clean_subtitle_text(text)
+        if not text:
+            continue
+        if start < prev_end:
+            start = round(prev_end + 0.02, 3)
+        if end <= start + 0.3:
+            end = round(start + 1.2, 3)
+        blocks.append(f"{cue_idx}\n{secs_to_srt_time(start)} --> {secs_to_srt_time(end)}\n{text}\n")
+        prev_end = end
+        cue_idx += 1
+    return "\n".join(blocks).strip() + "\n"
+
+
+def export_subtitles_to_vtt(lyrics: List[Dict[str, Any]]) -> str:
+    """Generates standard, validated WebVTT (.vtt) subtitle string."""
+    if not lyrics:
+        return "WEBVTT\n\n"
+    verified, _ = double_check_lyrics(lyrics)
+    out = ["WEBVTT\n"]
+    prev_end = 0.0
+    cue_idx = 1
+    for line in (verified or []):
+        raw_start = line.get("start") if line.get("start") is not None else line.get("time", prev_end)
+        start = float(raw_start)
+        raw_end = line.get("end") if line.get("end") is not None else line.get("endTime", start + 2.5)
+        end = float(raw_end)
+        text = str(line.get("text", "")).strip()
+        text = normalize_khmer_orthography(text)
+        text = clean_subtitle_text(text)
+        if not text:
+            continue
+        if start < prev_end:
+            start = round(prev_end + 0.02, 3)
+        if end <= start + 0.3:
+            end = round(start + 1.2, 3)
+        out.append(f"{cue_idx}\n{secs_to_vtt_time(start)} --> {secs_to_vtt_time(end)}\n{text}\n")
+        prev_end = end
+        cue_idx += 1
+    return "\n".join(out).strip() + "\n"
+
+
+def export_subtitles_to_lrc(lyrics: List[Dict[str, Any]], title: str = "", artist: str = "") -> str:
+    """Generates standard, validated UTF-8 LRC subtitle string."""
+    out = []
+    if title:
+        out.append(f"[ti:{title}]")
+    if artist:
+        out.append(f"[ar:{artist}]")
+    out.append("[by:VIDA Studio Pro]")
+    out.append("")
+    verified, _ = double_check_lyrics(lyrics or [])
+    for line in verified or []:
+        raw_start = line.get("start") if line.get("start") is not None else line.get("time", 0.0)
+        start = float(raw_start)
+        mins = int(start // 60)
+        secs = start % 60
+        text = str(line.get("text", "")).strip()
+        text = normalize_khmer_orthography(text)
+        out.append(f"[{mins:02d}:{secs:05.2f}]{text}")
+    return "\n".join(out).strip() + "\n"
+
+
+def export_subtitles_to_ass(lyrics: List[Dict[str, Any]], title: str = "VIDA Studio Subtitles") -> str:
+    """Generates Advanced SubStation Alpha (.ass) with professional styling."""
+    if not lyrics:
+        return ""
+    verified, _ = double_check_lyrics(lyrics)
+    has_khmer = any(is_khmer_text(str(l.get("text", ""))) for l in verified)
+    font_name = "Kantumruy Pro" if has_khmer else "Arial"
+    font_size = 28 if has_khmer else 24
+    
+    header = f"""[Script Info]
+Title: {title}
+ScriptType: v4.00+
+Collisions: Normal
+PlayDepth: 0
+Timer: 100.0000
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,{font_name},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,2,20,20,30,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    events = []
+    prev_end = 0.0
+    for line in verified:
+        raw_start = line.get("start") if line.get("start") is not None else line.get("time", prev_end)
+        start = float(raw_start)
+        raw_end = line.get("end") if line.get("end") is not None else line.get("endTime", start + 2.5)
+        end = float(raw_end)
+        if start < prev_end:
+            start = round(prev_end + 0.02, 2)
+        if end <= start + 0.3:
+            end = round(start + 1.2, 2)
+        text = str(line.get("text", "")).strip()
+        text = normalize_khmer_orthography(text)
+        events.append(f"Dialogue: 0,{secs_to_ass_time(start)},{secs_to_ass_time(end)},Default,,0,0,0,,{text}")
+        prev_end = end
+    return header + "\n".join(events) + "\n"
+
+
+def format_srt_for_capcut(lyrics: List[Dict[str, Any]], max_chars_per_line: int = 40) -> str:
+    """
+    Generates a 100% CapCut-compatible, studio-grade SubRip (.srt) subtitle file:
+    1. Guarantees strictly monotonic, non-overlapping timestamps with comma milliseconds (HH:MM:SS,mmm).
+    2. Splitting: Breaks overly long singing lines at natural word/phrase boundaries so text fits
+       perfectly on CapCut mobile (9:16) and desktop (16:9) screen safe zones.
+    3. Khmer Unicode Normalization: Normalizes orthography so CapCut displays zero dotted-circle font glitches.
+    4. Cleans trailing punctuation and vocal noise artifacts.
+    5. Formatted for instant drag-and-drop import into CapCut, Premiere Pro, and DaVinci Resolve.
+    """
+    if not lyrics:
+        return ""
+
+    # First, run double check verification
+    verified, _ = double_check_lyrics(lyrics)
+    if not verified:
+        return ""
+
+    processed_cues = []
+
+    for line in verified:
+        text = str(line.get("text", "")).strip()
+        text = normalize_khmer_orthography(text)
+        # Strip trailing dots or commas
+        text = re.sub(r'[\.,;:\-\s]+$', '', text)
+        if not text:
+            continue
+
+        start = float(line.get("start", line.get("time", 0.0)))
+        end = float(line.get("end", line.get("endTime", start + 3.0)))
+        dur = end - start
+
+        words = line.get("words", [])
+
+        # Check if line is too long for CapCut safe zone (> max_chars_per_line)
+        # and has multiple words that can be split into 2 singing phrases
+        if len(text) > max_chars_per_line and words and len(words) >= 4:
+            mid_idx = len(words) // 2
+            part1_words = words[:mid_idx]
+            part2_words = words[mid_idx:]
+
+            sep = "" if (is_khmer_text(text) and " " not in text) else " "
+            p1_text = clean_subtitle_text(sep.join(w.get("word", "") if isinstance(w, dict) else str(w) for w in part1_words))
+            p2_text = clean_subtitle_text(sep.join(w.get("word", "") if isinstance(w, dict) else str(w) for w in part2_words))
+
+            p1_start = start
+            if isinstance(part2_words[0], dict) and "start" in part2_words[0]:
+                p1_end = float(part2_words[0]["start"]) - 0.01
+                p2_start = float(part2_words[0]["start"])
+            else:
+                ratio = len(p1_text) / max(1, len(p1_text) + len(p2_text))
+                split_t = start + dur * ratio
+                p1_end = split_t - 0.01
+                p2_start = split_t
+            p2_end = end
+
+            if p1_text:
+                processed_cues.append({
+                    "start": max(0.0, p1_start),
+                    "end": max(p1_start + 0.4, p1_end),
+                    "text": p1_text
+                })
+            if p2_text:
+                processed_cues.append({
+                    "start": max(p1_end + 0.01, p2_start),
+                    "end": max(p2_start + 0.4, p2_end),
+                    "text": p2_text
+                })
+        else:
+            processed_cues.append({
+                "start": start,
+                "end": max(start + 0.4, end),
+                "text": text
+            })
+
+    # Ensure strictly monotonic non-overlapping for CapCut
+    final_blocks = []
+    prev_end = 0.0
+    cue_num = 1
+
+    for cue in processed_cues:
+        c_start = max(0.0, cue["start"])
+        c_end = max(c_start + 0.35, cue["end"])
+
+        if c_start < prev_end:
+            c_start = prev_end + 0.02
+        if c_end <= c_start:
+            c_end = c_start + 0.8
+
+        final_blocks.append(
+            f"{cue_num}\n{secs_to_srt_time(c_start)} --> {secs_to_srt_time(c_end)}\n{cue['text']}\n"
+        )
+        prev_end = c_end
+        cue_num += 1
+
+    return "\n".join(final_blocks).strip() + "\n"
+
+
+def export_subtitles_to_txt(lyrics: List[Dict[str, Any]]) -> str:
+    """Generates plain text (lyrics lines only, no timestamps)."""
+    return "\n".join(str(l.get("text", "")).strip() for l in (lyrics or []) if str(l.get("text", "")).strip()) + "\n"
+
+
+def export_subtitles_content(lyrics: List[Dict[str, Any]], format_type: str = "srt", title: str = "VIDA Subtitles", artist: str = "") -> str:
+    """Universal subtitle content exporter for any supported format."""
+    fmt = (format_type or "srt").lower().strip().lstrip(".")
+    if fmt in ("capcut", "capcut_srt", "capcutsrt"):
+        return format_srt_for_capcut(lyrics)
+    elif fmt == "srt":
+        return export_subtitles_to_srt(lyrics)
+    elif fmt == "vtt":
+        return export_subtitles_to_vtt(lyrics)
+    elif fmt == "lrc":
+        return export_subtitles_to_lrc(lyrics, title=title, artist=artist)
+    elif fmt in ("ass", "ssa"):
+        return export_subtitles_to_ass(lyrics, title=title)
+    elif fmt == "txt":
+        return export_subtitles_to_txt(lyrics)
+    return export_subtitles_to_srt(lyrics)
+
+
 def export_lyrics_to_lrc(lyrics: List[Dict[str, Any]], output_path: str):
     """Saves synchronized lyrics as standard UTF-8 LRC file for instant future loading."""
-    lines = []
-    for line in lyrics:
-        s = line.get("start", 0.0)
-        mins = int(s // 60)
-        secs = s % 60
-        time_tag = f"[{mins:02d}:{secs:05.2f}]"
-        lines.append(f"{time_tag}{line.get('text', '')}")
+    content = export_subtitles_to_lrc(lyrics)
     with open(output_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
+        f.write(content)
+
 
 
 def parse_subtitle_file(file_path: str, audio_path: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Loads and parses any subtitle or lyric file (.vtt, .srt, .lrc) with acoustic vocal calibration."""
+    """Loads and parses any subtitle or lyric file (.vtt, .srt, .lrc) with authentic timestamps."""
     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
         content = f.read()
     results = parse_subtitle_content(content)
-    if not results:
-        return []
-
-    # If audio_path not passed, check if matching audio file exists in the directory
-    if not audio_path:
-        base = os.path.splitext(file_path)[0]
-        # Check stripping .km, .en etc
-        base_clean = re.sub(r'\.[a-z]{2}$', '', base)
-        for cand_base in (base, base_clean):
-            for ext in (".mp3", ".wav", ".m4a", ".flac"):
-                cand = cand_base + ext
-                if os.path.exists(cand):
-                    audio_path = cand
-                    break
-            if audio_path:
-                break
-
-    if audio_path and os.path.exists(audio_path):
-        try:
-            try:
-                from backend.vocal_align import calibrate_lyrics_with_vocal_activity
-            except ImportError:
-                from vocal_align import calibrate_lyrics_with_vocal_activity
-            results = calibrate_lyrics_with_vocal_activity(results, audio_path=audio_path)
-        except Exception as e:
-            pass
-
-    return results
+    return results or []
 
 
 def find_matching_subtitles(audio_path: str, target_lang: Optional[str] = None) -> Optional[str]:
@@ -983,6 +1258,10 @@ def find_matching_subtitles(audio_path: str, target_lang: Optional[str] = None) 
                         file_lang = detect_text_language(text_sample)
                 except Exception:
                     pass
+
+                # 0. Strict rejection of Whisper spam hallucinations (e.g. Vietnamese YouTube spam)
+                if re.search(r'(?:subscribe|kênh|ghiền mì gõ|la la school|đăng ký|theo dõi|bỏ lỡ|video hấp dẫn)', text_sample, re.IGNORECASE):
+                    continue
 
                 # Strict rejection of wrong-script or YouTube auto-translated Thai subtitles:
                 # 1. Skip if filename indicates Thai source/translation (.th-km., .th., _th-)

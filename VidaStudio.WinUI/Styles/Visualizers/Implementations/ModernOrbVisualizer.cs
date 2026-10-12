@@ -1,5 +1,6 @@
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Brushes;
+using Microsoft.Graphics.Canvas.Geometry;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -128,12 +129,17 @@ public class ModernOrbVisualizer : IVisualizerStyle
             ds.FillEllipse(centerX, centerY, radius, radius, coreGradient);
         }
 
-        // Draw Logo inside Orb
+        // Draw Logo inside Orb with circular clipping
         if (context.LogoBitmap != null)
         {
-            float logoSize = radius * 1.2f;
-            var destRect = new Windows.Foundation.Rect(centerX - (logoSize / 2), centerY - (logoSize / 2), logoSize, logoSize);
-            ds.DrawImage(context.LogoBitmap, destRect, context.LogoBitmap.Bounds, 1.0f);
+            float logoRadius = radius * 0.75f;
+            using (var clipGeo = CanvasGeometry.CreateCircle(ds.Device, centerX, centerY, logoRadius))
+            using (ds.CreateLayer(1.0f, clipGeo))
+            {
+                float logoSize = logoRadius * 2.0f;
+                var destRect = new Windows.Foundation.Rect(centerX - (logoSize / 2), centerY - (logoSize / 2), logoSize, logoSize);
+                ds.DrawImage(context.LogoBitmap, destRect, context.LogoBitmap.Bounds, 1.0f);
+            }
         }
     }
 }

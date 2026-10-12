@@ -30,10 +30,15 @@ public sealed partial class StudioPage
     {
         _currentTheme = theme;
         
-        string vizId = "modern_orb";
-        if (theme == "spectrum") vizId = "spectrum_bars";
-        if (theme == "pro_spectrum") vizId = "pro_spectrum";
-        if (theme == "modern_orb") vizId = "modern_orb";
+        // Theme-to-visualizer mapping — MUST match Win2DVideoRenderer.cs export mapping
+        string vizId = theme switch
+        {
+            "spectrum" => "spectrum_bars",
+            "pro_spectrum" => "pro_spectrum",
+            "synthwave_3d" => "synthwave_3d",
+            "modern_orb" => "modern_orb",
+            _ => "modern_orb"  // Default
+        };
         
         _currentVisualizer = VidaStudio.Styles.Visualizers.VisualizerFactory.GetVisualizer(vizId);
         
@@ -155,7 +160,12 @@ public sealed partial class StudioPage
             AmplitudeScale = ampScale,
             PrimaryColor = primary,
             SecondaryColor = secondary,
-            Bass = 1.0f 
+            Bass = 1.0f,
+            LogoPath = CurrentLogoPath,
+            LogoBadgeMode = CurrentLogoBadgeMode,
+            LogoBgRemoval = CurrentLogoBgRemoval,
+            LogoSpin = CurrentLogoSpin,
+            LogoBassPulse = CurrentLogoBassPulse
         };
 
         if (_visualizerElement != null)

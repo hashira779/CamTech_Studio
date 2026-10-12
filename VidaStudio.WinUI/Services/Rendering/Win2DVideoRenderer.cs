@@ -33,13 +33,20 @@ public sealed class Win2DVideoRenderer : IDisposable
     private readonly List<LyricLine> _lyrics;
     private readonly string? _bgImagePath;
     private readonly string? _logoPath;
+    private readonly string _logoBadgeMode;
+    private readonly string _logoBgRemoval;
+    private readonly bool _logoSpin;
+    private readonly bool _logoBassPulse;
+    private readonly double _amplitudeScale;
     
     private Process? _ffmpegProcess;
 
     public Win2DVideoRenderer(
         string audioPath, string outputPath, int width, int height, int fps,
         string theme, string paletteName, string? bgImagePath, string? logoPath,
-        string songTitle, string artistName, List<LyricLine>? lyrics, string fontName)
+        string songTitle, string artistName, List<LyricLine>? lyrics, string fontName,
+        string logoBadgeMode = "trap_nation", string logoBgRemoval = "auto",
+        bool logoSpin = true, bool logoBassPulse = true, double amplitudeScale = 0.4)
     {
         _audioPath = audioPath;
         _outputPath = outputPath;
@@ -54,6 +61,11 @@ public sealed class Win2DVideoRenderer : IDisposable
         _artistName = artistName;
         _lyrics = lyrics ?? new List<LyricLine>();
         _fontName = fontName;
+        _logoBadgeMode = logoBadgeMode;
+        _logoBgRemoval = logoBgRemoval;
+        _logoSpin = logoSpin;
+        _logoBassPulse = logoBassPulse;
+        _amplitudeScale = amplitudeScale;
     }
 
     public async Task RenderAsync(Action<RenderProgress> progressCallback, CancellationToken cancellationToken)
@@ -79,7 +91,7 @@ public sealed class Win2DVideoRenderer : IDisposable
         CanvasBitmap? logoBitmap = null;
         if (!string.IsNullOrEmpty(_logoPath) && File.Exists(_logoPath))
         {
-            try { logoBitmap = await CanvasBitmap.LoadAsync(device, _logoPath); } catch { }
+            try { logoBitmap = await SmartLogoService.LoadAndProcessLogoAsync(device, _logoPath, _logoBgRemoval); } catch { }
         }
 
         // 3. Start FFmpeg pipe
@@ -121,14 +133,33 @@ public sealed class Win2DVideoRenderer : IDisposable
                 {
                     ds.DrawImage(bgBitmap, new Windows.Foundation.Rect(0, 0, _width, _height), bgBitmap.Bounds, 0.4f);
                 }
+                else
+                {
+                    // Draw a beautiful fallback radial gradient matching the UI preview
+                    var stops = new Microsoft.Graphics.Canvas.Brushes.CanvasGradientStop[]
+                    {
+                        new Microsoft.Graphics.Canvas.Brushes.CanvasGradientStop { Position = 0.0f, Color = Color.FromArgb(255, (byte)(primaryColor.R/4), (byte)(primaryColor.G/4), (byte)(primaryColor.B/4)) },
+                        new Microsoft.Graphics.Canvas.Brushes.CanvasGradientStop { Position = 1.0f, Color = Color.FromArgb(255, 10, 10, 15) }
+                    };
+                    using var bgBrush = new Microsoft.Graphics.Canvas.Brushes.CanvasRadialGradientBrush(ds.Device, stops)
+                    {
+                        Center = new System.Numerics.Vector2(_width / 2f, _height / 2f),
+                        RadiusX = _width,
+                        RadiusY = _height
+                    };
+                    ds.FillRectangle(0, 0, _width, _height, bgBrush);
+                }
 
                 // Dynamic Pluggable Visualizer Engine
                 // Default to pro_spectrum (GPU ring + bloom + particles) for all themes
+                // Theme-to-visualizer mapping — MUST match StudioPage.Themes.cs ApplyThemeVisualizer()
                 string vizId = _theme switch
                 {
                     "spectrum" => "spectrum_bars",
+                    "pro_spectrum" => "pro_spectrum",
+                    "synthwave_3d" => "synthwave_3d",
                     "modern_orb" => "modern_orb",
-                    _ => "pro_spectrum"  // Everything else uses the premium GPU visualizer
+                    _ => "modern_orb"  // Default matches preview
                 };
                 
                 var visualizer = VidaStudio.Styles.Visualizers.VisualizerFactory.GetVisualizer(vizId);
@@ -147,25 +178,60 @@ public sealed class Win2DVideoRenderer : IDisposable
                     Spectrum = specArray,
                     PrimaryColor = primaryColor,
                     SecondaryColor = secondaryColor,
-                    LogoBitmap = logoBitmap
+                    LogoBitmap = logoBitmap,
+                    LogoBadgeMode = _logoBadgeMode,
+                    LogoBgRemoval = _logoBgRemoval,
+                    LogoSpin = _logoSpin,
+                    LogoBassPulse = _logoBassPulse,
+                    AmplitudeScale = _amplitudeScale
                 };
 
                 visualizer.RenderExport(ds, vizContext);
 
                 // Draw Lyrics
                 var tSpan = TimeSpan.FromSeconds(tCurrent);
-                LyricLine? currentLine = _lyrics.Find(l => tSpan >= l.StartTime && tSpan <= l.EndTime);
+                LyricLine? currentLine = null;
+                for (int i = _lyrics.Count - 1; i >= 0; i--)
+                {
+                    var l = _lyrics[i];
+                    if (l.StartTime <= tSpan)
+                    {
+                        // Keep lyric on screen for up to 3 seconds during gaps
+                        if (tSpan <= l.EndTime + TimeSpan.FromSeconds(3))
+                        {
+                            currentLine = l;
+                        }
+                        break;
+                    }
+                }
+
                 if (currentLine != null)
                 {
                     var textFormat = new CanvasTextFormat
                     {
                         FontFamily = _fontName,
-                        FontSize = 48,
+                        FontSize = 52,
                         HorizontalAlignment = CanvasHorizontalAlignment.Center,
                         VerticalAlignment = CanvasVerticalAlignment.Center,
-                        Options = CanvasDrawTextOptions.EnableColorFont
+                        Options = CanvasDrawTextOptions.EnableColorFont,
+                        FontWeight = new Windows.UI.Text.FontWeight { Weight = 600 }
                     };
-                    var textRect = new Windows.Foundation.Rect(50, _height - 300, _width - 100, 200);
+                    
+                    var textRect = new Windows.Foundation.Rect(50, _height - 250, _width - 100, 150);
+
+                    // 1. Draw a subtle dark gradient pill behind the text for contrast
+                    using (var pillBrush = new Microsoft.Graphics.Canvas.Brushes.CanvasLinearGradientBrush(ds.Device, Color.FromArgb(140, 0, 0, 0), Color.FromArgb(0, 0, 0, 0)))
+                    {
+                        pillBrush.StartPoint = new System.Numerics.Vector2(0, (float)textRect.Y);
+                        pillBrush.EndPoint = new System.Numerics.Vector2(0, (float)textRect.Bottom);
+                        ds.FillRectangle(new Windows.Foundation.Rect(0, textRect.Y, _width, textRect.Height), pillBrush);
+                    }
+                    
+                    // 2. Draw Text Drop Shadow
+                    var shadowRect = new Windows.Foundation.Rect(textRect.X + 3, textRect.Y + 3, textRect.Width, textRect.Height);
+                    ds.DrawText(currentLine.Text, shadowRect, Color.FromArgb(200, 0, 0, 0), textFormat);
+                    
+                    // 3. Draw Main Text
                     ds.DrawText(currentLine.Text, textRect, Colors.White, textFormat);
                 }
             }

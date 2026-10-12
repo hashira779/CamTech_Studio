@@ -238,7 +238,9 @@ public class VidaApiClient
                 }
                 catch
                 {
-                    LastYouTubeError = $"HTTP {response.StatusCode}";
+                    LastYouTubeError = errJson.Length < 200 && !errJson.StartsWith("<") 
+                        ? $"Server error ({response.StatusCode}): {errJson}"
+                        : $"HTTP {(int)response.StatusCode} ({response.StatusCode})";
                 }
             }
         }

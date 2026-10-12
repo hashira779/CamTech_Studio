@@ -7,6 +7,12 @@ with custom window geometry and no browser URL bar/tabs.
 import os
 import sys
 
+os.environ["PYTHONUNBUFFERED"] = "1"
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(line_buffering=True)
+
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
@@ -19,12 +25,28 @@ import subprocess
 import threading
 import webbrowser
 
-def find_free_port(default_port=8000):
-    """Finds an available local port."""
-    for port in range(default_port, default_port + 50):
+def get_base_dir():
+    file_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.dirname(file_dir) if os.path.basename(file_dir).lower() == "tools" else file_dir
+
+def is_port_in_use(port: int) -> bool:
+    """Checks if a port is in use or already bound."""
+    try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            if s.connect_ex(("127.0.0.1", port)) != 0:
-                return port
+            s.settimeout(0.2)
+            if s.connect_ex(("127.0.0.1", port)) == 0:
+                return True
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", port))
+            return False
+    except OSError:
+        return True
+
+def find_free_port(default_port: int = 8000) -> int:
+    """Dynamically finds the next available port starting from default_port (8000, 8001, 8002...)."""
+    for port in range(default_port, default_port + 100):
+        if not is_port_in_use(port):
+            return port
     return default_port
 
 def wait_for_server(port, timeout=10.0):
@@ -41,7 +63,7 @@ def wait_for_server(port, timeout=10.0):
         time.sleep(0.2)
     return False
 
-def open_desktop_window(app_url: str):
+def open_desktop_window(app_url: str, port: int = 8000):
     """
     Opens the URL in standalone PC Desktop App mode using Microsoft Edge or Google Chrome,
     which provides a native application frame without browser chrome (URL bar, tabs, etc).
@@ -64,7 +86,7 @@ def open_desktop_window(app_url: str):
             edge_or_chrome = path
             break
 
-    user_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".app_profile")
+    user_data_dir = os.path.join(get_base_dir(), f".app_profile_{port}")
 
     if edge_or_chrome:
         cmd = [
@@ -86,35 +108,34 @@ def open_desktop_window(app_url: str):
     print(f"Opening in default browser: {app_url}")
     webbrowser.open(app_url)
 
-def run_server(port):
-    """Runs uvicorn FastAPI server with auto-reload."""
-    import uvicorn
-    # reload=True automatically restarts the backend when Python files are updated!
-    uvicorn.run("backend.app:app", host="127.0.0.1", port=port, log_level="info", reload=True)
-
 def main():
+    base_dir = get_base_dir()
+    os.chdir(base_dir)
+    if base_dir not in sys.path:
+        sys.path.insert(0, base_dir)
+
     # Automatically switch to project virtualenv if running under another Python
-    base_dir = os.path.dirname(os.path.abspath(__file__))
     venv_python = os.path.join(base_dir, "venv", "Scripts", "python.exe")
     if os.path.exists(venv_python) and os.path.abspath(sys.executable).lower() != os.path.abspath(venv_python).lower():
         print(f"[*] Switching to project environment: {venv_python}")
         import subprocess
         sys.exit(subprocess.call([venv_python] + sys.argv))
 
+    # Dynamically find next available port (e.g. 8000, 8001, 8002...)
     port = find_free_port(8000)
     app_url = f"http://127.0.0.1:{port}"
 
     print("=" * 65)
-    print(f"   VIDA — Visual Intelligent Dynamic Audio-Video Studio")
-    print(f"   Desktop App URL: {app_url}")
+    print("   VIDA — Visual Intelligent Dynamic Audio-Video Studio")
+    print(f"   [⚡] Dynamic Service Port: {port} | Desktop URL: {app_url}")
     print("=" * 65)
 
     def wait_and_open():
         if wait_for_server(port):
-            open_desktop_window(app_url)
+            open_desktop_window(app_url, port)
         else:
             print("Warning: Server took longer than expected to start.")
-            open_desktop_window(app_url)
+            open_desktop_window(app_url, port)
 
     # Spawn a background thread to open the UI once the server boots
     browser_thread = threading.Thread(target=wait_and_open, daemon=True)
@@ -128,9 +149,11 @@ def main():
         os.path.join(base_dir, "frontend"),
     ]
     try:
-        uvicorn.run("backend.app:app", host="127.0.0.1", port=port, log_level="info", reload=True, reload_dirs=reload_dirs)
+        uvicorn.run("backend.app:app", host="127.0.0.1", port=port, log_level="info", reload=True, reload_dirs=reload_dirs, access_log=True)
     except KeyboardInterrupt:
-        print("\nStopping VIDA Desktop App...")
+        print(f"\nStopping VIDA Desktop App on port {port}...")
+    finally:
+        print(f"[*] VIDA Server on port {port} stopped cleanly.")
 
 if __name__ == "__main__":
     main()

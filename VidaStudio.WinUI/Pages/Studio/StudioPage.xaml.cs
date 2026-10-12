@@ -8,6 +8,7 @@ using System.Threading;
 using VidaStudio.Dialogs;
 using VidaStudio.Models;
 using VidaStudio.Services;
+using VidaStudio.Services.Rendering;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Media.Core;
 using Windows.Media.Playback;
@@ -28,6 +29,7 @@ public sealed partial class StudioPage : Page
     private readonly Random _random = new();
 
     private string _currentAudioPath = string.Empty;
+    private AnalysisResult? _previewAudioAnalysis;
     private string _customYtTitle = string.Empty;
     private string _customYtDesc = string.Empty;
     private string _customYtTags = string.Empty;
@@ -37,6 +39,7 @@ public sealed partial class StudioPage : Page
     private readonly List<Windows.UI.Color> _currentBarColors = new();
     private double _wavePhase = 0;
     private bool _isApplyingTemplate = false;
+    private string? _currentBgImagePath;
 
     public static StudioPage? Current { get; private set; }
 
@@ -46,6 +49,16 @@ public sealed partial class StudioPage : Page
     public string CurrentSongTitle => StageSongTitleText?.Text ?? "My Song";
     public string CurrentArtistName => StageArtistText?.Text ?? "My Artist";
     public List<LyricLine> CurrentLyrics => _lyricLines;
+    public string? CurrentBgImagePath => _currentBgImagePath;
+    public string CurrentLogoPath => string.IsNullOrWhiteSpace(LogoPathBox?.Text) 
+        ? System.IO.Path.Combine(System.AppDomain.CurrentDomain.BaseDirectory, @"Assets\VibeTunesLogo.png") 
+        : LogoPathBox.Text;
+    public string CurrentLogoBadgeMode => (LogoBadgeModeSelector?.SelectedItem as ComboBoxItem)?.Tag as string ?? "trap_nation";
+    public string CurrentLogoBgRemoval => (LogoBgRemovalSelector?.SelectedItem as ComboBoxItem)?.Tag as string ?? "auto";
+    public bool CurrentLogoSpin => LogoSpinToggle?.IsChecked ?? true;
+    public bool CurrentLogoBassPulse => LogoBassPulseToggle?.IsChecked ?? true;
+    public string CurrentFontName => FontSelector?.SelectedItem as string ?? "Leelawadee UI";
+    public double CurrentAmplitudeScale => (VfxPowerSlider?.Value ?? 100) / 100.0 * 0.4;
 
     public StudioPage()
     {
@@ -66,7 +79,7 @@ public sealed partial class StudioPage : Page
         // }
         // catch { }
 
-        _playbackTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) }; // ~30-60 FPS
+        _playbackTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) }; // 60 FPS
         _playbackTimer.Tick += PlaybackTimer_Tick;
 
         Loaded += StudioPage_Loaded;
@@ -152,7 +165,7 @@ public sealed partial class StudioPage : Page
         TitleInputBox.Text = cleanTitle;
         
         // Reset artist and lyrics to avoid stale data from previous tracks
-        StageArtistText.Text = "Unknown Artist";
+        StageArtistText.Text = "";
         ArtistInputBox.Text = "";
         StageLyricsText.Text = "No lyrics loaded... 🧠 Scan ready.";
         UpdateLoadedLyrics(new List<LyricLine>());
@@ -187,8 +200,23 @@ public sealed partial class StudioPage : Page
         }
         catch (Exception ex)
         {
-            BackendService.Instance.AppendLog($"[Studio Audio Player] Error loading {resolvedPath}: {ex.Message}");
+            BackendService.Instance.AppendLog($"[MediaPlayer] Error loading audio: {ex.Message}");
         }
+        // Native FFT Audio Spectrum Analysis for live 60FPS visualizer
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var (data, sr, duration) = AudioAnalyzer.DecodeAudio(resolvedPath);
+                var analyzer = new AudioAnalyzer(data, sr, fps: 60, numBars: 128);
+                var nativeAnalysis = analyzer.Analyze();
+                _previewAudioAnalysis = nativeAnalysis;
+            }
+            catch (Exception ex)
+            {
+                BackendService.Instance.AppendLog($"[Spectrum Preview Engine] Error analyzing audio: {ex.Message}");
+            }
+        });
 
         // Fast Audio DNA Analysis in background (BPM, Mood, Energy - 1-2s)
         ShowActivity("Analyzing audio DNA & BPM...");

@@ -57,55 +57,110 @@ def is_khmer_text(text: str) -> bool:
     """Checks if text contains Khmer characters."""
     return any(is_khmer_char(c) for c in text)
 
+COMMON_KHMER_WORDS = {
+    'បង', 'កូន', 'មុខ', 'ចប់', 'ផង', 'បទ', 'កង', 'ដង', 'ថង់', 'សក់', 'ដប់', 'យប់',
+    'ស្រស់', 'បាត់', 'កត់', 'កប់', 'ពិត', 'ចិត្ត', 'អ្នក', 'ទាន់', 'ធំ', 'តូច', 'គេ',
+    'ស្រី', 'ប្រុស', 'ខ្មែរ', 'ចាម', 'ចិន', 'ជ្វា', 'មាន', 'គ្មាន', 'ដឹង', 'ស្មិត', 'សម',
+    'ផូរផង់', 'ចន្ទ្រា', 'ក្រឡង់', 'អាំងតឺប្រែត', 'គូលី', 'កំប៉ុងវិល', 'ស្នងការ',
+    'ពុំងា', 'ប្រថុយប្រាណ', 'សន្សំហេតុ', 'អាប៉ិល'
+}
+FINAL_DIACRITICS = {'\u17CB', '\u17CD', '\u17D0', '\u17CF', '\u17C6', '\u17C7'}
+
 def segment_khmer_syllables(text: str) -> List[str]:
     """
-    Breaks Khmer text into linguistically correct orthographic syllables:
-    Pattern: Consonant + (Coeng + Subscript)* + (Vowel)* + (Final Consonant)? + (Diacritics)*
-    Correctly produces: 'ពេល', 'ខ្ញុំ', 'មើល', 'ទៅ', 'លើ', 'មេឃ'
+    Breaks Khmer text into linguistically correct orthographic syllables and words.
+    Uses Node Intl.Segmenter when available, or robust phonetic clustering with inherent vowel support.
     """
     if not text:
         return []
+    clean = text.strip()
+    if not clean:
+        return []
 
-    if ' ' in text.strip():
-        return [w for w in text.split() if w]
+    # 1. Fast Node Intl.Segmenter (gold-standard Unicode Annex #29)
+    try:
+        import subprocess, json
+        js_code = (
+            "const s = process.argv[1];"
+            "const seg = new Intl.Segmenter('km', { granularity: 'word' });"
+            "const items = Array.from(seg.segment(s));"
+            "const words = [];"
+            "for (const it of items) {"
+            "  if (!it.isWordLike && /^[\\s\\p{P}]+$/u.test(it.segment)) {"
+            "    if (words.length > 0 && !/^\\s+$/.test(it.segment)) {"
+            "      words[words.length - 1] += it.segment;"
+            "    }"
+            "    continue;"
+            "  }"
+            "  words.push(it.segment);"
+            "}"
+            "console.log(JSON.stringify(words));"
+        )
+        res = subprocess.run(
+            ['node', '-e', js_code, clean],
+            capture_output=True,
+            text=True,
+            timeout=1.5
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            words = json.loads(res.stdout.strip())
+            if words and len(words) > 0:
+                return [w.strip() for w in words if w.strip()]
+    except Exception:
+        pass
 
-    clusters = []
-    current = []
-    i = 0
-    n = len(text)
-
-    while i < n:
-        c = text[i]
-
-        if c.isspace() or c in '.,!?:;«»"\'()[]-—':
-            if current:
-                clusters.append(''.join(current))
-                current = []
-            clusters.append(c)
-            i += 1
+    # 2. Pure Python Linguistic Fallback
+    raw_units = clean.split()
+    results = []
+    for unit in raw_units:
+        m_p = re.search(r'[!?,.:;«»"\'()\[\]\u17D4\u17D5]+$', unit)
+        trailing_p = m_p.group(0) if m_p else ''
+        core = unit[:len(unit)-len(trailing_p)] if trailing_p else unit
+        
+        # Check known dictionary words
+        matched = False
+        for cw in sorted(COMMON_KHMER_WORDS, key=len, reverse=True):
+            if core == cw:
+                results.append(unit)
+                matched = True
+                break
+        if matched:
             continue
 
-        is_base = (c in CONSONANTS or c in INDEPENDENT_VOWELS)
-
-        if is_base and current:
-            if current[-1] == COENG:
-                current.append(c)
-            elif any(ch in DEPENDENT_VOWELS for ch in current) and (i + 1 == n or (text[i + 1] in CONSONANTS or text[i + 1].isspace())):
-                current.append(c)
-                clusters.append(''.join(current))
-                current = []
-            else:
-                clusters.append(''.join(current))
-                current = [c]
+        sylls = []
+        i = 0
+        n = len(core)
+        while i < n:
+            start = i
+            c = core[i]
+            i += 1
+            while i < n and core[i] == COENG and i + 1 < n:
+                i += 2
+            has_v = False
+            while i < n and core[i] in DEPENDENT_VOWELS:
+                has_v = True
+                i += 1
+            while i < n and core[i] in DIACRITICS:
+                i += 1
+            if i < n and core[i] in CONSONANTS:
+                next_is_syll = False
+                if i + 1 < n and (core[i+1] == COENG or core[i+1] in DEPENDENT_VOWELS):
+                    next_is_syll = True
+                if not next_is_syll:
+                    if i + 1 < n and core[i+1] in FINAL_DIACRITICS:
+                        i += 2
+                    elif has_v or core[start:i+1] in COMMON_KHMER_WORDS:
+                        i += 1
+            syll = core[start:i]
+            if syll:
+                sylls.append(syll)
+        if sylls:
+            if trailing_p:
+                sylls[-1] += trailing_p
+            results.extend(sylls)
         else:
-            current.append(c)
-
-        i += 1
-
-    if current:
-        clusters.append(''.join(current))
-
-    return [c for c in clusters if c]
+            results.append(unit)
+    return [r for r in results if r]
 
 def insert_khmer_word_breaks(text: str) -> str:
     """Inserts Zero-Width Space (\\u200B) between syllables for clean UI wrapping."""

@@ -1,5 +1,5 @@
 import { state } from '../core/state.js';
-import { drawTrapCircle } from './trap.js?v=20260927-v7';
+import { drawTrapCircle } from './trap.js?v=20261012-v1';
 import { drawNeonBars } from './neon.js?v=20260927-v7';
 import { drawWaveTheme } from './wave.js?v=20260927-v7';
 import { drawSpectrumAnalyzer } from './spectrum.js?v=20260927-v7';

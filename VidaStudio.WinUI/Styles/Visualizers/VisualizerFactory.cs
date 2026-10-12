@@ -12,6 +12,7 @@ public static class VisualizerFactory
         Register(new ModernOrbVisualizer());
         Register(new SpectrumBarsVisualizer());
         Register(new ProSpectrumVisualizer());
+        Register(new Synthwave3DVisualizer());
     }
 
     public static void Register(IVisualizerStyle style)

@@ -82,6 +82,8 @@ export function initAudioContext(audioPlayerElement, onInit) {
       audioCtx.resume().then(() => {
         if (onInit) onInit(false, "resumed");
       });
+    } else {
+      if (onInit) onInit(false, audioCtx.state);
     }
   } catch (err) {
     console.warn("Web Audio setup notice:", err);

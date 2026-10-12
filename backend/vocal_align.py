@@ -57,56 +57,40 @@ def detect_vocal_segments(
     """
     try:
         import numpy as np
-        import soundfile as sf
+        from scipy.signal import butter, sosfilt
 
         # 1. Check for cached isolated vocal stem
         vocal_stem = get_cached_vocals_path(audio_path)
         is_isolated = vocal_stem is not None
         target_path = vocal_stem if is_isolated else audio_path
 
-        data, sr = sf.read(target_path, dtype='float32')
+        try:
+            from backend.audio_analyzer import decode_audio_to_numpy
+        except ImportError:
+            from audio_analyzer import decode_audio_to_numpy
+        data, sr, duration = decode_audio_to_numpy(target_path, target_sr=16000)
+
         if data.ndim > 1:
             data = np.mean(data, axis=1)
 
-        duration = len(data) / sr
-
-        # Resample to 16kHz for fast, consistent processing
-        if sr != 16000:
-            from scipy.signal import resample_poly
-            from math import gcd
-            g = gcd(sr, 16000)
-            data = resample_poly(data, 16000 // g, sr // g).astype(np.float32)
-            sr = 16000
-
-        # 2. Vocal frequency & harmonic isolation
+        # 2. Vocal frequency bandpass (280 - 3400 Hz) to isolate singing formants
         if not is_isolated:
-            # Peel off percussive drums/cymbals so intro beats don't trigger false vocals
             try:
-                import librosa
-                y_harm, _ = librosa.effects.hpss(data)
+                sos = butter(4, [280, 3400], btype='bandpass', fs=sr, output='sos')
+                vocal_data = sosfilt(sos, data)
             except Exception:
-                y_harm = data
-
-            try:
-                from scipy.signal import butter, lfilter
-                nyq = sr / 2.0
-                low = 280.0 / nyq
-                high = min(3400.0, nyq - 1) / nyq
-                b, a = butter(4, [low, high], btype='band')
-                vocal_data = lfilter(b, a, y_harm)
-            except Exception:
-                vocal_data = y_harm
+                vocal_data = data
         else:
             vocal_data = data
 
-        # 3. Compute frame-level RMS energy (20ms hop, 50ms window)
+        # 3. Compute frame-level RMS energy (20ms hop, 50ms window) in pure NumPy
         hop = int(sr * 0.02)
         frame_size = int(sr * 0.05)
         n_frames = max(1, (len(vocal_data) - frame_size) // hop + 1)
         
         try:
-            import librosa
-            rms = librosa.feature.rms(y=vocal_data, frame_length=frame_size, hop_length=hop)[0]
+            frames = np.lib.stride_tricks.sliding_window_view(vocal_data, frame_size)[::hop]
+            rms = np.sqrt(np.mean(frames ** 2, axis=1))
         except Exception:
             rms = np.zeros(n_frames, dtype=np.float32)
             for i in range(n_frames):
@@ -123,14 +107,28 @@ def detect_vocal_segments(
             p95 = np.max(rms)
         db = 20 * np.log10(np.maximum(rms / (p95 + 1e-9), 1e-5))
 
-        # Thresholds:
-        # Isolated vocal stems have ultra-quiet noise floors (-32dB)
-        # Mixed harmonic tracks have higher background (-16dB to -18dB)
-        threshold_db = -32.0 if is_isolated else -16.0
-        is_active = db > threshold_db
+        # Dual-threshold hysteresis Schmitt trigger:
+        # High threshold triggers vocal onset with high certainty.
+        # Low threshold sustains vocal activity across soft vowels, vibrato, and endings.
+        high_th = -30.0 if is_isolated else -17.0
+        low_th = -38.0 if is_isolated else -23.0
 
-        # Smooth: fill micro-gaps (< 200ms) to keep syllables together
-        gap_frames = int(0.20 / 0.02)
+        is_active = np.zeros(len(db), dtype=bool)
+        state_active = False
+        for i in range(len(db)):
+            val = db[i]
+            if not state_active:
+                if val >= high_th:
+                    state_active = True
+                    is_active[i] = True
+            else:
+                if val >= low_th:
+                    is_active[i] = True
+                else:
+                    state_active = False
+
+        # Smooth: fill micro-gaps (< 220ms) to keep syllables together
+        gap_frames = int(0.22 / 0.02)
         for i in range(len(is_active)):
             if not is_active[i]:
                 left = max(0, i - gap_frames)
@@ -195,8 +193,15 @@ def detect_first_vocal_onset(audio_path: str, vocal_segments: Optional[List[Tupl
     """
     Finds the exact timestamp when the singer begins singing the very first word.
     Guarantees lyrics will NOT start playing during the instrumental intro.
+    Uses the start of the first vocal segment that is long enough to be actual singing
+    (filters out short pre-vocal breaths/noise bursts < 0.3s).
     """
     if vocal_segments and len(vocal_segments) > 0:
+        # Skip very short initial segments (breaths, mic noise) — require >= 0.3s of real vocal
+        for seg in vocal_segments:
+            if seg[1] - seg[0] >= 0.3:
+                return seg[0]
+        # Fallback to first segment if all are short
         return vocal_segments[0][0]
     return 0.0
 
@@ -268,9 +273,8 @@ def force_align_lyrics_to_audio(
     # Auto-detect duration
     if duration <= 0.0:
         try:
-            import soundfile as sf
-            info = sf.info(audio_path)
-            duration = info.duration
+            from backend.audio_analyzer import decode_audio_to_numpy
+            _, _, duration = decode_audio_to_numpy(audio_path, target_sr=8000)
         except Exception:
             duration = 180.0
 
@@ -405,6 +409,10 @@ def force_align_lyrics_to_audio(
             })
             line_id += 1
 
+    # Second pass: Fine-tune every line's onset and cutoff to true vocal acoustic phrases
+    if vocal_segments and len(vocal_segments) > 0:
+        aligned = calibrate_lyrics_with_vocal_activity(aligned, vocal_segments=vocal_segments, audio_path=audio_path)
+
     print(f"[Force Align] ✅ Successfully aligned {len(aligned)} lines across {len(singing_blocks)} musical blocks.")
     return aligned
 
@@ -413,15 +421,16 @@ def calibrate_lyrics_with_vocal_activity(
     lyrics: List[Dict[str, Any]],
     vocal_segments: Optional[List[Tuple[float, float]]] = None,
     audio_path: Optional[str] = None,
-    max_trailing_hold: float = 0.35
+    max_trailing_hold: float = 0.25
 ) -> List[Dict[str, Any]]:
     """
-    Acoustically and linguistically bounds the end time of every lyric line.
-    Prevents lyrics from lingering across instrumental breaks, solos, and interludes.
-    
-    1. Analyzes vocal cutoff using real acoustic VAD segments.
-    2. Imposes linguistic maximum bounds based on word count.
-    3. Re-distributes word-level karaoke timestamps so sweeps match the real singer speed.
+    Acoustically and linguistically bounds every lyric line with millisecond precision:
+    1. Snaps line start times to true acoustic singing onsets (eliminates early display during intros and instrumental breaks).
+    2. Dynamically calibrates line end times according to the singer's actual singing speed:
+       - Fast singing: detects early acoustic vocal cutoff and releases cleanly without lingering into pauses.
+       - Slow singing: tracks sustained notes and vibrato, holding the subtitle until vocal energy ends.
+    3. Strictly monotonic and non-overlapping: guarantees smooth playback and 100% compliant SRT/CapCut export.
+    4. Re-distributes word-level karaoke timestamps so sweeps match the real singer's tempo.
     """
     if not lyrics:
         return []
@@ -435,71 +444,185 @@ def calibrate_lyrics_with_vocal_activity(
             vocal_segments = None
 
     calibrated = []
+    prev_end = 0.0
+    first_onset = detect_first_vocal_onset(audio_path or "", vocal_segments)
+
+    # 0. Global Drift Pre-Compensation:
+    # Only shift forward if lyrics mistakenly started at 0.0s during an instrumental intro (> 4s)
+    shift_offset = 0.0
+    if vocal_segments and len(vocal_segments) > 0 and lyrics:
+        first_lyric_start = float(lyrics[0].get("start", lyrics[0].get("time", 0.0)))
+        if first_lyric_start < 1.0 and first_onset > 4.0:
+            shift_offset = first_onset - first_lyric_start
+
     for i, line in enumerate(lyrics):
-        start = float(line.get("start", 0.0))
-        orig_end = float(line.get("end", start + 3.0))
-        text = line.get("text", "")
+        raw_s = float(line.get("start") if line.get("start") is not None else line.get("time", 0.0))
+        raw_e = float(line.get("end") if line.get("end") is not None else line.get("endTime", raw_s + 3.0))
+        orig_start = max(0.0, raw_s + shift_offset)
+        orig_end = max(orig_start + 0.5, raw_e + shift_offset)
+        text = str(line.get("text", "")).strip()
         words = line.get("words", [])
         num_words = max(1, len(words)) if words else max(1, len(text.split()))
 
-        next_start = float(lyrics[i + 1]["start"]) if i + 1 < len(lyrics) else start + 5.0
-        gap_to_next = next_start - start
+        next_raw_s = float(lyrics[i + 1].get("start", lyrics[i + 1].get("time", raw_e + 3.0))) if i + 1 < len(lyrics) else raw_s + 8.0
+        next_orig_start = max(orig_start + 0.5, next_raw_s + shift_offset)
 
-        # Linguistic ceiling based on word count (0.65s per word + 1.0s release)
-        linguistic_max_dur = max(2.2, min(6.5, num_words * 0.65 + 1.0))
+        calibrated_start = orig_start
 
-        # Acoustic Vocal Cutoff Detection
-        if vocal_segments:
-            overlapping_segs = [s for s in vocal_segments if s[1] > start and s[0] < next_start - 0.4]
-            if overlapping_segs:
-                # Find last vocal segment before an instrumental pause (gap >= 1.0s)
-                vocal_end = overlapping_segs[0][1]
-                for j in range(len(overlapping_segs) - 1):
-                    cur_seg = overlapping_segs[j]
-                    nxt_seg = overlapping_segs[j + 1]
-                    if nxt_seg[0] - cur_seg[1] >= 1.0:
-                        vocal_end = cur_seg[1]
+        # 1. Start Time Alignment: Snap to real acoustic singing onset
+        if vocal_segments and len(vocal_segments) > 0:
+            if i == 0:
+                calibrated_start = max(orig_start, first_onset)
+
+            # Adaptive search window: allows up to 2.0s search to catch fast/drifting phrases
+            gap_to_next = max(0.8, next_orig_start - orig_start)
+            search_window = min(2.2, max(0.6, gap_to_next * 0.45))
+
+            min_valid_start = max(0.0, prev_end + 0.04) if i > 0 else 0.0
+            search_start = max(min_valid_start, orig_start - search_window)
+            search_end = min(orig_start + search_window, next_orig_start - 0.15)
+
+            # Collect candidate vocal segment onsets within the search window
+            candidate_segments = [
+                seg for seg in vocal_segments
+                if search_start <= seg[0] <= search_end
+            ]
+
+            if candidate_segments:
+                best_seg = None
+                best_score = float('inf')
+                for seg in candidate_segments:
+                    seg_dur = seg[1] - seg[0]
+                    time_dist = abs(seg[0] - orig_start)
+                    score = time_dist - min(seg_dur, 1.2) * 0.35
+                    if score < best_score:
+                        best_score = score
+                        best_seg = seg
+                calibrated_start = max(min_valid_start, best_seg[0])
+            else:
+                inside_seg = None
+                for seg in vocal_segments:
+                    if seg[0] <= orig_start <= seg[1]:
+                        inside_seg = seg
+                        break
+                if inside_seg:
+                    calibrated_start = max(min_valid_start, orig_start)
+                else:
+                    upcoming = [seg[0] for seg in vocal_segments if seg[0] > orig_start]
+                    if upcoming and upcoming[0] - orig_start < 2.0:
+                        calibrated_start = max(min_valid_start, upcoming[0])
+                    else:
+                        calibrated_start = max(min_valid_start, orig_start)
+        else:
+            calibrated_start = max(prev_end + 0.04, orig_start)
+
+        if calibrated_start < prev_end + 0.04:
+            calibrated_start = prev_end + 0.04
+
+        # 2. End Time Calibration: Support fast singing tempo (down to 0.5s per line)
+        min_readable_dur = max(0.5, min(3.5, num_words * 0.18 + 0.3))
+
+        if vocal_segments and len(vocal_segments) > 0:
+            phrase_segs = [
+                seg for seg in vocal_segments
+                if seg[1] > calibrated_start and seg[0] < next_orig_start - 0.08
+            ]
+
+            if phrase_segs:
+                vocal_cutoff = phrase_segs[0][1]
+                for k in range(len(phrase_segs) - 1):
+                    cur_s = phrase_segs[k]
+                    nxt_s = phrase_segs[k + 1]
+                    gap = nxt_s[0] - cur_s[1]
+                    if gap >= 0.4:
+                        vocal_cutoff = cur_s[1]
                         break
                     else:
-                        vocal_end = nxt_seg[1]
+                        vocal_cutoff = nxt_s[1]
 
-                acoustic_end = round(vocal_end + max_trailing_hold, 2)
-                if gap_to_next > 4.5:
-                    calibrated_end = min(acoustic_end, start + linguistic_max_dur, next_start - 0.4)
+                max_bound = next_orig_start - 0.05 if i + 1 < len(lyrics) else calibrated_start + 8.0
+                acoustic_end = round(vocal_cutoff + max_trailing_hold, 2)
+
+                if acoustic_end >= calibrated_start + min_readable_dur:
+                    calibrated_end = min(max_bound, acoustic_end)
                 else:
-                    calibrated_end = min(orig_end, next_start - 0.15)
+                    calibrated_end = min(max_bound, calibrated_start + min_readable_dur)
             else:
-                if gap_to_next > 5.0:
-                    calibrated_end = round(start + linguistic_max_dur, 2)
-                else:
-                    calibrated_end = min(orig_end, next_start - 0.15)
+                linguistic_dur = max(min_readable_dur, min(4.0, num_words * 0.35 + 0.5))
+                max_bound = next_orig_start - 0.05 if i + 1 < len(lyrics) else calibrated_start + 8.0
+                calibrated_end = min(max_bound, calibrated_start + linguistic_dur)
         else:
-            if gap_to_next > 5.0:
-                calibrated_end = round(start + linguistic_max_dur, 2)
-            else:
-                calibrated_end = min(orig_end, next_start - 0.15)
+            linguistic_dur = max(min_readable_dur, min(4.0, num_words * 0.35 + 0.5))
+            max_bound = next_orig_start - 0.05 if i + 1 < len(lyrics) else calibrated_start + 8.0
+            calibrated_end = min(max_bound, max(calibrated_start + min_readable_dur, orig_end))
 
-        calibrated_end = max(calibrated_end, round(start + 1.2, 2))
+        if calibrated_end <= calibrated_start + 0.3:
+            calibrated_end = calibrated_start + 0.6
 
-        # Re-distribute words across calibrated duration
-        calibrated_dur = max(0.4, calibrated_end - start)
-        w_dur = calibrated_dur / num_words
+        calibrated_start = round(calibrated_start, 2)
+        calibrated_end = round(calibrated_end, 2)
+        prev_end = calibrated_end
+
+        # 3. Word-level karaoke re-distribution
+        line_dur = max(0.15, calibrated_end - calibrated_start)
         recalculated_words = []
-        if words and isinstance(words, list):
-            for w_idx, w in enumerate(words):
-                w_text = w.get("word", "") if isinstance(w, dict) else str(w)
+        if words and isinstance(words, list) and len(words) > 0:
+            word_weights = []
+            for w in words:
+                w_str = w.get("word", "") if isinstance(w, dict) else str(w)
+                vowels = sum(1 for c in w_str if c in 'aeiouyàáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹ\u17B6\u17B7\u17B8\u17B9\u17BA\u17BB\u17BC\u17BD\u17BE\u17BF\u17C0\u17C1\u17C2\u17C3\u17C4\u17C5')
+                weight = max(1.0, len(w_str) + vowels * 0.5)
+                word_weights.append(weight)
+            total_w = sum(word_weights) or 1.0
+
+            cur_t = calibrated_start
+            for w_idx, (w, ww) in enumerate(zip(words, word_weights)):
+                w_str = w.get("word", "") if isinstance(w, dict) else str(w)
+                w_dur = line_dur * (ww / total_w)
+                w_st = round(cur_t, 2)
+                w_et = round(cur_t + w_dur, 2)
+                if w_idx == len(words) - 1:
+                    w_et = calibrated_end
+                cur_t += w_dur
                 recalculated_words.append({
-                    "word": w_text,
-                    "start": round(start + w_idx * w_dur, 2),
-                    "end": round(start + (w_idx + 1) * w_dur, 2)
+                    "word": w_str,
+                    "start": w_st,
+                    "end": max(w_st + 0.04, w_et)
                 })
 
         calibrated.append({
             "line_id": line.get("line_id", i),
-            "start": round(start, 2),
-            "end": round(calibrated_end, 2),
+            "start": calibrated_start,
+            "end": calibrated_end,
             "text": text,
             "words": recalculated_words or words
         })
+
+    # 4. Anti-Cascading Smoothing Pass:
+    # If the singer started the next phrase quickly, TRIM the previous phrase's end
+    # so that the fast singing line starts ON TIME rather than being pushed forward into the future!
+    for j in range(1, len(calibrated)):
+        prev_line = calibrated[j - 1]
+        curr_line = calibrated[j]
+
+        if curr_line["start"] < prev_line["end"] + 0.04:
+            if curr_line["start"] >= prev_line["start"] + 0.4:
+                # Trim previous line cleanly
+                prev_line["end"] = round(curr_line["start"] - 0.04, 2)
+            else:
+                curr_line["start"] = round(prev_line["end"] + 0.04, 2)
+
+        if curr_line["end"] <= curr_line["start"] + 0.3:
+            curr_line["end"] = round(curr_line["start"] + 0.6, 2)
+
+        if curr_line.get("words") and len(curr_line["words"]) > 0:
+            line_dur = max(0.15, curr_line["end"] - curr_line["start"])
+            n_words = len(curr_line["words"])
+            t = curr_line["start"]
+            for w_idx, w in enumerate(curr_line["words"]):
+                w_dur = line_dur / n_words
+                w["start"] = round(t, 2)
+                w["end"] = round(t + w_dur, 2) if w_idx < n_words - 1 else curr_line["end"]
+                t += w_dur
 
     return calibrated

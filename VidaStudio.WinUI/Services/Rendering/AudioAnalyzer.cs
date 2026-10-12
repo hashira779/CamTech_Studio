@@ -150,14 +150,13 @@ public sealed class AudioAnalyzer
             // Bin FFT into musical frequency bars
             for (int b = 0; b < NumBars; b++)
             {
-                float sum = 0;
-                int count = 0;
+                float maxMag = 0;
                 for (int i = binLows[b]; i <= binHighs[b] && i < fftHalfLen; i++)
                 {
-                    sum += rawFftMag[fIdx, i];
-                    count++;
+                    if (rawFftMag[fIdx, i] > maxMag)
+                        maxMag = rawFftMag[fIdx, i];
                 }
-                rawBarsMatrix[fIdx, b] = (count > 0 ? sum / count : 0) * eqFactors[b];
+                rawBarsMatrix[fIdx, b] = maxMag * eqFactors[b];
             }
         });
 
@@ -179,7 +178,8 @@ public sealed class AudioAnalyzer
             for (int b = 0; b < NumBars; b++)
             {
                 float rawBar = rawBarsMatrix[fIdx, b];
-                float db = 20f * MathF.Log10(MathF.Max(rawBar, 1e-5f));
+                float amplitude = rawBar * 2f / nFft; // Normalize FFT magnitude
+                float db = 20f * MathF.Log10(MathF.Max(amplitude, 1e-4f)); // Floor at -80dB
                 float norm = Math.Clamp((db + 60f) / 60f, 0f, 1f);
                 norm = MathF.Pow(norm, 1.8f) * bassBoost;
 

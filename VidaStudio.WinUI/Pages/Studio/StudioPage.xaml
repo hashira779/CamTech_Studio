@@ -213,20 +213,64 @@
                                       Background="#1E1B4B" BorderBrush="#312E81" SelectionChanged="FontSelector_SelectionChanged" />
                         </StackPanel>
 
-                        <!-- Custom Logo Picker -->
-                        <StackPanel Grid.Row="5" Spacing="4" Margin="0,0,0,12">
-                            <TextBlock Text="Custom Video Logo" FontSize="11" Foreground="#94A3B8" />
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <TextBox x:Name="LogoPathBox" IsReadOnly="True" PlaceholderText="Using built-in VibeTunes logo..." FontSize="11" Background="#1E1B4B" BorderBrush="#312E81" Margin="0,0,4,0" />
-                                <Button Grid.Column="1" Click="BrowseLogo_Click" Style="{ThemeResource DefaultButtonStyle}" Padding="12,6">
-                                    <TextBlock Text="Browse..." FontSize="11" />
-                                </Button>
-                            </Grid>
-                        </StackPanel>
+                        <!-- Smart Logo & Center Badge System -->
+                        <Border Grid.Row="5" Background="#161338" BorderBrush="#2E2866" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,2,0,12">
+                            <StackPanel Spacing="6">
+                                <Grid>
+                                    <TextBlock Text="Smart Center Badge System" FontSize="11" FontWeight="SemiBold" Foreground="#C4B5FD" />
+                                    <TextBlock Text="✨ AI Chroma &amp; Reactivity" FontSize="9" Foreground="#94A3B8" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                </Grid>
+
+                                <!-- Logo File Picker -->
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="LogoPathBox" IsReadOnly="True" PlaceholderText="Default VibeTunes Smart Emblem..." FontSize="11" Background="#0F0C29" BorderBrush="#312E81" Margin="0,0,4,0" />
+                                    <Button Grid.Column="1" Click="BrowseLogo_Click" Style="{ThemeResource DefaultButtonStyle}" Padding="8,4" Margin="0,0,4,0" ToolTipService.ToolTip="Browse custom image, logo or album art">
+                                        <TextBlock Text="Browse" FontSize="11" />
+                                    </Button>
+                                    <Button Grid.Column="2" Click="ClearLogo_Click" Style="{ThemeResource DefaultButtonStyle}" Padding="8,4" ToolTipService.ToolTip="Reset to default logo">
+                                        <TextBlock Text="✕" FontSize="11" Foreground="#EF4444" />
+                                    </Button>
+                                </Grid>
+
+                                <!-- Badge Framing Style & Background Extraction Mode -->
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox x:Name="LogoBadgeModeSelector" Grid.Column="0" HorizontalAlignment="Stretch" SelectedIndex="0" 
+                                              Background="#0F0C29" BorderBrush="#312E81" FontSize="10" SelectionChanged="LogoSetting_Changed" Margin="0,0,3,0">
+                                        <ComboBoxItem Content="🔘 Trap Nation" Tag="trap_nation" />
+                                        <ComboBoxItem Content="💿 Spinning Vinyl" Tag="vinyl" />
+                                        <ComboBoxItem Content="✨ Hologram" Tag="hologram" />
+                                        <ComboBoxItem Content="🔮 Cyber HUD" Tag="cyber_hud" />
+                                    </ComboBox>
+
+                                    <ComboBox x:Name="LogoBgRemovalSelector" Grid.Column="1" HorizontalAlignment="Stretch" SelectedIndex="0" 
+                                              Background="#0F0C29" BorderBrush="#312E81" FontSize="10" SelectionChanged="LogoSetting_Changed" Margin="3,0,0,0">
+                                        <ComboBoxItem Content="🪄 Auto Clean" Tag="auto" />
+                                        <ComboBoxItem Content="⬜ Keep Original" Tag="original" />
+                                        <ComboBoxItem Content="⚪ Key White" Tag="key_white" />
+                                        <ComboBoxItem Content="⬛ Key Black" Tag="key_black" />
+                                    </ComboBox>
+                                </Grid>
+
+                                <!-- Toggles: Vinyl Spin & Bass Reactivity -->
+                                <Grid Margin="0,2,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox x:Name="LogoSpinToggle" Content="Vinyl Spin" IsChecked="True" FontSize="10" Foreground="#CBD5E1" Checked="LogoSetting_Changed" Unchecked="LogoSetting_Changed" />
+                                    <CheckBox x:Name="LogoBassPulseToggle" Grid.Column="1" Content="Bass Pump" IsChecked="True" FontSize="10" Foreground="#CBD5E1" Checked="LogoSetting_Changed" Unchecked="LogoSetting_Changed" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
 
                         <!-- Giant Magic Button -->
                         <Button Grid.Row="6" Click="QuickAutoPerfect_Click" HorizontalAlignment="Stretch" VerticalAlignment="Center" Padding="16,24" Background="#7C3AED" BorderBrush="#8B5CF6" BorderThickness="1" CornerRadius="12">
@@ -532,6 +576,7 @@
                                 <ComboBox x:Name="VisualizerThemeCombo" SelectionChanged="VisualizerThemeCombo_SelectionChanged" SelectedIndex="0" HorizontalAlignment="Stretch" FontSize="11">
                                     <ComboBoxItem Content="🌟 Pro Spectrum (GPU Accelerated)" Tag="pro_spectrum" />
                                     <ComboBoxItem Content="Trap Nation Pulse (Modern Orb)" Tag="modern_orb" />
+                                    <ComboBoxItem Content="Synthwave 3D Landscape" Tag="synthwave_3d" />
                                     <ComboBoxItem Content="Classic Spectrum Analyzer" Tag="spectrum" />
                                 </ComboBox>
                             </StackPanel>
@@ -752,6 +797,9 @@
                                 </Button>
                                 <Button Click="DoubleCheckLyrics_Click" Style="{ThemeResource DefaultButtonStyle}" Padding="6,4">
                                     <TextBlock Text="🔍 Double-Check" FontSize="10" Foreground="#34D399" />
+                                </Button>
+                                <Button Click="ExportSrt_Click" Style="{ThemeResource DefaultButtonStyle}" Padding="6,4">
+                                    <TextBlock Text="💾 Export SRT" FontSize="10" Foreground="#60A5FA" />
                                 </Button>
                             </StackPanel>
                             <Border HorizontalAlignment="Right" Background="#064E3B" CornerRadius="4" Padding="6,2">

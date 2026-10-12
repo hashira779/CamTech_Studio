@@ -47,8 +47,17 @@ def detect_vocal_segments(
     Returns list of (start_sec, end_sec) intervals.
     """
     try:
-        import soundfile as sf
-        data, sr = sf.read(audio_path, dtype='float32')
+        try:
+            import soundfile as sf
+            data, sr = sf.read(audio_path, dtype='float32')
+        except Exception as sf_err:
+            log.warning(f"soundfile failed to read {audio_path}: {sf_err}. Falling back to ffmpeg decoder.")
+            try:
+                from backend.audio_analyzer import decode_audio_to_numpy
+            except ImportError:
+                from audio_analyzer import decode_audio_to_numpy
+            data, sr, duration = decode_audio_to_numpy(audio_path, target_sr=target_sr)
+
         if len(data.shape) > 1:
             data = data.mean(axis=1)  # Mono
 

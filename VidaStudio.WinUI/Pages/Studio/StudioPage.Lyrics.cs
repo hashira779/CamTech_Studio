@@ -561,4 +561,59 @@ public sealed partial class StudioPage
             StageLyricsText.Text = line.Text;
         }
     }
+
+    private async void ExportSrt_Click(object sender, RoutedEventArgs e)
+    {
+        if (_lyricLines == null || _lyricLines.Count == 0)
+        {
+            ShowActivity("No lyrics to export.");
+            await Task.Delay(1500);
+            HideActivity();
+            return;
+        }
+
+        var picker = new Windows.Storage.Pickers.FileSavePicker();
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.CurrentWindow);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+        
+        picker.SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.DocumentsLibrary;
+        picker.FileTypeChoices.Add("SubRip Subtitle", new List<string>() { ".srt" });
+        picker.SuggestedFileName = string.IsNullOrEmpty(TitleInputBox.Text) ? "lyrics" : TitleInputBox.Text;
+
+        var file = await picker.PickSaveFileAsync();
+        if (file != null)
+        {
+            ShowActivity("Exporting SRT...");
+            
+            var sb = new System.Text.StringBuilder();
+            int index = 1;
+            foreach (var line in _lyricLines)
+            {
+                sb.AppendLine(index.ToString());
+                
+                string start = string.Format("{0:00}:{1:00}:{2:00},{3:000}", 
+                    line.StartTime.Hours, line.StartTime.Minutes, line.StartTime.Seconds, line.StartTime.Milliseconds);
+                string end = string.Format("{0:00}:{1:00}:{2:00},{3:000}", 
+                    line.EndTime.Hours, line.EndTime.Minutes, line.EndTime.Seconds, line.EndTime.Milliseconds);
+                
+                sb.AppendLine($"{start} --> {end}");
+                sb.AppendLine(line.Text);
+                sb.AppendLine();
+                
+                index++;
+            }
+            
+            await Windows.Storage.FileIO.WriteTextAsync(file, sb.ToString());
+            HideActivity();
+            
+            var successDialog = new ContentDialog
+            {
+                Title = "Export Successful",
+                Content = $"SRT file exported successfully.",
+                CloseButtonText = "OK",
+                XamlRoot = this.XamlRoot
+            };
+            await successDialog.ShowAsync();
+        }
+    }
 }

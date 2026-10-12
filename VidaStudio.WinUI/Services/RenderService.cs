@@ -25,7 +25,9 @@ public class RenderService
         string audioPath, string outputPath, int width = 1920, int height = 1080, int fps = 60,
         string theme = "ocean_wave", string palette = "cyberpunk", string? bgImagePath = null,
         string? logoPath = null, string songTitle = "", string artistName = "",
-        List<LyricLine>? lyrics = null, string fontName = "Leelawadee UI", bool useGpu = false)
+        List<LyricLine>? lyrics = null, string fontName = "Leelawadee UI", bool useGpu = false,
+        string logoBadgeMode = "trap_nation", string logoBgRemoval = "auto",
+        bool logoSpin = true, bool logoBassPulse = true, double amplitudeScale = 0.4)
     {
         if (IsRendering)
             throw new InvalidOperationException("A render job is already in progress.");
@@ -42,7 +44,8 @@ public class RenderService
             // The Win2DVideoRenderer is pure C# and uses DirectX Win2D + FFmpeg pipe
             using var renderer = new Win2DVideoRenderer(
                 audioPath, outputPath, width, height, fps, theme, palette,
-                bgImagePath, logoPath, songTitle, artistName, lyrics, fontName
+                bgImagePath, logoPath, songTitle, artistName, lyrics, fontName,
+                logoBadgeMode, logoBgRemoval, logoSpin, logoBassPulse, amplitudeScale
             );
 
             await Task.Run(async () =>

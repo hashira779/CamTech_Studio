@@ -29,53 +29,97 @@ export function detectLanguageLocale(text) {
  * Splits text into words or singing units with universal multi-language support.
  * Modern browsers support Intl.Segmenter which handles unspaced scripts (Khmer, Chinese,
  * Japanese, Thai, Lao, Burmese) and spaced scripts seamlessly according to Unicode Annex #29.
+ * Preserves exact character indices in the original text for pixel-perfect unified text rendering.
  */
-function splitLineIntoWords(text, lineStart, lineEnd) {
+export function splitLineIntoWords(text, lineStart, lineEnd) {
   if (!text) return [];
   const clean = text.trim();
   if (!clean) return [];
 
   const locale = detectLanguageLocale(clean);
-  let tokens = [];
+  let words = [];
 
-  // If text already has natural spaces (common in Khmer lyrics, English, etc.), respect phrase boundaries!
-  if (/\s+/.test(clean)) {
-    tokens = clean.split(/\s+/).filter(Boolean);
-  } else {
-    // Unspaced continuous script: use Intl.Segmenter
-    if (typeof Intl !== 'undefined' && Intl.Segmenter) {
-      try {
-        const segmenter = new Intl.Segmenter(locale, { granularity: 'word' });
-        tokens = Array.from(segmenter.segment(clean))
-          .map(s => s.segment.trim())
-          .filter(t => t.length > 0 && !/^[\s\p{P}]+$/u.test(t));
-      } catch(e) {}
-    }
-
-    // Fallback if Intl.Segmenter didn't segment
-    if (!tokens || tokens.length <= 1) {
-      if (/[\u4E00-\u9FFF\u3040-\u30FF]/.test(clean)) {
-        tokens = clean.match(/[a-zA-Z0-9_\'-]+|[\u4e00-\u9fff]|[\u3040-\u309f]+|[\u30a0-\u30ff]+|[^\s]/g) || [];
-        tokens = tokens.map(t => t.trim()).filter(Boolean);
-      } else if (/[\u1780-\u17FF]/.test(clean)) {
-        tokens = clean.match(/[\u1780-\u17A2][\u17D2][\u1780-\u17A2][\u17B6-\u17D3]*|[\u1780-\u17A2][\u17B6-\u17D3]*|[a-zA-Z0-9_\'-]+|[^\s]/g) || [];
-        tokens = tokens.map(t => t.trim()).filter(Boolean);
+  // Use native browser Intl.Segmenter for 100% Unicode standard segmentation
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    try {
+      const segmenter = new Intl.Segmenter(locale, { granularity: 'word' });
+      const segments = Array.from(segmenter.segment(clean));
+      for (const item of segments) {
+        // If punctuation follows a word, attach it cleanly to the preceding word
+        if (!item.isWordLike && /^[\s\p{P}]+$/u.test(item.segment)) {
+          if (words.length > 0 && !/^\s+$/.test(item.segment)) {
+            words[words.length - 1].word += item.segment;
+            words[words.length - 1].endIndex = item.index + item.segment.length;
+          }
+          continue;
+        }
+        words.push({
+          word: item.segment,
+          startIndex: item.index,
+          endIndex: item.index + item.segment.length
+        });
       }
+    } catch(e) {
+      console.warn("Intl.Segmenter fallback:", e);
     }
   }
 
-  if (!tokens || tokens.length === 0) {
-    tokens = [clean];
+  // Fallback for environments where Intl.Segmenter wasn't available
+  if (!words || words.length === 0) {
+    const rawTokens = clean.split(/\s+/).filter(Boolean);
+    let curIdx = 0;
+    for (const t of rawTokens) {
+      const startIdx = clean.indexOf(t, curIdx);
+      const endIdx = (startIdx !== -1 ? startIdx : curIdx) + t.length;
+      curIdx = endIdx;
+      words.push({
+        word: t,
+        startIndex: Math.max(0, startIdx !== -1 ? startIdx : 0),
+        endIndex: endIdx
+      });
+    }
   }
 
-  const dur = Math.max(0.4, lineEnd - lineStart);
-  const wDur = dur / tokens.length;
+  if (!words || words.length === 0) {
+    words = [{ word: clean, startIndex: 0, endIndex: clean.length }];
+  }
 
-  return tokens.map((token, i) => ({
-    word: token,
-    start: Number((lineStart + i * wDur).toFixed(2)),
-    end: Number((lineStart + (i + 1) * wDur).toFixed(2))
-  }));
+  // Calculate singing weights for natural musical phrasing & breath pacing
+  const weights = words.map((w, idx) => {
+    let syl = 1;
+    if (locale === 'km') {
+      const consonants = w.word.match(/(?<!\u17D2)[\u1780-\u17A2\u17A3-\u17B3]/g);
+      syl = Math.max(1, consonants ? consonants.length : 1);
+    } else if (locale === 'ja' || locale === 'zh') {
+      syl = Math.max(1, w.word.replace(/\s+/g, '').length);
+    } else {
+      const vowels = w.word.match(/[aeiouyàáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]+/gi);
+      syl = Math.max(1, vowels ? vowels.length : 1);
+    }
+    // Initial melodic call / vocalization or final cadence extension
+    let mult = 1.0;
+    if (idx === 0 && /(?:អឺង|អឺយ|Oh|Ah|Woah|Hey)/i.test(w.word)) mult = 1.25;
+    else if (idx === words.length - 1) mult = 1.30;
+    return Math.max(0.5, syl * mult);
+  });
+
+  const totalWeight = weights.reduce((a, b) => a + b, 0) || 1.0;
+  const dur = Math.max(0.4, lineEnd - lineStart);
+  let curT = lineStart;
+
+  return words.map((w, i) => {
+    const wDur = dur * (weights[i] / totalWeight);
+    const start = Number(curT.toFixed(2));
+    const end = Number((curT + wDur).toFixed(2));
+    curT += wDur;
+    return {
+      word: w.word,
+      start: start,
+      end: i === words.length - 1 ? Number(lineEnd.toFixed(2)) : end,
+      startIndex: w.startIndex,
+      endIndex: w.endIndex
+    };
+  });
 }
 
 export function updateLyricState(currentTime) {
@@ -85,19 +129,26 @@ export function updateLyricState(currentTime) {
     return;
   }
 
-  const leadTime = 0.25;
+  const leadTime = 0.50; // At least 500ms visual lead-in for human reading preview & sing-along preparation
   const fadeDuration = 0.35;
+
   let activeLine = null;
   let nextLine = null;
 
+  // Frame-perfect 100% vocal tracking with visual reading lead-in:
+  // Visual line appears smoothly at least 0.5s before vocal onset so audience can read ahead.
+  // Real-time karaoke highlight begins strictly when currentTime reaches the line's vocal start.
   for (let i = 0; i < lyrics.length; i++) {
-    const line = lyrics[i];
-    if (currentTime >= line.start - leadTime && currentTime <= line.end + fadeDuration) {
-      activeLine = line;
-      if (i + 1 < lyrics.length) nextLine = lyrics[i + 1];
+    const cur = lyrics[i];
+    const nxt = i + 1 < lyrics.length ? lyrics[i + 1] : null;
+    const effectiveEnd = nxt && (nxt.start - cur.end < 0.45) ? nxt.start : cur.end;
+
+    if (currentTime >= cur.start - leadTime && currentTime < effectiveEnd) {
+      activeLine = cur;
+      nextLine = nxt;
       break;
-    } else if (currentTime < line.start) {
-      nextLine = line;
+    } else if (currentTime < cur.start - leadTime) {
+      nextLine = cur;
       break;
     }
   }
@@ -112,31 +163,55 @@ export function updateLyricState(currentTime) {
     return;
   }
 
-  // Ensure words are populated
+  const cleanText = (activeLine.text || '').trim();
+
+  // Ensure words are populated and have character index mappings to cleanText
   if (!activeLine.words || activeLine.words.length === 0) {
-    activeLine.words = splitLineIntoWords(activeLine.text, activeLine.start, activeLine.end);
+    activeLine.words = splitLineIntoWords(cleanText, activeLine.start, activeLine.end);
+  } else if (activeLine.words.length > 0 && activeLine.words[0].startIndex === undefined) {
+    let searchPos = 0;
+    for (let i = 0; i < activeLine.words.length; i++) {
+      const w = activeLine.words[i];
+      const foundIdx = cleanText.indexOf(w.word, searchPos);
+      if (foundIdx !== -1) {
+        w.startIndex = foundIdx;
+        w.endIndex = foundIdx + w.word.length;
+        searchPos = w.endIndex;
+      } else {
+        w.startIndex = searchPos;
+        w.endIndex = Math.min(cleanText.length, searchPos + w.word.length);
+        searchPos = w.endIndex;
+      }
+    }
   }
 
   const words = activeLine.words || [];
   let activeWordIndex = -1;
   let wordProgress = 0.0;
 
-  for (let i = 0; i < words.length; i++) {
-    const w = words[i];
-    if (currentTime >= w.start && currentTime <= w.end) {
-      activeWordIndex = i;
-      const dur = Math.max(0.05, w.end - w.start);
-      wordProgress = (currentTime - w.start) / dur;
-      break;
-    } else if (currentTime > w.end) {
-      activeWordIndex = i;
-      wordProgress = 1.0;
+  // Only highlight words once the vocalist actually begins singing
+  if (currentTime >= activeLine.start) {
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i];
+      if (currentTime >= w.start && currentTime <= w.end) {
+        activeWordIndex = i;
+        const dur = Math.max(0.04, w.end - w.start);
+        wordProgress = (currentTime - w.start) / dur;
+        break;
+      } else if (currentTime > w.end) {
+        activeWordIndex = i;
+        wordProgress = 1.0;
+      }
     }
+  } else {
+    // In pre-vocal lead-in window: text is displayed for reading, zero words highlighted yet
+    activeWordIndex = -1;
+    wordProgress = 0.0;
   }
 
   let alpha = 1.0;
   if (currentTime < activeLine.start) {
-    alpha = Math.max(0, (currentTime - (activeLine.start - leadTime)) / leadTime);
+    alpha = Math.max(0.15, Math.min(1.0, (currentTime - (activeLine.start - leadTime)) / leadTime));
   } else if (currentTime > activeLine.end) {
     alpha = Math.max(0, 1.0 - (currentTime - activeLine.end) / fadeDuration);
   }
@@ -151,71 +226,93 @@ export function updateLyricState(currentTime) {
   };
 }
 
+function safeRoundRect(ctx, x, y, w, h, r) {
+  if (w <= 0 || h <= 0 || isNaN(x) || isNaN(y) || isNaN(w) || isNaN(h)) return;
+  const radius = Math.max(0, Math.min(Math.min(w, h) / 2, r || 0));
+  ctx.beginPath();
+  if (typeof ctx.roundRect === 'function') {
+    try {
+      ctx.roundRect(x, y, w, h, radius);
+      return;
+    } catch (_) {}
+  }
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+}
+
 export function drawLyrics(ctx, w, h) {
   if (!activeLyricState || state.showLyrics === false || state.lyricStyle === 'none') return;
 
-  const style = state.lyricStyle || 'karaoke';
-  const pal = PALETTES[state.palette] || PALETTES['cyberpunk'];
+  try {
+    const style = state.lyricStyle || 'karaoke';
+    const pal = PALETTES[state.palette] || PALETTES['cyberpunk'];
+    const primaryRGB = (pal && Array.isArray(pal.primary)) ? pal.primary.join(',') : '0,240,255';
 
-  // Handle instrumental breaks gracefully with glassmorphism
-  if (activeLyricState.isInstrumental) {
-    if (!state.lyrics || state.lyrics.length === 0) return;
-    // Only show instrumental indicator for real musical breaks (>= 3.5s), not short breath pauses
-    if (activeLyricState.diffToNext > 0 && activeLyricState.diffToNext < 3.5) return;
+    // Handle instrumental breaks gracefully with glassmorphism
+    if (activeLyricState.isInstrumental) {
+      if (!state.lyrics || state.lyrics.length === 0) return;
+      // Only show instrumental indicator for real musical breaks (>= 3.5s), not short breath pauses
+      if (activeLyricState.diffToNext > 0 && activeLyricState.diffToNext < 3.5) return;
 
-    const next = activeLyricState.nextLine;
-    ctx.save();
-    let fontSize = Math.max(13, Math.floor(h * 0.030));
-    ctx.font = `600 ${fontSize}px 'Outfit', 'Inter', 'Kantumruy Pro', sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+      const next = activeLyricState.nextLine;
+      ctx.save();
+      let fontSize = Math.max(13, Math.floor(h * 0.030));
+      ctx.font = `600 ${fontSize}px 'Outfit', 'Inter', 'Kantumruy Pro', sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
 
-    let text = "♪ Instrumental Break ♪";
-    if (next && activeLyricState.diffToNext > 0) {
-      const s = Math.ceil(activeLyricState.diffToNext);
-      if (s <= 60) {
-        text = `♪ Instrumental Break (Next vocal in ${s}s) ♪`;
-      } else {
-        const m = Math.floor(next.start / 60);
-        const sec = Math.floor(next.start % 60).toString().padStart(2, '0');
-        text = `♪ Instrumental Break (Next vocal at ${m}:${sec}) ♪`;
+      let text = "♪ Instrumental Break ♪";
+      if (next && activeLyricState.diffToNext > 0) {
+        const s = Math.ceil(activeLyricState.diffToNext);
+        if (s <= 60) {
+          text = `♪ Instrumental Break (Next vocal in ${s}s) ♪`;
+        } else {
+          const m = Math.floor(next.start / 60);
+          const sec = Math.floor(next.start % 60).toString().padStart(2, '0');
+          text = `♪ Instrumental Break (Next vocal at ${m}:${sec}) ♪`;
+        }
+      } else if (!next) {
+        text = "♪ Instrumental Outro ♪";
       }
-    } else if (!next) {
-      text = "♪ Instrumental Outro ♪";
+
+      const textY = h * 0.86;
+      const textWidth = ctx.measureText(text).width + 44;
+      const padY = fontSize * 0.85;
+
+      // Premium glassmorphic badge
+      const grad = ctx.createLinearGradient(0, textY - padY, 0, textY + padY);
+      grad.addColorStop(0, 'rgba(15, 23, 42, 0.85)');
+      grad.addColorStop(1, 'rgba(6, 9, 18, 0.92)');
+      ctx.fillStyle = grad;
+      ctx.strokeStyle = `rgba(${primaryRGB}, 0.50)`;
+      ctx.lineWidth = 1.5;
+      ctx.shadowColor = `rgba(${primaryRGB}, 0.35)`;
+      ctx.shadowBlur = 16;
+      safeRoundRect(ctx, w / 2 - textWidth / 2, textY - padY, textWidth, padY * 2, padY);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+      ctx.fillText(text, w / 2, textY);
+      ctx.restore();
+      return;
     }
 
-    const textY = h * 0.86;
-    const textWidth = ctx.measureText(text).width + 44;
-    const padY = fontSize * 0.85;
+    const { line, nextLine, activeWordIndex, wordProgress, alpha } = activeLyricState;
+    if (!line || !line.text) return;
 
-    // Premium glassmorphic badge
-    const grad = ctx.createLinearGradient(0, textY - padY, 0, textY + padY);
-    grad.addColorStop(0, 'rgba(15, 23, 42, 0.85)');
-    grad.addColorStop(1, 'rgba(6, 9, 18, 0.92)');
-    ctx.fillStyle = grad;
-    ctx.strokeStyle = `rgba(${pal.primary.join(',')}, 0.50)`;
-    ctx.lineWidth = 1.5;
-    ctx.shadowColor = `rgba(${pal.primary.join(',')}, 0.35)`;
-    ctx.shadowBlur = 16;
-    ctx.beginPath();
-    ctx.roundRect(w / 2 - textWidth / 2, textY - padY, textWidth, padY * 2, padY);
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-    ctx.fillText(text, w / 2, textY);
-    ctx.restore();
-    return;
-  }
-
-  const { line, nextLine, activeWordIndex, wordProgress, alpha } = activeLyricState;
-  if (!line) return;
+  const fullText = line.text.trim();
+  if (!fullText) return;
 
   ctx.save();
   ctx.globalAlpha = alpha;
 
-  const isKhmer = /[\u1780-\u17FF]/.test(line.text || '');
+  const isKhmer = /[\u1780-\u17FF]/.test(fullText);
   let fontSize = Math.floor(h * 0.054);
 
   // Khmer-first typography stack for breathtaking rendering
@@ -230,38 +327,23 @@ export function drawLyrics(ctx, w, h) {
   const textY = h * 0.85;
 
   let words = line.words || [];
-  if (words.length === 0 && line.text) {
-    words = splitLineIntoWords(line.text, line.start, line.end);
+  if (words.length === 0) {
+    words = splitLineIntoWords(fullText, line.start, line.end);
+    line.words = words;
   }
 
-  // Natural space width
-  const spaceWidth = ctx.measureText(" ").width * 0.85;
+  // Measure total width of the authentic, unbroken text string
+  let totalWidth = ctx.measureText(fullText).width;
 
-  // Calculate total width of the line to center it properly
-  let totalWidth = 0;
-  let wordWidths = [];
-  
-  for (let i = 0; i < words.length; i++) {
-    const width = ctx.measureText(words[i].word).width; 
-    wordWidths.push(width);
-    totalWidth += width + (i < words.length - 1 ? spaceWidth : 0);
-  }
-
-  // Auto-scale if text exceeds 86% of screen width
+  // Auto-scale font size if text exceeds 86% of screen width
   if (totalWidth > w * 0.86) {
     const scale = (w * 0.86) / totalWidth;
     fontSize = Math.max(15, Math.floor(fontSize * scale));
     ctx.font = `700 ${fontSize}px ${fontFamilies}`;
-    totalWidth = 0;
-    wordWidths = [];
-    for (let i = 0; i < words.length; i++) {
-      const width = ctx.measureText(words[i].word).width; 
-      wordWidths.push(width);
-      totalWidth += width + (i < words.length - 1 ? spaceWidth : 0);
-    }
+    totalWidth = ctx.measureText(fullText).width;
   }
 
-  let startX = Math.max(24, (w - totalWidth) / 2);
+  const startX = Math.max(24, (w - totalWidth) / 2);
   const paddingX = fontSize * 0.80;
   const paddingY = fontSize * 0.72;
 
@@ -274,23 +356,21 @@ export function drawLyrics(ctx, w, h) {
 
     // Multi-stop glass gradient
     const pillGrad = ctx.createLinearGradient(0, textY - paddingY, 0, textY + paddingY);
-    pillGrad.addColorStop(0, 'rgba(15, 23, 42, 0.86)');
+    pillGrad.addColorStop(0, 'rgba(15, 23, 42, 0.88)');
     pillGrad.addColorStop(1, 'rgba(5, 8, 16, 0.94)');
     ctx.fillStyle = pillGrad;
 
     const cornerRadius = paddingY;
-    ctx.beginPath();
-    ctx.roundRect(startX - paddingX, textY - paddingY, totalWidth + paddingX * 2, paddingY * 2, cornerRadius);
+    safeRoundRect(ctx, startX - paddingX, textY - paddingY, totalWidth + paddingX * 2, paddingY * 2, cornerRadius);
     ctx.fill();
 
     // Luminescent neon border with palette color
-    ctx.strokeStyle = `rgba(${pal.primary.join(',')}, 0.42)`;
+    ctx.strokeStyle = `rgba(${primaryRGB}, 0.45)`;
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
     // Specular top highlight sheen
-    ctx.beginPath();
-    ctx.roundRect(startX - paddingX + 2, textY - paddingY + 1, totalWidth + paddingX * 2 - 4, paddingY * 0.65, cornerRadius - 1);
+    safeRoundRect(ctx, startX - paddingX + 2, textY - paddingY + 1, Math.max(0, totalWidth + paddingX * 2 - 4), paddingY * 0.65, Math.max(0, cornerRadius - 1));
     ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
     ctx.fill();
 
@@ -302,100 +382,135 @@ export function drawLyrics(ctx, w, h) {
     ctx.shadowOffsetY = 3;
   }
 
-  // ============ Draw Next Line Preview (Floating Above/Below) ============
+  // ============ Draw Next Line Preview (Floating Above) ============
   if (nextLine && nextLine.text && (!line || nextLine.start - line.end <= 6.0)) {
     ctx.save();
     const nextFontSize = Math.max(12, Math.floor(fontSize * 0.58));
     ctx.font = `600 ${nextFontSize}px ${fontFamilies}`;
     ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.42)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
     ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
     ctx.shadowBlur = 8;
     const nextY = textY - paddingY - nextFontSize * 0.9;
-    ctx.fillText(nextLine.text, w / 2, nextY);
+    ctx.fillText(nextLine.text.trim(), w / 2, nextY);
     ctx.restore();
   }
 
-  // ============ Draw Active Words with Kinetic Effects ============
-  let currentX = startX;
-  for (let i = 0; i < words.length; i++) {
-    const wordText = words[i].word;
-    const wordW = wordWidths[i];
-    const isPast = i < activeWordIndex;
-    const isCurrent = i === activeWordIndex;
+  // ============ Compute Active Word Coordinates ============
+  let currentSweepX = startX;
+  let activeWordBox = null;
 
+  if (words.length > 0) {
+    if (activeWordIndex >= 0 && activeWordIndex < words.length) {
+      const curW = words[activeWordIndex];
+      const sIdx = curW.startIndex !== undefined ? curW.startIndex : 0;
+      const eIdx = curW.endIndex !== undefined ? curW.endIndex : fullText.length;
+      const x0 = startX + ctx.measureText(fullText.substring(0, sIdx)).width;
+      const x1 = startX + ctx.measureText(fullText.substring(0, eIdx)).width;
+      const p = Math.max(0, Math.min(1, wordProgress));
+      currentSweepX = x0 + (x1 - x0) * p;
+      activeWordBox = { x0, x1, width: x1 - x0, wordText: curW.word, p };
+    } else if (activeWordIndex >= words.length) {
+      currentSweepX = startX + totalWidth;
+    }
+  }
+
+  // ============ Draw Base Lyrics Text (Unhighlighted) ============
+  ctx.save();
+  ctx.fillStyle = style === 'cinematic' ? 'rgba(255, 255, 255, 0.85)' : 'rgba(255, 255, 255, 0.72)';
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.75)';
+  ctx.shadowBlur = 6;
+  ctx.fillText(fullText, startX, textY);
+  ctx.restore();
+
+  // ============ Render Kinetic Animations per Style ============
+  if (style === 'highlight' && activeWordBox) {
+    // Glowing capsule pill around active word
     ctx.save();
-    let wordY = textY;
+    ctx.fillStyle = `rgba(${primaryRGB}, 0.38)`;
+    safeRoundRect(ctx, activeWordBox.x0 - 5, textY - fontSize * 0.68, Math.max(0, activeWordBox.width + 10), fontSize * 1.36, 6);
+    ctx.fill();
 
-    if (style === 'bounce' && isCurrent) {
-      const bounceH = Math.sin(wordProgress * Math.PI) * (fontSize * 0.28);
-      wordY -= bounceH;
-    }
-
-    if (style === 'typewriter' && isCurrent) {
-      const charCount = Math.max(1, Math.floor(wordText.length * wordProgress));
-      const partialText = wordText.substring(0, charCount);
-      ctx.fillStyle = pal.highlight;
-      ctx.shadowColor = pal.glow;
-      ctx.shadowBlur = 12;
-      ctx.fillText(partialText, currentX, wordY);
-    } else if (style === 'highlight' && isCurrent) {
-      // Glow pill around current word
-      ctx.fillStyle = `rgba(${pal.primary.join(',')}, 0.35)`;
-      ctx.beginPath();
-      ctx.roundRect(currentX - 4, wordY - fontSize * 0.65, wordW + 8, fontSize * 1.3, 6);
-      ctx.fill();
-
-      ctx.fillStyle = pal.highlight;
-      ctx.shadowColor = pal.glow;
-      ctx.shadowBlur = 16;
-      ctx.fillText(wordText, currentX, wordY);
-    } else if (style === 'glow' && isCurrent) {
-      ctx.fillStyle = '#ffffff';
-      ctx.shadowColor = pal.glow;
-      ctx.shadowBlur = 18 + Math.sin(wordProgress * Math.PI) * 10;
-      ctx.fillText(wordText, currentX, wordY);
-    } else if (style === 'cinematic') {
-      if (isPast || isCurrent) {
-        ctx.fillStyle = '#ffd700'; // Gold
-        ctx.shadowColor = 'rgba(255, 215, 0, 0.7)';
-        ctx.shadowBlur = 12;
-      } else {
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.78)';
-      }
-      ctx.fillText(wordText, currentX, wordY);
-    } else {
-      // Default: Karaoke fill-sweep with leading edge glow
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-      if (isPast) {
-        ctx.fillStyle = pal.highlight;
-        ctx.shadowColor = pal.glow;
-        ctx.shadowBlur = 10;
-        ctx.fillText(wordText, currentX, wordY);
-      } else if (isCurrent) {
-        // Base muted word
-        ctx.fillText(wordText, currentX, wordY);
-
-        // Sweeping highlight overlay with smooth gradient leading edge
-        ctx.save();
-        ctx.beginPath();
-        const sweepW = wordW * wordProgress;
-        ctx.rect(currentX, wordY - fontSize * 1.2, sweepW, fontSize * 2.4);
-        ctx.clip();
-
-        ctx.fillStyle = pal.highlight;
-        ctx.shadowColor = pal.glow;
-        ctx.shadowBlur = 16;
-        ctx.fillText(wordText, currentX, wordY);
-        ctx.restore();
-      } else {
-        ctx.fillText(wordText, currentX, wordY);
-      }
-    }
-
+    // Highlight text of active word
+    ctx.beginPath();
+    ctx.rect(activeWordBox.x0 - 6, textY - fontSize * 1.5, Math.max(0, activeWordBox.width + 12), fontSize * 3.0);
+    ctx.clip();
+    ctx.fillStyle = pal.highlight;
+    ctx.shadowColor = pal.glow;
+    ctx.shadowBlur = 18;
+    ctx.fillText(fullText, startX, textY);
     ctx.restore();
-    currentX += wordW + spaceWidth;
+  } else if (style === 'glow' && activeWordBox) {
+    // Neon bloom pulse on active word
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(activeWordBox.x0 - 2, textY - fontSize * 1.5, Math.max(0, activeWordBox.width + 4), fontSize * 3.0);
+    ctx.clip();
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowColor = pal.glow;
+    ctx.shadowBlur = 20 + Math.sin(activeWordBox.p * Math.PI) * 12;
+    ctx.fillText(fullText, startX, textY);
+    ctx.restore();
+  } else if (style === 'bounce' && activeWordBox) {
+    // Kinetic vertical scale bounce on active word
+    const bounceH = Math.sin(activeWordBox.p * Math.PI) * (fontSize * 0.28);
+    ctx.save();
+    ctx.fillStyle = pal.highlight;
+    ctx.shadowColor = pal.glow;
+    ctx.shadowBlur = 16;
+    ctx.fillText(activeWordBox.wordText, activeWordBox.x0, textY - bounceH);
+    ctx.restore();
+  } else if (style === 'cinematic') {
+    // Cinematic gold progressive reveal
+    if (currentSweepX > startX) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(startX - 20, textY - fontSize * 1.5, (currentSweepX - startX) + 20, fontSize * 3.0);
+      ctx.clip();
+      ctx.fillStyle = '#ffd700'; // Pure polished gold
+      ctx.shadowColor = 'rgba(255, 215, 0, 0.75)';
+      ctx.shadowBlur = 16;
+      ctx.fillText(fullText, startX, textY);
+      ctx.restore();
+    }
+  } else {
+    // Default & Typewriter: Continuous progressive karaoke sweep with luminous beam
+    if (currentSweepX > startX) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(startX - 20, textY - fontSize * 1.5, (currentSweepX - startX) + 20, fontSize * 3.0);
+      ctx.clip();
+
+      // Glowing primary karaoke color
+      ctx.fillStyle = pal.highlight;
+      ctx.shadowColor = pal.glow;
+      ctx.shadowBlur = 18;
+      ctx.fillText(fullText, startX, textY);
+
+      // Top specular sheen
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+      ctx.shadowBlur = 4;
+      ctx.fillText(fullText, startX, textY);
+      ctx.restore();
+
+      // Brilliant leading edge light ray / glowing beam
+      if (currentSweepX < startX + totalWidth) {
+        ctx.save();
+        const beamGrad = ctx.createLinearGradient(0, textY - fontSize * 0.65, 0, textY + fontSize * 0.65);
+        beamGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+        beamGrad.addColorStop(0.5, pal.highlight);
+        beamGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = beamGrad;
+        ctx.shadowColor = pal.glow;
+        ctx.shadowBlur = 14;
+        ctx.fillRect(currentSweepX - 1.5, textY - fontSize * 0.65, 3, fontSize * 1.3);
+        ctx.restore();
+      }
+    }
   }
 
   ctx.restore();
+  } catch (lyricErr) {
+    console.error('[VIDA Lyrics Draw Error]', lyricErr);
+  }
 }

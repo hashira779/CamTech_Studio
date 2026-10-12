@@ -1,7 +1,7 @@
 import { state, PALETTES } from '../core/state.js';
 
 export function drawTrapCircle(ctx, w, h, bars, bass) {
-  const pal = PALETTES[state.palette];
+  const pal = PALETTES[state.palette] || PALETTES.cyberpunk;
   let cx = w / 2;
   let cy = h / 2;
 
