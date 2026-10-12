@@ -660,9 +660,10 @@ def double_check_lyrics(lyrics: List[Dict[str, Any]], preserve_text: bool = Fals
             w_start = max(cur_w_start, w_start)
             w_end = max(w_start + 0.04, w_end)
 
-            # Ensure inside line bounds
-            if w_end > end + 0.1:
-                end = round(w_end + 0.1, 2)
+            # Clamp word end to line boundary instead of extending the line.
+            # Extending the line causes cascading overlap with subsequent lines.
+            if w_end > end:
+                w_end = end
 
             fixed_words.append({
                 "word": w["word"],

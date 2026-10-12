@@ -141,7 +141,7 @@ export function updateLyricState(currentTime) {
   for (let i = 0; i < lyrics.length; i++) {
     const cur = lyrics[i];
     const nxt = i + 1 < lyrics.length ? lyrics[i + 1] : null;
-    const effectiveEnd = nxt && (nxt.start - cur.end < 0.45) ? nxt.start : cur.end;
+    const effectiveEnd = nxt && (nxt.start - cur.end < 0.12) ? nxt.start : cur.end;
 
     if (currentTime >= cur.start - leadTime && currentTime < effectiveEnd) {
       activeLine = cur;

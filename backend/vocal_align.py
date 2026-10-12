@@ -207,15 +207,20 @@ def detect_first_vocal_onset(audio_path: str, vocal_segments: Optional[List[Tupl
 
 
 def _interpolate_words_simple(text: str, start: float, end: float) -> List[Dict[str, Any]]:
-    """Distributes word-level timestamps with syllable awareness across a line duration."""
+    """
+    Distributes word-level timestamps with syllable-weighted singing durations.
+    Delegates to lyric_engine.compute_weighted_word_timestamps for a single
+    source of truth on phonetic weight calculation.
+    """
     try:
-        from backend.lyric_engine import tokenize_line_words, clean_subtitle_text
+        from backend.lyric_engine import tokenize_line_words, clean_subtitle_text, compute_weighted_word_timestamps
     except ImportError:
         try:
-            from lyric_engine import tokenize_line_words, clean_subtitle_text
+            from lyric_engine import tokenize_line_words, clean_subtitle_text, compute_weighted_word_timestamps
         except ImportError:
             tokenize_line_words = lambda x: x.split()
             clean_subtitle_text = lambda x: x.strip()
+            compute_weighted_word_timestamps = None
 
     clean = clean_subtitle_text(text)
     if not clean:
@@ -225,21 +230,17 @@ def _interpolate_words_simple(text: str, start: float, end: float) -> List[Dict[
     if not words:
         return [{"word": clean, "start": start, "end": end}]
 
+    # Use the canonical weighted timestamp engine if available
+    if compute_weighted_word_timestamps is not None:
+        return compute_weighted_word_timestamps(words, start, end)
+
+    # Minimal fallback: proportional by character length
     dur = max(0.1, end - start)
-    # Weight words: base length + slight bonus for vowels/syllables
-    word_lens = []
-    for w in words:
-        # Vowels carry singing duration
-        vowel_count = sum(1 for c in w if c in 'aeiouyàáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹ\u17B6\u17B7\u17B8\u17B9\u17BA\u17BB\u17BC\u17BD\u17BE\u17BF\u17C0\u17C1\u17C2\u17C3\u17C4\u17C5')
-        weight = max(1.0, len(w) + vowel_count * 0.5)
-        word_lens.append(weight)
-
-    total_weight = sum(word_lens)
-
+    total_len = sum(max(1, len(w)) for w in words)
     result = []
     t = start
-    for w, wlen in zip(words, word_lens):
-        w_dur = (wlen / total_weight) * dur
+    for w in words:
+        w_dur = (max(1, len(w)) / total_len) * dur
         result.append({
             "word": w,
             "start": round(t, 2),
@@ -283,7 +284,7 @@ def force_align_lyrics_to_audio(
 
     # Fallback to proportional spacing if audio contains zero detected voice
     if not vocal_segments or len(vocal_segments) < 2:
-        print(f"[Force Align] VAD found {len(vocal_segments)} segments, using fallback spacing")
+        log.info(f"[Force Align] VAD found {len(vocal_segments)} segments, using fallback spacing")
         intro = min(15.0, max(4.0, duration * 0.07))
         outro = min(12.0, max(3.0, duration * 0.05))
         singing_dur = max(10.0, duration - intro - outro)
@@ -305,8 +306,8 @@ def force_align_lyrics_to_audio(
 
     first_onset = vocal_segments[0][0]
     total_vocal_duration = sum(e - s for s, e in vocal_segments)
-    print(f"[Force Align] Detected {len(vocal_segments)} vocal phrases. First vocal onset: {first_onset:.2f}s, "
-          f"Total vocal time: {total_vocal_duration:.1f}s / {duration:.1f}s")
+    log.info(f"[Force Align] Detected {len(vocal_segments)} vocal phrases. First vocal onset: {first_onset:.2f}s, "
+             f"Total vocal time: {total_vocal_duration:.1f}s / {duration:.1f}s")
 
     # Step 2: Partition audio into major Singing Blocks separated by true instrumental solos (gap >= 7.5s)
     singing_blocks = []
@@ -381,12 +382,16 @@ def force_align_lyrics_to_audio(
             start_t = float(phrase_time_to_audio(p_start))
             end_t = float(phrase_time_to_audio(p_end))
 
-            # Keep line duration natural (min 1.8s, max 6.5s)
+            # Proportional line duration clamping:
+            # Long sustained phrases are scaled down rather than hard-chopped.
+            # Short lines are padded to a readable minimum.
             line_dur = end_t - start_t
             if line_dur > 6.5:
-                end_t = start_t + 4.5
+                # Scale down proportionally: keep at least 65% of the acoustic
+                # span but never exceed 6.0s so subtitles remain readable.
+                end_t = start_t + min(6.0, max(3.5, line_dur * 0.65))
             elif line_dur < 1.5:
-                end_t = start_t + 1.8
+                end_t = start_t + 1.5
 
             # Prevent overlap with previous line
             if aligned and start_t < aligned[-1]["end"]:
@@ -413,7 +418,7 @@ def force_align_lyrics_to_audio(
     if vocal_segments and len(vocal_segments) > 0:
         aligned = calibrate_lyrics_with_vocal_activity(aligned, vocal_segments=vocal_segments, audio_path=audio_path)
 
-    print(f"[Force Align] ✅ Successfully aligned {len(aligned)} lines across {len(singing_blocks)} musical blocks.")
+    log.info(f"[Force Align] ✅ Successfully aligned {len(aligned)} lines across {len(singing_blocks)} musical blocks.")
     return aligned
 
 
@@ -615,14 +620,20 @@ def calibrate_lyrics_with_vocal_activity(
         if curr_line["end"] <= curr_line["start"] + 0.3:
             curr_line["end"] = round(curr_line["start"] + 0.6, 2)
 
+        # Redistribute word timestamps preserving syllable weights.
+        # Previous implementation used equal distribution (line_dur / n_words)
+        # which destroyed the carefully computed phonetic weights.
         if curr_line.get("words") and len(curr_line["words"]) > 0:
-            line_dur = max(0.15, curr_line["end"] - curr_line["start"])
-            n_words = len(curr_line["words"])
-            t = curr_line["start"]
+            word_texts = [w.get("word", "") if isinstance(w, dict) else str(w) for w in curr_line["words"]]
+            redistributed = _interpolate_words_simple(
+                " ".join(word_texts),
+                curr_line["start"],
+                curr_line["end"]
+            )
+            # Preserve original word strings while applying new timestamps
             for w_idx, w in enumerate(curr_line["words"]):
-                w_dur = line_dur / n_words
-                w["start"] = round(t, 2)
-                w["end"] = round(t + w_dur, 2) if w_idx < n_words - 1 else curr_line["end"]
-                t += w_dur
+                if w_idx < len(redistributed):
+                    w["start"] = redistributed[w_idx]["start"]
+                    w["end"] = redistributed[w_idx]["end"]
 
     return calibrated
