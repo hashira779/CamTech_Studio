@@ -110,3 +110,18 @@ export function getAudioData() {
   }
   return null;
 }
+
+/** Full-volume tap used by the real-time export fallback (MediaRecorder). */
+let recordDest = null;
+export function getRecordStream() {
+  try {
+    if (!analyser) return null;
+    if (!recordDest) {
+      recordDest = audioCtx.createMediaStreamDestination();
+      analyser.connect(recordDest);
+    }
+    return recordDest.stream;
+  } catch (e) {
+    return null;
+  }
+}

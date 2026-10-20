@@ -54,33 +54,69 @@ def is_myanmar_text(text: str) -> bool:
     return any('\u1000' <= c <= '\u109F' for c in text)
 
 
+_VI_DIACRITIC_RE = re.compile(
+    r'[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]',
+    re.IGNORECASE
+)
+
+
+def detect_text_language_ex(text: str) -> Tuple[str, bool]:
+    """
+    Detects an ISO-639-1 code plus whether the evidence is strong.
+
+    Scripts must own a meaningful share of the letters — a single Khmer line in a
+    Vietnamese caption (or a single 'ê' in an English translation) must NOT flip the
+    whole file. Only a confident detection is allowed to reject subtitle candidates.
+    """
+    if not text:
+        return "en", False
+
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return "en", False
+    n = len(letters)
+
+    def share(pred) -> float:
+        return sum(1 for c in letters if pred(c)) / n
+
+    kana = share(lambda c: '\u3040' <= c <= '\u309F' or '\u30A0' <= c <= '\u30FF')
+    hanzi = share(lambda c: '\u4E00' <= c <= '\u9FFF')
+    hangul = share(lambda c: '\uAC00' <= c <= '\uD7AF' or '\u1100' <= c <= '\u11FF')
+
+    if kana >= 0.10:
+        return "ja", True
+    if hanzi >= 0.30:
+        return "zh", True
+    if hangul >= 0.25:
+        return "ko", True
+    if share(lambda c: '\u1780' <= c <= '\u17FF') >= 0.25:
+        return "km", True
+    if share(lambda c: '\u0E00' <= c <= '\u0E7F') >= 0.25:
+        return "th", True
+    if share(lambda c: '\u0E80' <= c <= '\u0EFF') >= 0.25:
+        return "lo", True
+    if share(lambda c: '\u1000' <= c <= '\u109F') >= 0.25:
+        return "my", True
+    if share(lambda c: '\u0900' <= c <= '\u097F') >= 0.25:
+        return "hi", True
+    if share(lambda c: '\u0600' <= c <= '\u06FF') >= 0.25:
+        return "ar", True
+    if share(lambda c: '\u0400' <= c <= '\u04FF') >= 0.25:
+        return "ru", True
+
+    # Vietnamese: Latin text carrying a real density of Vietnamese diacritics.
+    # ("tê" alone inside an English sentence is noise, not evidence.)
+    vi_marks = len(_VI_DIACRITIC_RE.findall(text))
+    latin_letters = sum(1 for c in letters if 'a' <= c.lower() <= 'z')
+    if latin_letters and vi_marks >= 2 and (vi_marks / latin_letters) >= 0.06:
+        return "vi", True
+
+    return "en", False
+
+
 def detect_text_language(text: str) -> str:
     """Detects ISO-639-1 language code from string content."""
-    if not text:
-        return "en"
-    if is_khmer_text(text):
-        return "km"
-    if any('\u3040' <= c <= '\u309F' or '\u30A0' <= c <= '\u30FF' for c in text):
-        return "ja"
-    if any('\u4E00' <= c <= '\u9FFF' for c in text):
-        return "zh"
-    if any('\uAC00' <= c <= '\uD7AF' or '\u1100' <= c <= '\u11FF' for c in text):
-        return "ko"
-    if is_thai_text(text):
-        return "th"
-    if is_lao_text(text):
-        return "lo"
-    if is_myanmar_text(text):
-        return "my"
-    if any('\u0900' <= c <= '\u097F' for c in text):
-        return "hi"
-    if any('\u0600' <= c <= '\u06FF' for c in text):
-        return "ar"
-    if any('\u0400' <= c <= '\u04FF' for c in text):
-        return "ru"
-    if re.search(r'[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]', text, re.IGNORECASE):
-        return "vi"
-    return "en"
+    return detect_text_language_ex(text)[0]
 
 
 def tokenize_khmer_line(clean: str) -> List[str]:
@@ -1200,8 +1236,11 @@ def find_matching_subtitles(audio_path: str, target_lang: Optional[str] = None) 
     dir_name = os.path.dirname(os.path.abspath(audio_path))
     base_name = os.path.splitext(os.path.basename(audio_path))[0]
 
-    title_lang = detect_text_language(base_name)
-    preferred_lang = target_lang if (target_lang and target_lang != "auto") else title_lang
+    title_lang, title_confident = detect_text_language_ex(base_name)
+    if target_lang and target_lang != "auto":
+        preferred_lang, preferred_confident = target_lang, True
+    else:
+        preferred_lang, preferred_confident = title_lang, title_confident
 
     search_dirs = [dir_name]
     yt_dir = os.path.join(dir_name, "youtube")
@@ -1231,7 +1270,11 @@ def find_matching_subtitles(audio_path: str, target_lang: Optional[str] = None) 
                 continue
             f_base = os.path.splitext(f)[0]
             unquoted_f_base = urllib.parse.unquote(f_base)
-            
+
+            # Companion TRANSLATIONS (".en-tr.srt", ".km-tr.srt", ...) are never originals.
+            if re.search(r'\.[a-z0-9_\-]+-tr\.(?:vtt|srt|lrc)$', f_lower):
+                continue
+
             # Robust matching: substring, prefix, or URL-unquoted match
             matches_file = (
                 base_name in f or
@@ -1256,12 +1299,18 @@ def find_matching_subtitles(audio_path: str, target_lang: Optional[str] = None) 
                             ' ',
                             content_sample
                         ).strip()
-                        file_lang = detect_text_language(text_sample)
+                        file_lang, _ = detect_text_language_ex(text_sample)
                 except Exception:
                     pass
 
                 # 0. Strict rejection of Whisper spam hallucinations (e.g. Vietnamese YouTube spam)
                 if re.search(r'(?:subscribe|kênh|ghiền mì gõ|la la school|đăng ký|theo dõi|bỏ lỡ|video hấp dẫn)', text_sample, re.IGNORECASE):
+                    continue
+
+                # 0b. A caption in a DIFFERENT language than the song must never be served as the
+                # original. This is what previously let an English translation SRT masquerade as
+                # the Vietnamese original. Only enforced when the song language is trusted.
+                if preferred_confident and file_lang and file_lang != preferred_lang:
                     continue
 
                 # Strict rejection of wrong-script or YouTube auto-translated Thai subtitles:
@@ -1705,28 +1754,52 @@ def get_active_lyric_frame(current_time: float, lyrics: List[Dict[str, Any]]) ->
     active_line = None
     next_line = None
 
+    def _get_s(item: Dict[str, Any], dflt: float = 0.0) -> float:
+        if "start" in item:
+            return float(item["start"])
+        if "time" in item:
+            return float(item["time"])
+        return float(dflt)
+
+    def _get_e(item: Dict[str, Any], dflt: float = 0.0) -> float:
+        if "end" in item:
+            return float(item["end"])
+        if "end_time" in item:
+            return float(item["end_time"])
+        return float(dflt)
+
     for idx, line in enumerate(lyrics):
-        if line["start"] - lead_time <= current_time <= line["end"] + 0.5:
+        s = _get_s(line)
+        e = _get_e(line, s + 3.0)
+        # Ensure standard keys exist
+        if "start" not in line:
+            line["start"] = s
+        if "end" not in line:
+            line["end"] = e
+
+        if s - lead_time <= current_time <= e + 0.5:
             active_line = line
             if idx + 1 < len(lyrics):
                 next_line = lyrics[idx + 1]
             break
-        elif current_time < line["start"]:
+        elif current_time < s:
             next_line = line
             break
 
     if not active_line:
-        if next_line and (next_line.get("start", 0) - current_time > 1.8):
-            diff = next_line["start"] - current_time
-            s = int(math.ceil(diff))
-            break_text = f"♪ Instrumental Break (Next vocal in {s}s) ♪" if s <= 60 else "♪ Instrumental Break ♪"
-            return {
-                "line": {"text": break_text, "words": [{"word": break_text, "start": current_time, "end": next_line["start"]}], "is_instrumental": True},
-                "next_line": next_line,
-                "active_word_index": -1,
-                "word_progress": 0.0,
-                "alpha": 0.90
-            }
+        if next_line:
+            next_s = _get_s(next_line)
+            if next_s - current_time > 1.8:
+                diff = next_s - current_time
+                s_int = int(math.ceil(diff))
+                break_text = f"♪ Instrumental Break (Next vocal in {s_int}s) ♪" if s_int <= 60 else "♪ Instrumental Break ♪"
+                return {
+                    "line": {"text": break_text, "start": current_time, "end": next_s, "words": [{"word": break_text, "start": current_time, "end": next_s}], "is_instrumental": True},
+                    "next_line": next_line,
+                    "active_word_index": -1,
+                    "word_progress": 0.0,
+                    "alpha": 0.90
+                }
         return None
 
     active_word_index = -1
@@ -1734,21 +1807,30 @@ def get_active_lyric_frame(current_time: float, lyrics: List[Dict[str, Any]]) ->
 
     words = active_line.get("words", [])
     for w_idx, w in enumerate(words):
-        if w["start"] <= current_time <= w["end"]:
+        w_s = _get_s(w, _get_s(active_line))
+        w_e = _get_e(w, _get_e(active_line, w_s + 0.5))
+        if "start" not in w:
+            w["start"] = w_s
+        if "end" not in w:
+            w["end"] = w_e
+
+        if w_s <= current_time <= w_e:
             active_word_index = w_idx
-            dur = max(0.05, w["end"] - w["start"])
-            word_progress = (current_time - w["start"]) / dur
+            dur = max(0.05, w_e - w_s)
+            word_progress = (current_time - w_s) / dur
             break
-        elif current_time > w["end"]:
+        elif current_time > w_e:
             active_word_index = w_idx
             word_progress = 1.0
 
     fade_duration = 0.3
     alpha = 1.0
-    if current_time < active_line["start"]:
-        alpha = max(0.0, (current_time - (active_line["start"] - lead_time)) / lead_time)
-    elif current_time > active_line["end"]:
-        alpha = max(0.0, 1.0 - (current_time - active_line["end"]) / fade_duration)
+    act_s = _get_s(active_line)
+    act_e = _get_e(active_line, act_s + 3.0)
+    if current_time < act_s:
+        alpha = max(0.0, (current_time - (act_s - lead_time)) / lead_time)
+    elif current_time > act_e:
+        alpha = max(0.0, 1.0 - (current_time - act_e) / fade_duration)
 
     return {
         "line": active_line,

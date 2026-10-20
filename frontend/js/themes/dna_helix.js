@@ -4,6 +4,7 @@
  * Bio-luminescent molecular visualization with phosphor glow trails.
  */
 import { state, PALETTES } from '../core/state.js';
+import { glowLayer } from './glow.js';
 
 let helixTime = 0;
 
@@ -85,6 +86,7 @@ export function drawDNAHelix(ctx, w, h, bars, bass) {
   drawHelixStrand(ctx, cx, startY, helixLength, segments, helixRadius, helixTime, Math.PI, bars, count, bass, sec, pal);
 
   // ── 3. Floating Phosphor Particles ──
+  const parts = [];
   for (let i = 0; i < 40; i++) {
     const pt = (i / 40 + helixTime * 0.05) % 1;
     const py = startY + pt * helixLength;
@@ -94,20 +96,33 @@ export function drawDNAHelix(ctx, w, h, bars, bass) {
     const spread = helixRadius * 2.5 + val * helixRadius;
     const px = cx + Math.sin(angle + i * 0.5) * spread * (0.3 + Math.random() * 0.7);
 
-    const pAlpha = 0.1 + val * 0.5 + bass * 0.2;
-    const pSize = 1 + val * 3;
     const colorT = i / 40;
-    const pr = Math.floor(pri[0] * (1 - colorT) + acc[0] * colorT);
-    const pg = Math.floor(pri[1] * (1 - colorT) + acc[1] * colorT);
-    const pb = Math.floor(pri[2] * (1 - colorT) + acc[2] * colorT);
-
+    parts.push({
+      px, py, val,
+      a: Math.min(1, 0.1 + val * 0.5 + bass * 0.2),
+      s: 1 + val * 3,
+      c: `${Math.floor(pri[0] * (1 - colorT) + acc[0] * colorT)}, ${Math.floor(pri[1] * (1 - colorT) + acc[1] * colorT)}, ${Math.floor(pri[2] * (1 - colorT) + acc[2] * colorT)}`,
+    });
+  }
+  // Glow (blur 8 + val*10 per particle): two low-res blur buckets instead of
+  // 40 full-res blurs.
+  for (const [lo, hi] of [[0, 0.5], [0.5, Infinity]]) {
+    const group = parts.filter((p) => p.val >= lo && p.val < hi);
+    if (!group.length) continue;
+    const meanVal = group.reduce((s, p) => s + p.val, 0) / group.length;
+    glowLayer(ctx, 8 + meanVal * 10, (g) => {
+      for (const p of group) {
+        g.fillStyle = `rgba(${p.c}, ${0.7 * p.a})`;
+        g.beginPath(); g.arc(p.px, p.py, p.s, 0, Math.PI * 2); g.fill();
+      }
+    });
+  }
+  ctx.shadowBlur = 0;
+  for (const p of parts) {
     ctx.beginPath();
-    ctx.arc(px, py, pSize, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(${pr}, ${pg}, ${pb}, ${pAlpha})`;
-    ctx.shadowColor = `rgba(${pr}, ${pg}, ${pb}, 0.7)`;
-    ctx.shadowBlur = 8 + val * 10;
+    ctx.arc(p.px, p.py, p.s, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${p.c}, ${p.a})`;
     ctx.fill();
-    ctx.shadowBlur = 0;
   }
 
   // ── 4. Center Energy Core ──
@@ -129,7 +144,7 @@ export function drawDNAHelix(ctx, w, h, bars, bass) {
 function drawHelixStrand(ctx, cx, startY, length, segments, radius, time, phaseOffset, bars, barCount, bass, color, pal) {
   const twistSpeed = 3.5;
 
-  ctx.beginPath();
+  const strand = new Path2D();
   let firstPoint = true;
 
   for (let i = 0; i <= segments; i++) {
@@ -142,21 +157,16 @@ function drawHelixStrand(ctx, cx, startY, length, segments, radius, time, phaseO
     const dynamicR = radius + val * radius * 1.5 + bass * radius * 0.3;
     const x = cx + Math.sin(angle) * dynamicR;
 
-    // Depth-based line width variation
-    const depth = (Math.cos(angle) + 1) / 2;
-
     if (firstPoint) {
-      ctx.moveTo(x, y);
+      strand.moveTo(x, y);
       firstPoint = false;
     } else {
-      ctx.lineTo(x, y);
+      strand.lineTo(x, y);
     }
   }
 
-  ctx.strokeStyle = `rgb(${color.join(',')})`;
   ctx.lineWidth = 3 + bass * 2;
-  ctx.shadowColor = `rgba(${color.join(',')}, 0.7)`;
-  ctx.shadowBlur = 15 + bass * 15;
-  ctx.stroke();
-  ctx.shadowBlur = 0;
+  glowLayer(ctx, 15 + bass * 15, (g) => { g.strokeStyle = `rgba(${color.join(',')}, 0.7)`; g.stroke(strand); });
+  ctx.strokeStyle = `rgb(${color.join(',')})`;
+  ctx.stroke(strand);
 }

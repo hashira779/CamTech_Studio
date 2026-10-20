@@ -28,6 +28,26 @@ export const state = {
   lyrics: [],
   showLyrics: true,
   lyricStyle: "karaoke",    
+  // ============ Dual-Language Translation Track (2nd subtitle line) ============
+  // Fully independent from state.lyrics — original cues are never mutated.
+  translation: {
+    lang: "en",              // target language code: km|en|th|vi|zh|ja|ko|fr|es (auto Khmer for foreign songs)
+    lines: [],               // [{ index, text, start, end }] 1:1 mapped to state.lyrics
+    autoTranslate: true,     // foreign lyrics → Khmer is the default target and the track builds itself on load
+    displayMode: "original_only",  // "original_only" | "translation_only" | "bilingual"
+    visible: true,           // legacy quick-hide flag for the second line in bilingual mode
+    loaded: false,           // a saved translation was restored from disk
+    ownerKey: undefined,     // "<audioKey>::<lang>" of the song the current lines belong to
+    style: {
+      sizeRatio: 0.55,       // font size relative to the original line
+      offsetRatio: 0.55,     // vertical gap below the original pill, in original font sizes
+      color: "#ffffff",
+      align: "center",       // center | left | right
+      outline: true,
+      shadow: true,
+      background: false
+    }
+  },
   // SuperSmart AI Song Intelligence
   bpm: 128,
   energy: 0.85,

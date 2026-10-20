@@ -43,27 +43,35 @@ export function triggerBloomFlash(intensity = 0.6) {
 /**
  * Get current frame camera transform for pre-render shake
  */
-export function getCameraShakeOffset() {
+export function getCameraShakeOffset(rand = Math.random, dt = 1 / 60) {
   if (shakePower <= 0.1 || !state.vfxShake) {
     shakePower = 0;
     return { x: 0, y: 0, angle: 0 };
   }
 
   const offset = {
-    x: (Math.random() - 0.5) * shakePower,
-    y: (Math.random() - 0.5) * shakePower,
-    angle: (Math.random() - 0.5) * shakePower * 0.0008
+    x: (rand() - 0.5) * shakePower,
+    y: (rand() - 0.5) * shakePower,
+    angle: (rand() - 0.5) * shakePower * 0.0008
   };
 
-  // Natural physics decay
-  shakePower *= 0.88;
+  // Natural physics decay (frame-rate independent)
+  shakePower *= Math.pow(0.88, dt * 60);
   return offset;
+}
+
+/** Clears all VFX state so a render session can restart deterministically from t = 0. */
+export function resetVFX() {
+  shakePower = 0;
+  flashAlpha = 0;
+  shockwaves.length = 0;
 }
 
 /**
  * Render Post-Processing VFX Layer (called after themes and lyrics)
  */
-export function renderPostVFX(ctx, w, h, bass) {
+export function renderPostVFX(ctx, w, h, bass, dt = 1 / 60) {
+  const k = dt * 60; // frame-rate independent step scale
   const pal = PALETTES[state.palette] || PALETTES.cyberpunk;
   const priRgb = pal.primary.join(',');
   const secRgb = pal.secondary.join(',');
@@ -73,8 +81,8 @@ export function renderPostVFX(ctx, w, h, bass) {
     ctx.save();
     for (let i = shockwaves.length - 1; i >= 0; i--) {
       const sw = shockwaves[i];
-      sw.radius += sw.speed;
-      sw.alpha *= 0.93;
+      sw.radius += sw.speed * k;
+      sw.alpha *= Math.pow(0.93, k);
 
       if (sw.alpha < 0.02 || sw.radius >= sw.maxRadius) {
         shockwaves.splice(i, 1);
@@ -111,7 +119,7 @@ export function renderPostVFX(ctx, w, h, bass) {
     ctx.fillRect(0, 0, w, h);
     ctx.restore();
 
-    flashAlpha *= 0.84; // Fast bloom decay
+    flashAlpha *= Math.pow(0.84, k); // Fast bloom decay
   }
 
   // 3. Cyberpunk CRT Scanlines

@@ -3,6 +3,7 @@
  * 3D Neural Constellation • Electrical Lightning Synapses • Tensor Harmonic Graph
  */
 import { state, PALETTES } from '../core/state.js';
+import { glowLayer } from './glow.js';
 
 const NUM_NODES = 48;
 const nodes = [];
@@ -32,7 +33,10 @@ export function drawNeuralSynapse(ctx, w, h, bars, bass) {
 
   ctx.save();
 
-  // 1. Update and Draw Interconnected Neural Nodes
+  // 1. Update nodes and build a display list. Every draw in this loop used to
+  // run with the node's shadow active (one full-res blur per node AND per
+  // synapse line); the glow is now rendered once per blur size in glow.js.
+  const ops = [];
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
     const barVal = bars[node.harmonicBin % bars.length] || 0;
@@ -47,15 +51,13 @@ export function drawNeuralSynapse(ctx, w, h, bars, bass) {
 
     // Decay or boost excitation
     node.energy = node.energy * 0.85 + barVal * 0.45;
+    const blur = node.energy > 0.4 ? 18 : 6;
 
-    // Draw Node Body
+    // Node Body
     const currentR = node.baseR * (1 + node.energy * 3 + bass * 1.5);
-    ctx.beginPath();
-    ctx.arc(node.x, node.y, currentR, 0, Math.PI * 2);
-    ctx.fillStyle = node.energy > 0.4 ? `rgb(${secRgb})` : `rgba(${priRgb}, 0.8)`;
-    ctx.shadowColor = pal.glow;
-    ctx.shadowBlur = node.energy > 0.4 ? 18 : 6;
-    ctx.fill();
+    const hot = node.energy > 0.4;
+    ops.push({ blur, fill: true, style: hot ? `rgb(${secRgb})` : `rgba(${priRgb}, 0.8)`, alpha: hot ? 1 : 0.8,
+      x: node.x, y: node.y, r: currentR });
 
     // 2. Connect nearby nodes with Electrical Synapse Arcs
     for (let j = i + 1; j < nodes.length; j++) {
@@ -69,37 +71,53 @@ export function drawNeuralSynapse(ctx, w, h, bars, bass) {
         const proximity = 1 - (dist / maxConnectDist);
         const synapsePower = (node.energy + target.energy) * 0.5;
 
-        ctx.beginPath();
         if (synapsePower > 0.35) {
           // Electric Lightning Jitter Arc
-          ctx.moveTo(node.x, node.y);
           const midX = (node.x + target.x) / 2 + (Math.random() - 0.5) * 16 * synapsePower;
           const midY = (node.y + target.y) / 2 + (Math.random() - 0.5) * 16 * synapsePower;
-          ctx.lineTo(midX, midY);
-          ctx.lineTo(target.x, target.y);
-          ctx.strokeStyle = `rgba(${secRgb}, ${proximity * (0.6 + synapsePower * 0.4)})`;
-          ctx.lineWidth = 1.8 + synapsePower * 2;
+          const a = proximity * (0.6 + synapsePower * 0.4);
+          ops.push({ blur, pts: [node.x, node.y, midX, midY, target.x, target.y],
+            style: `rgba(${secRgb}, ${a})`, alpha: a, lw: 1.8 + synapsePower * 2 });
         } else {
           // Smooth Synaptic Filament
-          ctx.moveTo(node.x, node.y);
-          ctx.lineTo(target.x, target.y);
-          ctx.strokeStyle = `rgba(${priRgb}, ${proximity * 0.35})`;
-          ctx.lineWidth = 1.2;
+          const a = proximity * 0.35;
+          ops.push({ blur, pts: [node.x, node.y, target.x, target.y],
+            style: `rgba(${priRgb}, ${a})`, alpha: a, lw: 1.2 });
         }
-        ctx.stroke();
       }
     }
 
     // Connect node to center Neural Core if close enough
     const distToCenter = Math.sqrt((cx - node.x) ** 2 + (cy - node.y) ** 2);
     if (distToCenter < 350 + bass * 100) {
-      ctx.beginPath();
-      ctx.moveTo(node.x, node.y);
-      ctx.lineTo(cx, cy);
-      ctx.strokeStyle = `rgba(${accRgb}, ${(1 - distToCenter / 450) * 0.25})`;
-      ctx.lineWidth = 0.8;
-      ctx.stroke();
+      const a = (1 - distToCenter / 450) * 0.25;
+      ops.push({ blur, pts: [node.x, node.y, cx, cy], style: `rgba(${accRgb}, ${a})`, alpha: a, lw: 0.8 });
     }
+  }
+
+  const trace = (p, op) => {
+    p.beginPath();
+    if (op.fill) { p.arc(op.x, op.y, op.r, 0, Math.PI * 2); return; }
+    const q = op.pts;
+    p.moveTo(q[0], q[1]);
+    for (let k = 2; k < q.length; k += 2) p.lineTo(q[k], q[k + 1]);
+  };
+  for (const blur of [6, 18]) {
+    glowLayer(ctx, blur, (g) => {
+      g.fillStyle = g.strokeStyle = pal.glow;
+      for (const op of ops) {
+        if (op.blur !== blur || op.alpha <= 0) continue;
+        g.globalAlpha = Math.min(1, op.alpha);
+        trace(g, op);
+        if (op.fill) g.fill(); else { g.lineWidth = op.lw; g.stroke(); }
+      }
+    });
+  }
+  ctx.shadowBlur = 0;
+  for (const op of ops) {
+    trace(ctx, op);
+    if (op.fill) { ctx.fillStyle = op.style; ctx.fill(); }
+    else { ctx.strokeStyle = op.style; ctx.lineWidth = op.lw; ctx.stroke(); }
   }
   ctx.shadowBlur = 0;
 
@@ -111,12 +129,15 @@ export function drawNeuralSynapse(ctx, w, h, bars, bass) {
   ctx.fill();
 
   // Multi-tier digital hexagon / ring border
-  ctx.strokeStyle = `rgb(${priRgb})`;
   ctx.lineWidth = 2.5 + bass * 2;
-  ctx.shadowColor = pal.glow;
-  ctx.shadowBlur = 20;
+  glowLayer(ctx, 20, (g) => {
+    g.strokeStyle = pal.glow;
+    g.beginPath(); g.arc(cx, cy, pulseRadius, 0, Math.PI * 2); g.stroke();
+  });
+  ctx.strokeStyle = `rgb(${priRgb})`;
+  ctx.beginPath();
+  ctx.arc(cx, cy, pulseRadius, 0, Math.PI * 2);
   ctx.stroke();
-  ctx.shadowBlur = 0;
 
   // Center Logo or Neural Typography
   if (state.logoImageObj && state.logoImageObj.complete) {

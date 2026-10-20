@@ -1,4 +1,5 @@
 import { state, PALETTES } from '../core/state.js';
+import { glowLayer } from './glow.js';
 
 let peakCaps = new Float32Array(256);
 let peakCapDecay = new Float32Array(256);
@@ -43,6 +44,7 @@ export function drawNeonBars(ctx, w, h, bars, bass) {
   }
 
   // 4. Render Neon Bars with Glow & Segmented Glass
+  const items = new Array(count);
   for (let i = 0; i < count; i++) {
     const x = marginX + i * (barW + gap);
     const rawVal = bars[i] || 0;
@@ -63,7 +65,36 @@ export function drawNeonBars(ctx, w, h, bars, bass) {
     const r = Math.floor(pal.primary[0] * (1 - t) + pal.secondary[0] * t);
     const g = Math.floor(pal.primary[1] * (1 - t) + pal.secondary[1] * t);
     const b = Math.floor(pal.primary[2] * (1 - t) + pal.secondary[2] * t);
+    const capY = baseY - (peakCaps[i] || barHeight) - 4;
+    items[i] = { x, barHeight, capY, r, g, b };
+  }
 
+  // Bar glow (shadow = the bar's gradient alpha tinted with its colour),
+  // all bars in one low-res blur instead of one full-res blur per bar.
+  const sa = 0.5 + bass * 0.4;
+  glowLayer(ctx, 10 + bass * 6, (gl) => {
+    for (const it of items) {
+      const gg = gl.createLinearGradient(0, baseY, 0, baseY - it.barHeight);
+      gg.addColorStop(0, `rgba(${it.r}, ${it.g}, ${it.b}, ${0.2 * sa})`);
+      gg.addColorStop(0.65, `rgba(${it.r}, ${it.g}, ${it.b}, ${0.8 * sa})`);
+      gg.addColorStop(0.95, `rgba(${it.r}, ${it.g}, ${it.b}, ${sa})`);
+      gl.fillStyle = gg;
+      gl.beginPath();
+      gl.roundRect(it.x, baseY - it.barHeight, barW, it.barHeight, [3, 3, 0, 0]);
+      gl.fill();
+    }
+  });
+  // Peak cap glow
+  glowLayer(ctx, 8, (gl) => {
+    for (const it of items) {
+      gl.fillStyle = `rgb(${it.r}, ${it.g}, ${it.b})`;
+      gl.fillRect(it.x, it.capY, barW, 2.5);
+    }
+  });
+
+  ctx.shadowBlur = 0;
+  for (const it of items) {
+    const { x, barHeight, capY, r, g, b } = it;
     // Dynamic Upward Neon Bar with Multi-stop Gradient
     const grad = ctx.createLinearGradient(0, baseY, 0, baseY - barHeight);
     grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.2)`);
@@ -72,20 +103,13 @@ export function drawNeonBars(ctx, w, h, bars, bass) {
     grad.addColorStop(1, "#ffffff");
 
     ctx.fillStyle = grad;
-    ctx.shadowColor = `rgba(${r}, ${g}, ${b}, ${0.5 + bass * 0.4})`;
-    ctx.shadowBlur = 10 + bass * 6;
     ctx.beginPath();
     ctx.roundRect(x, baseY - barHeight, barW, barHeight, [3, 3, 0, 0]);
     ctx.fill();
-    ctx.shadowBlur = 0;
 
-    // Glowing Peak Cap
-    const capY = baseY - (peakCaps[i] || barHeight) - 4;
+    // Peak Cap
     ctx.fillStyle = "#ffffff";
-    ctx.shadowColor = `rgb(${r}, ${g}, ${b})`;
-    ctx.shadowBlur = 8;
     ctx.fillRect(x, capY, barW, 2.5);
-    ctx.shadowBlur = 0;
 
     // Floor Glass Reflection
     const reflectGrad = ctx.createLinearGradient(0, baseY, 0, baseY + barHeight * 0.35);
@@ -96,15 +120,12 @@ export function drawNeonBars(ctx, w, h, bars, bass) {
   }
 
   // 5. Glowing Horizon Baseline
-  ctx.strokeStyle = `rgba(${priRgb}, 0.85)`;
   ctx.lineWidth = 2 + bass * 2;
-  ctx.shadowColor = pal.glow;
-  ctx.shadowBlur = 12 + bass * 8;
-  ctx.beginPath();
-  ctx.moveTo(marginX, baseY);
-  ctx.lineTo(w - marginX, baseY);
+  const base = (p) => { p.beginPath(); p.moveTo(marginX, baseY); p.lineTo(w - marginX, baseY); };
+  glowLayer(ctx, 12 + bass * 8, (gl) => { gl.globalAlpha = 0.85; gl.strokeStyle = pal.glow; base(gl); gl.stroke(); });
+  ctx.strokeStyle = `rgba(${priRgb}, 0.85)`;
+  base(ctx);
   ctx.stroke();
-  ctx.shadowBlur = 0;
 
   ctx.restore();
 }

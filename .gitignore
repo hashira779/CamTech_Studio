@@ -54,3 +54,6 @@ scratch/
 *.pickle
 token.pickle
 scratch.py
+
+# Local verification screenshots / scratch output
+.verify/

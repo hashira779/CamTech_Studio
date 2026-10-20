@@ -468,19 +468,31 @@ class CUDAVideoRenderer:
         print("[VIDA CUDA] GPU memory released")
 
 
+_cuda_available_cache = None
+
 def is_cuda_available() -> bool:
     """Checks if CUDA GPU rendering is available via CuPy."""
+    global _cuda_available_cache
+    if _cuda_available_cache is not None:
+        return _cuda_available_cache
+
     if not HAS_CUPY or cp is None:
+        _cuda_available_cache = False
         return False
     try:
         device = cp.cuda.Device(0)
-        # Test compiling a trivial kernel to verify CUDA headers are present
         test_kernel = RawKernel(r'extern "C" __global__ void test_k(int* x) { *x = 1; }', 'test_k')
         test_kernel.compile()
         props = cp.cuda.runtime.getDeviceProperties(0)
         name = props['name'].decode()
-        print(f"[VIDA CUDA] ✅ GPU available: {name}")
+        print(f"[VIDA CUDA] ✅ NVIDIA GPU available: {name}")
+        _cuda_available_cache = True
         return True
     except Exception as e:
-        print(f"[VIDA CUDA] ⚠️ CuPy CUDA compilation unavailable ({e}). Using ultra-fast SIMD pipeline.")
+        err_str = str(e)
+        if "cudaErrorNoDevice" in err_str or "no CUDA-capable device" in err_str:
+            print("[VIDA Pipeline] ℹ️ AMD/Intel GPU detected. Using ultra-fast SIMD pipeline + Hardware Encoder.")
+        else:
+            print(f"[VIDA Pipeline] ℹ️ CUDA unavailable ({e}). Using ultra-fast SIMD pipeline.")
+        _cuda_available_cache = False
         return False

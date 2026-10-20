@@ -133,6 +133,7 @@ export function updateLyricState(currentTime) {
   const fadeDuration = 0.35;
 
   let activeLine = null;
+  let activeLineIndex = -1;
   let nextLine = null;
 
   // Frame-perfect 100% vocal tracking with visual reading lead-in:
@@ -145,6 +146,7 @@ export function updateLyricState(currentTime) {
 
     if (currentTime >= cur.start - leadTime && currentTime < effectiveEnd) {
       activeLine = cur;
+      activeLineIndex = i;
       nextLine = nxt;
       break;
     } else if (currentTime < cur.start - leadTime) {
@@ -156,6 +158,8 @@ export function updateLyricState(currentTime) {
   if (!activeLine) {
     activeLyricState = {
       line: null,
+      lineIndex: -1,
+      currentTime: currentTime,
       nextLine: nextLine,
       isInstrumental: true,
       diffToNext: nextLine ? Math.max(0, nextLine.start - currentTime) : 0
@@ -218,6 +222,8 @@ export function updateLyricState(currentTime) {
 
   activeLyricState = {
     line: activeLine,
+    lineIndex: activeLineIndex,
+    currentTime: currentTime,
     nextLine: nextLine,
     activeWordIndex: activeWordIndex,
     wordProgress: wordProgress,
@@ -242,6 +248,167 @@ function safeRoundRect(ctx, x, y, w, h, r) {
   ctx.arcTo(x, y + h, x, y, radius);
   ctx.arcTo(x, y, x + w, y, radius);
   ctx.closePath();
+}
+
+/**
+ * Resolves the translated text for the currently active original line.
+ * Mapping is strictly index-based (1:1 with state.lyrics) so the original
+ * cues and their timestamps are never mutated by the translation track.
+ */
+export function getActiveTranslationText() {
+  const tr = state.translation;
+  if (!tr || tr.displayMode === 'original_only') return '';
+  if (!Array.isArray(tr.lines) || tr.lines.length === 0) return '';
+  if (!activeLyricState || activeLyricState.isInstrumental) return '';
+  const idx = activeLyricState.lineIndex;
+  if (typeof idx !== 'number' || idx < 0) return '';
+  const entry = tr.lines[idx];
+  if (!entry) return '';
+  return (typeof entry === 'string' ? entry : (entry.text || '')).trim();
+}
+
+function translationFontStack(locale) {
+  switch (locale) {
+    case 'km': return "'Kantumruy Pro', 'Battambang', 'Siemreap', 'Noto Sans Khmer', 'Outfit', sans-serif";
+    case 'th': return "'Noto Sans Thai', 'Sarabun', 'Outfit', sans-serif";
+    case 'zh': return "'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif";
+    case 'ja': return "'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic', sans-serif";
+    case 'ko': return "'Noto Sans KR', 'Malgun Gothic', sans-serif";
+    case 'ar': return "'Noto Sans Arabic', 'Segoe UI', sans-serif";
+    case 'hi': return "'Noto Sans Devanagari', 'Nirmala UI', sans-serif";
+    case 'ru': return "'Noto Sans', 'Segoe UI', sans-serif";
+    default:   return "'Outfit', 'Inter', 'Segoe UI', sans-serif";
+  }
+}
+
+function wrapTranslationLines(ctx, text, maxWidth, maxLines) {
+  const single = ctx.measureText(text).width;
+  if (single <= maxWidth || maxLines <= 1) return [text];
+
+  const locale = detectLanguageLocale(text);
+  // Unspaced scripts (Khmer/Thai/CJK) have no reliable whitespace tokens: use Intl.Segmenter words when present.
+  let tokens;
+  if (locale === 'km' || locale === 'th' || locale === 'zh' || locale === 'ja') {
+    if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+      try {
+        tokens = Array.from(new Intl.Segmenter(locale, { granularity: 'word' }).segment(text)).map(s => s.segment);
+      } catch (_) { tokens = null; }
+    }
+    if (!tokens) tokens = Array.from(text);
+  } else {
+    tokens = text.split(/(\s+)/).filter(t => t.length > 0);
+  }
+
+  const lines = [];
+  let cur = '';
+  for (const tok of tokens) {
+    const candidate = cur + tok;
+    if (ctx.measureText(candidate).width > maxWidth && cur.trim().length > 0) {
+      lines.push(cur.trim());
+      cur = tok.replace(/^\s+/, '');
+      if (lines.length === maxLines - 1) {
+        // Last line absorbs everything remaining so no text is ever dropped
+        const restIdx = tokens.indexOf(tok);
+        cur = cur + tokens.slice(restIdx + 1).join('');
+        break;
+      }
+    } else {
+      cur = candidate;
+    }
+  }
+  if (cur.trim().length > 0) lines.push(cur.trim());
+  return lines.length > 0 ? lines : [text];
+}
+
+/**
+ * Draws the secondary (translated) lyric track directly below the original line.
+ * Fully style-independent from the karaoke renderer: own size, colour, alignment,
+ * outline, shadow and background, but it inherits the parent fade alpha so both
+ * tracks appear and disappear together.
+ */
+export function drawTranslationLine(ctx, w, h, text, anchorY, baseFontSize) {
+  const tr = state.translation;
+  if (!tr) return;
+  const clean = (text || '').trim();
+  if (!clean) return;
+
+  const st = tr.style || {};
+  const sizeRatio = Math.max(0.25, Math.min(1.2, Number(st.sizeRatio) || 0.55));
+  const offsetRatio = Math.max(0.0, Math.min(3.0, Number(st.offsetRatio)));
+  const color = st.color || '#ffffff';
+  const align = st.align || 'center';
+
+  ctx.save();
+
+  let trSize = Math.max(11, Math.floor(baseFontSize * sizeRatio));
+  const locale = detectLanguageLocale(clean);
+  const families = translationFontStack(locale);
+  ctx.font = `600 ${trSize}px ${families}`;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = align === 'left' ? 'left' : (align === 'right' ? 'right' : 'center');
+
+  const maxWidth = w * 0.92;
+  // Progressive shrink for very long translations, then wrap into at most 2 lines
+  if (ctx.measureText(clean).width > maxWidth) {
+    const shrink = maxWidth / ctx.measureText(clean).width;
+    const minSize = Math.max(11, Math.floor(baseFontSize * Math.min(0.40, sizeRatio * 0.72)));
+    trSize = Math.max(minSize, Math.floor(trSize * shrink));
+    ctx.font = `600 ${trSize}px ${families}`;
+  }
+  const lines = wrapTranslationLines(ctx, clean, maxWidth, 2);
+
+  const padX = trSize * 0.55;
+  const padY = trSize * 0.38;
+  const lineHeight = trSize * 1.30;
+  const topY = anchorY + trSize * (0.42 + offsetRatio);
+  let ax;
+  if (align === 'left') ax = Math.max(24, w * 0.04);
+  else if (align === 'right') ax = w - Math.max(24, w * 0.04);
+  else ax = w / 2;
+
+  // Optional glass background covering every wrapped line
+  if (st.background) {
+    let widest = 0;
+    for (const l of lines) widest = Math.max(widest, ctx.measureText(l).width);
+    const boxW = widest + padX * 2;
+    const boxH = lines.length * lineHeight + padY * 2;
+    let bx;
+    if (align === 'left') bx = ax - padX;
+    else if (align === 'right') bx = ax - boxW + padX;
+    else bx = w / 2 - boxW / 2;
+    const by = topY - padY;
+    ctx.save();
+    ctx.fillStyle = 'rgba(8, 12, 22, 0.78)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+    ctx.lineWidth = 1;
+    safeRoundRect(ctx, bx, by, boxW, boxH, Math.min(padY + 4, boxH / 2));
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const ly = topY + i * lineHeight;
+    if (st.shadow) {
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+      ctx.shadowBlur = Math.max(4, trSize * 0.42);
+      ctx.shadowOffsetY = Math.max(1, trSize * 0.06);
+    } else {
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+    }
+    if (st.outline) {
+      ctx.lineJoin = 'round';
+      ctx.miterLimit = 2;
+      ctx.lineWidth = Math.max(1.5, trSize * 0.14);
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.92)';
+      ctx.strokeText(lines[i], ax, ly);
+    }
+    ctx.fillStyle = color;
+    ctx.fillText(lines[i], ax, ly);
+  }
+
+  ctx.restore();
 }
 
 export function drawLyrics(ctx, w, h) {
@@ -303,10 +470,26 @@ export function drawLyrics(ctx, w, h) {
       return;
     }
 
-    const { line, nextLine, activeWordIndex, wordProgress, alpha } = activeLyricState;
+    const { line, nextLine, alpha } = activeLyricState;
+    let activeWordIndex = activeLyricState.activeWordIndex;
+    let wordProgress = activeLyricState.wordProgress;
     if (!line || !line.text) return;
 
-  const fullText = line.text.trim();
+  // ============ Lyrics Display Mode (original | translation | both) ============
+  // Resolved once per frame. The original cue list is only ever READ here — switching
+  // modes never mutates state.lyrics, word timings, or the original SRT on disk.
+  const trCfg = state.translation || {};
+  const trMode = trCfg.displayMode || (trCfg.visible === false ? 'original_only' : 'bilingual');
+  const trLines = Array.isArray(trCfg.lines) ? trCfg.lines : [];
+  const trIdx = typeof activeLyricState.lineIndex === 'number' ? activeLyricState.lineIndex : -1;
+  const trEntry = trIdx >= 0 ? trLines[trIdx] : null;
+  const trText = ((typeof trEntry === 'string' ? trEntry : (trEntry && trEntry.text)) || '').trim();
+  const hasTranslation = trText.length > 0 && trMode !== 'original_only';
+  // Missing translated lines fall back to the original so the stage is never blank mid-song
+  const translationOnly = trMode === 'translation_only' && hasTranslation;
+  const showBelow = trMode === 'bilingual' && hasTranslation && trCfg.visible !== false;
+
+  const fullText = (translationOnly ? trText : line.text).trim();
   if (!fullText) return;
 
   ctx.save();
@@ -326,10 +509,43 @@ export function drawLyrics(ctx, w, h) {
 
   const textY = h * 0.85;
 
-  let words = line.words || [];
-  if (words.length === 0) {
-    words = splitLineIntoWords(fullText, line.start, line.end);
-    line.words = words;
+  let words = [];
+  if (translationOnly) {
+    // Word-level karaoke timing for the translated line, spread across the ORIGINAL line's
+    // vocal window (line.start → line.end) so it stays locked to the singer. Cached on the
+    // translation entry only — the original line object is never modified.
+    if (trEntry && typeof trEntry === 'object') {
+      if (!trEntry.words || trEntry.wordsSrc !== trText) {
+        trEntry.words = splitLineIntoWords(trText, line.start, line.end);
+        trEntry.wordsSrc = trText;
+      }
+      words = trEntry.words;
+    } else {
+      words = splitLineIntoWords(trText, line.start, line.end);
+    }
+    const tNow = typeof activeLyricState.currentTime === 'number' ? activeLyricState.currentTime : line.start;
+    let wIdx = -1, wProg = 0;
+    if (tNow >= line.start) {
+      for (let i = 0; i < words.length; i++) {
+        const w = words[i];
+        if (tNow >= w.start && tNow <= w.end) {
+          wIdx = i;
+          wProg = (tNow - w.start) / Math.max(0.04, w.end - w.start);
+          break;
+        } else if (tNow > w.end) {
+          wIdx = i;
+          wProg = 1.0;
+        }
+      }
+    }
+    activeWordIndex = wIdx;
+    wordProgress = Math.max(0, Math.min(1, wProg));
+  } else {
+    words = line.words || [];
+    if (words.length === 0) {
+      words = splitLineIntoWords(fullText, line.start, line.end);
+      line.words = words;
+    }
   }
 
   // Measure total width of the authentic, unbroken text string
@@ -384,16 +600,27 @@ export function drawLyrics(ctx, w, h) {
 
   // ============ Draw Next Line Preview (Floating Above) ============
   if (nextLine && nextLine.text && (!line || nextLine.start - line.end <= 6.0)) {
-    ctx.save();
-    const nextFontSize = Math.max(12, Math.floor(fontSize * 0.58));
-    ctx.font = `600 ${nextFontSize}px ${fontFamilies}`;
-    ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
-    ctx.shadowBlur = 8;
-    const nextY = textY - paddingY - nextFontSize * 0.9;
-    ctx.fillText(nextLine.text.trim(), w / 2, nextY);
-    ctx.restore();
+    let nextPreviewText = nextLine.text.trim();
+    if (translationOnly) {
+      const nextEntry = trIdx + 1 >= 0 ? trLines[trIdx + 1] : null;
+      const nextTr = ((typeof nextEntry === 'string' ? nextEntry : (nextEntry && nextEntry.text)) || '').trim();
+      if (nextTr) nextPreviewText = nextTr;
+    }
+    if (nextPreviewText) {
+      ctx.save();
+      const nextFontSize = Math.max(12, Math.floor(fontSize * 0.58));
+      const nextFamilies = /[\u1780-\u17FF]/.test(nextPreviewText)
+        ? "'Kantumruy Pro', 'Battambang', 'Siemreap', 'Noto Sans Khmer', 'Outfit', 'Inter', sans-serif"
+        : fontFamilies;
+      ctx.font = `600 ${nextFontSize}px ${nextFamilies}`;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+      ctx.shadowBlur = 8;
+      const nextY = textY - paddingY - nextFontSize * 0.9;
+      ctx.fillText(nextPreviewText, w / 2, nextY);
+      ctx.restore();
+    }
   }
 
   // ============ Compute Active Word Coordinates ============
@@ -507,6 +734,13 @@ export function drawLyrics(ctx, w, h) {
         ctx.restore();
       }
     }
+  }
+
+  // ============ Second Track: Translated Line (rendered below the original) ============
+  // Only in "Original + Translation" mode. Index-mapped 1:1 to the original cue list;
+  // original lyrics, timings and SRT files are never touched.
+  if (showBelow) {
+    drawTranslationLine(ctx, w, h, trText, textY + paddingY, fontSize);
   }
 
   ctx.restore();

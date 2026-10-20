@@ -4,6 +4,7 @@
  * Multi-layered translucent silk curtains with iridescent color blending.
  */
 import { state, PALETTES } from '../core/state.js';
+import { glowLayer } from './glow.js';
 
 let auroraTime = 0;
 const ribbonCount = 7;
@@ -103,7 +104,7 @@ export function drawAuroraBorealis(ctx, w, h, bars, bass) {
     ctx.fill();
 
     // Bright edge stroke
-    ctx.beginPath();
+    const edge = new Path2D();
     for (let p = 0; p <= points; p++) {
       const t = p / points;
       const x = t * w;
@@ -113,15 +114,18 @@ export function drawAuroraBorealis(ctx, w, h, bars, bass) {
       const bassWave = Math.sin(t * Math.PI * 1.5 + auroraTime) * bass * h * 0.12;
       const freqReact = bandEnergy * Math.sin(t * Math.PI * 4 + ribbon.phase * 2) * h * 0.15;
       const y = baseY + wave1 + wave2 + wave3 + bassWave + freqReact;
-      if (p === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+      if (p === 0) edge.moveTo(x, y);
+      else edge.lineTo(x, y);
     }
-    ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.4 + bandEnergy * 0.5})`;
+    const edgeAlpha = Math.min(1, 0.4 + bandEnergy * 0.5);
     ctx.lineWidth = 1.5 + bass * 2;
-    ctx.shadowColor = `rgba(${cr}, ${cg}, ${cb}, 0.6)`;
-    ctx.shadowBlur = 15 + bass * 20;
-    ctx.stroke();
-    ctx.shadowBlur = 0;
+    // full-width glow: low-res blur instead of a full-res one (see glow.js)
+    glowLayer(ctx, 15 + bass * 20, (g) => {
+      g.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.6 * edgeAlpha})`;
+      g.stroke(edge);
+    });
+    ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.4 + bandEnergy * 0.5})`;
+    ctx.stroke(edge);
   }
 
   // ── 3. Horizon Reflection Line ──
@@ -135,24 +139,38 @@ export function drawAuroraBorealis(ctx, w, h, bars, bass) {
 
   // ── 4. Floating frequency orbs along the bottom ──
   const orbCount = Math.min(count, 32);
+  const orbs = [];
   for (let i = 0; i < orbCount; i++) {
     const val = bars[i * Math.floor(count / orbCount)] || 0;
     if (val < 0.05) continue;
-    const ox = (i / orbCount) * w + w / orbCount / 2;
-    const oy = horizonY - val * h * 0.15 - 10;
-    const orbR = 2 + val * 8 + bass * 3;
     const t = i / orbCount;
-    const or = Math.floor(pri[0] * (1 - t) + sec[0] * t);
-    const og = Math.floor(pri[1] * (1 - t) + sec[1] * t);
-    const ob = Math.floor(pri[2] * (1 - t) + sec[2] * t);
-
+    orbs.push({
+      val,
+      x: (i / orbCount) * w + w / orbCount / 2,
+      y: horizonY - val * h * 0.15 - 10,
+      r: 2 + val * 8 + bass * 3,
+      a: Math.min(1, 0.3 + val * 0.5),
+      c: `${Math.floor(pri[0] * (1 - t) + sec[0] * t)}, ${Math.floor(pri[1] * (1 - t) + sec[1] * t)}, ${Math.floor(pri[2] * (1 - t) + sec[2] * t)}`,
+    });
+  }
+  // Glow (blur 12 + val*15 per orb): two low-res buckets instead of 32 full-res blurs
+  for (const [lo, hi] of [[0, 0.5], [0.5, Infinity]]) {
+    const group = orbs.filter((o) => o.val >= lo && o.val < hi);
+    if (!group.length) continue;
+    const meanVal = group.reduce((s, o) => s + o.val, 0) / group.length;
+    glowLayer(ctx, 12 + meanVal * 15, (g) => {
+      for (const o of group) {
+        g.fillStyle = `rgba(${o.c}, ${0.8 * o.a})`;
+        g.beginPath(); g.arc(o.x, o.y, o.r, 0, Math.PI * 2); g.fill();
+      }
+    });
+  }
+  ctx.shadowBlur = 0;
+  for (const o of orbs) {
     ctx.beginPath();
-    ctx.arc(ox, oy, orbR, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(${or}, ${og}, ${ob}, ${0.3 + val * 0.5})`;
-    ctx.shadowColor = `rgba(${or}, ${og}, ${ob}, 0.8)`;
-    ctx.shadowBlur = 12 + val * 15;
+    ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${o.c}, ${o.a})`;
     ctx.fill();
-    ctx.shadowBlur = 0;
   }
 
 

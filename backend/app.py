@@ -61,7 +61,9 @@ from backend.lyric_engine import (
     export_subtitles_to_txt,
     format_srt_for_capcut,
     is_khmer_text,
-    is_thai_text
+    is_thai_text,
+    tokenize_line_words,
+    compute_weighted_word_timestamps
 )
 from backend.vocal_align import calibrate_lyrics_with_vocal_activity
 from kmvm.youtube_downloader import download_youtube_audio, is_youtube_url, extract_youtube_url
@@ -175,6 +177,12 @@ async def add_cors_headers(request: Request, call_next):
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "*"
     response.headers["Access-Control-Allow-Headers"] = "*"
+    # Studio UI edits must show up on the next reload. Without this, browsers
+    # heuristically cache JS/CSS modules and keep serving a stale interface.
+    # no-cache still honours the ETag, so unchanged files stay cheap.
+    path = request.url.path
+    if path == "/" or path.startswith("/static") or path.startswith("/assets"):
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 @app.get("/health")
@@ -256,6 +264,11 @@ class RenderRequest(BaseModel):
     show_center_text: Optional[bool] = True
     lyrics_data: Optional[List[Dict[str, Any]]] = None
     lyric_style: str = "karaoke"
+    # Second (translated) lyric track — display mode only, originals are never rewritten
+    display_mode: str = "original_only"              # original_only | translation_only | bilingual
+    translation_lines: Optional[List[str]] = None     # 1:1 with lyrics_data, same index order
+    translation_lang: str = "en"
+    translation_style: Optional[Dict[str, Any]] = None
     bar_count: int = 64
     bass_boost: float = 1.3
     auto_post_youtube: Optional[bool] = False
@@ -509,7 +522,8 @@ def transcribe_audio(req: TranscribeRequest):
                             "status": "success",
                             "source": "subtitle",
                             "file": os.path.basename(sub_path),
-                            "detected_language": target_lang or "km",
+                            # Report the actual language of the caption, not a Khmer default.
+                            "detected_language": target_lang or detect_text_language(sample_text),
                             "lyrics": lyrics,
                             "count": len(lyrics)
                         }
@@ -537,7 +551,8 @@ def transcribe_audio(req: TranscribeRequest):
                         "status": "success",
                         "source": "subtitle",
                         "file": os.path.basename(lrc_dest),
-                        "detected_language": target_lang or "en",
+                        "detected_language": target_lang or detect_text_language(
+                            " ".join(l.get("text", "") for l in lrclib_lyrics[:10])),
                         "lyrics": lrclib_lyrics,
                         "count": len(lrclib_lyrics)
                     }
@@ -987,12 +1002,199 @@ async def save_subtitles_api(req: SubtitleSaveRequest):
             return {"status": "error", "detail": str(e)}
     return {"status": "ok", "count": len(req.lyrics_data or [])}
 
+class TranslateLinesRequest(BaseModel):
+    lines: List[str]
+    target_lang: str = "English"
+
+class TranslationSaveRequest(BaseModel):
+    audio_path: Optional[str] = None
+    lang: str = "en"
+    lines: List[str] = []
+    lyrics_data: Optional[List[Dict[str, Any]]] = None  # timing source (original cues)
+
+def _resolve_audio_path(audio_p: Optional[str]) -> Optional[str]:
+    if audio_p:
+        clean_rel = audio_p.replace("\\", "/").lstrip("/")
+        candidates = [
+            audio_p,
+            os.path.abspath(audio_p),
+            os.path.join(AUDIO_DIR, os.path.basename(audio_p)),
+            os.path.join(UPLOAD_DIR, "audio", os.path.basename(audio_p)),
+            os.path.join(os.path.dirname(AUDIO_DIR), clean_rel),
+        ]
+        hit = next((c for c in candidates if c and os.path.exists(c)), None)
+        if hit:
+            return hit
+    if os.path.exists(AUDIO_DIR):
+        all_audios = [
+            os.path.join(AUDIO_DIR, f) for f in os.listdir(AUDIO_DIR)
+            if f.lower().endswith(('.mp3', '.wav', '.flac', '.m4a', '.ogg'))
+        ]
+        if all_audios:
+            all_audios.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+            return all_audios[0]
+    return None
+
+
+# Translated tracks NEVER live at "<song>.<lang>.srt": the studio treats those filenames as
+# ORIGINAL cue sheets, so an English translation of a Vietnamese song could be loaded as the
+# original. Every translation gets a "-tr" tag (".km-tr.srt", ".en-tr.srt", ...), which the
+# original-subtitle finder always ignores.
+TRANSLATION_FILE_TAGS = {}
+TRANSLATION_LANG_FROM_TAG = {"km-tr": "km"}
+
+
+def _translation_tag(lang: str) -> str:
+    """Filename tag for a translated track language code (always "<lang>-tr")."""
+    code = re.sub(r'[^a-z0-9_\-]', '', str(lang or 'en').lower()) or 'en'
+    return TRANSLATION_FILE_TAGS.get(code, f"{code}-tr")
+
+
+def _translation_srt_path(audio_p: str, lang: str) -> str:
+    """Absolute path of the companion SRT holding the translated lyric track."""
+    base_audio, _ = os.path.splitext(audio_p)
+    return f"{base_audio}.{_translation_tag(lang)}.srt"
+
+
+def build_translation_display_lyrics(lyrics: List[Dict[str, Any]], mode: str,
+                                     translation_lines: Optional[List[str]]) -> List[Dict[str, Any]]:
+    """
+    Returns a DISPLAY-ONLY copy of the cue list for 'translation_only' mode.
+    The original cues (text, timings, word timestamps) and the original SRT on disk are
+    never mutated — only the copy handed to the renderer gets the translated text, and it
+    keeps the exact same start/end window so the track stays locked to the singer.
+    """
+    if mode != "translation_only" or not lyrics or not translation_lines:
+        return lyrics
+    out = []
+    for i, line in enumerate(lyrics):
+        translated = str(translation_lines[i]).strip() if i < len(translation_lines) and translation_lines[i] else ""
+        copied = dict(line)
+        if translated:
+            s = float(line.get("start", 0.0))
+            e = float(line.get("end", s + 3.0))
+            copied["text"] = translated
+            copied["words"] = compute_weighted_word_timestamps(tokenize_line_words(translated), s, max(e, s + 0.4))
+        out.append(copied)
+    return out
+
+@app.post("/api/lyrics/translate-lines")
+async def translate_lyrics_lines_api(req: TranslateLinesRequest):
+    """AI-translates lyric lines to any target language, preserving 1:1 line order."""
+    lines = [str(l) for l in (req.lines or [])]
+    if not lines:
+        return {"status": "success", "lines": []}
+    try:
+        payload = [{"line_id": i, "text": t} for i, t in enumerate(lines)]
+        translated = llm_engine.translate_lyrics_data(payload, target_lang=req.target_lang or "English")
+        out = [str(l.get("text", "")) for l in translated]
+        unchanged = sum(1 for a, b in zip(out, lines) if a.strip() == b.strip())
+        if unchanged == len(lines):
+            return {"status": "error", "detail": "Translation service returned no changes (unavailable or same language)"}
+        return {"status": "success", "lines": out, "target_lang": req.target_lang}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")
+
+@app.post("/api/lyrics/translation/save")
+async def save_translation_api(req: TranslationSaveRequest):
+    """
+    Saves the translated lyric track as a SEPARATE companion SRT (e.g. song.en-tr.srt) that
+    reuses the original cues' timestamps and sequence verbatim. The original .srt/.km.srt is
+    untouched, and the "-tr" tag keeps the translation out of original-subtitle discovery.
+    """
+    lang = re.sub(r'[^a-z0-9_\-]', '', (req.lang or 'en').lower()) or 'en'
+    audio_p = _resolve_audio_path(req.audio_path)
+    if not audio_p:
+        raise HTTPException(status_code=400, detail="Audio file not found for translation save")
+
+    # Timing source: explicit original cues (kept index-aligned with req.lines),
+    # else the original SRT on disk. Empty lines still consume their index so the
+    # translated track stays 1:1 with the original cue sequence.
+    timings = [dict(l) for l in (req.lyrics_data or [])]
+    if not timings:
+        base_audio, _ = os.path.splitext(audio_p)
+        for ext in (".km.srt", ".srt"):
+            src = f"{base_audio}{ext}"
+            if os.path.exists(src):
+                with open(src, "r", encoding="utf-8") as sf:
+                    timings = parse_subtitle_content(sf.read())
+                break
+
+    cues = []
+    for i, text in enumerate(req.lines or []):
+        if not str(text).strip():
+            continue
+        if i < len(timings):
+            src = timings[i]
+            start = float(src.get("start", 0.0))
+            end = float(src.get("end", start + 2.0))
+        elif cues:
+            start = cues[-1]["end"] + 0.05
+            end = start + 2.0
+        else:
+            start, end = 0.0, 2.0
+        cues.append({"line_id": len(cues), "start": round(start, 2), "end": round(end, 2), "text": str(text).strip()})
+
+    if not cues:
+        raise HTTPException(status_code=400, detail="No translated lines to save")
+
+    base_audio, _ = os.path.splitext(audio_p)
+    out_path = _translation_srt_path(audio_p, lang)
+    srt_str = export_subtitles_to_srt(cues)
+    with open(out_path, "w", encoding="utf-8") as sf:
+        sf.write(srt_str)
+    return {"status": "success", "file": out_path, "lang": lang, "count": len(cues), "srt_content": srt_str}
+
+@app.get("/api/lyrics/translation")
+async def get_translation_api(audio_path: str = "", lang: str = "en"):
+    """Loads a saved translated track (text lines in original cue order + their timings)."""
+    audio_p = _resolve_audio_path(audio_path or None)
+    if not audio_p:
+        return {"status": "success", "lines": [], "cues": [], "langs": []}
+    base_audio, _ = os.path.splitext(audio_p)
+    path = _translation_srt_path(audio_p, lang)
+    if not os.path.exists(path) and lang.lower() != "km":
+        # Backward compatibility with tracks saved before the "-tr" tag existed.
+        legacy = f"{base_audio}.{lang.lower()}.srt"
+        if os.path.exists(legacy):
+            path = legacy
+    lines, cues = [], []
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as sf:
+            parsed = parse_subtitle_content(sf.read())
+        cues = [{"line_id": i, "start": float(c.get("start", 0.0)), "end": float(c.get("end", 0.0)),
+                 "text": c.get("text", "")} for i, c in enumerate(parsed)]
+        lines = [c["text"] for c in cues]
+    return {"status": "success", "lines": lines, "cues": cues, "lang": lang.lower(),
+            "file": path if os.path.exists(path) else None}
+
+@app.get("/api/lyrics/translation/list")
+async def list_translations_api(audio_path: str = ""):
+    """Lists which translated tracks exist for the current song."""
+    audio_p = _resolve_audio_path(audio_path or None)
+    if not audio_p:
+        return {"status": "success", "langs": []}
+    base_audio, _ = os.path.splitext(audio_p)
+    prefix = os.path.basename(base_audio) + "."
+    langs = []
+    d = os.path.dirname(base_audio)
+    for f in os.listdir(d):
+        if f.startswith(prefix) and f.endswith(".srt"):
+            mid = f[len(prefix):-4]
+            if not mid or "." in mid:
+                continue
+            if mid == "km":
+                # "<song>.km.srt" is the ORIGINAL Khmer cue sheet, never a translation track
+                continue
+            if mid.endswith("-tr"):
+                langs.append(mid[:-3])
+            else:
+                # Legacy tracks saved before the "-tr" tag existed.
+                langs.append(TRANSLATION_LANG_FROM_TAG.get(mid, mid))
+    return {"status": "success", "langs": sorted(set(langs))}
+
 @app.post("/api/subtitles/export")
 async def export_subtitles_api(req: SubtitleExportRequest):
-    """
-    Exports synchronized lyrics to SRT, WebVTT, LRC, ASS, or plain TXT format.
-    Guarantees millisecond precision, UTF-8 Khmer/multilingual encoding, and compliance.
-    """
     try:
         fmt = (req.format or "srt").lower().strip().lstrip(".")
         safe_title = re.sub(r'[^a-zA-Z0-9_\-\u1780-\u17FF]', '_', (req.title or "subtitles")).strip('_') or "subtitles"
@@ -1844,6 +2046,13 @@ def _execute_render_job(job_id: str, req: RenderRequest):
                         print(f"[Render Engine] Warning reading {cand}: {lrc_err}")
 
         VideoRenderer = _get_VideoRenderer()
+        # Second (translated) lyric track — display-only cue copy, originals untouched
+        display_mode = (req.display_mode or "original_only").strip().lower()
+        display_lyrics = build_translation_display_lyrics(render_lyrics, display_mode, req.translation_lines)
+        if display_mode == "translation_only" and display_lyrics is not render_lyrics:
+            print(f"[Render Engine] 🌐 Display mode = translation_only ({len(req.translation_lines or [])} translated lines)")
+        elif display_mode == "bilingual":
+            print(f"[Render Engine] 🌐 Display mode = bilingual (original + translated subline)")
         renderer = VideoRenderer(
             audio_path=req.audio_path,
             output_path=output_path,
@@ -1860,10 +2069,14 @@ def _execute_render_job(job_id: str, req: RenderRequest):
             song_title=req.song_title,
             artist_name=req.artist_name,
             title_scale=req.title_scale,
-            lyrics_data=render_lyrics,
+            lyrics_data=display_lyrics,
             lyric_style=req.lyric_style,
             bar_count=req.bar_count,
-            bass_boost=req.bass_boost
+            bass_boost=req.bass_boost,
+            display_mode=display_mode,
+            translation_lines=req.translation_lines or [],
+            translation_lang=req.translation_lang or "en",
+            translation_style=req.translation_style or {}
         )
 
         renderer.render_video(progress_callback=on_progress)
@@ -1950,6 +2163,119 @@ async def get_progress(job_id: str):
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
     return jobs[job_id]
+
+
+@app.post("/api/export/mux")
+async def export_mux_api(video: UploadFile = File(...), audio_path: str = Form(""), container: str = Form("mp4")):
+    """
+    WYSIWYG export finisher: the browser encodes the exact preview frames (WebCodecs) and posts
+    the silent video here. We stream-copy it and mux the original audio in seconds (no re-encode
+    of the video), so what you saw in the studio is bit-for-bit what you get.
+    """
+    exports_dir = os.path.join(OUTPUT_DIR, "exports")
+    os.makedirs(exports_dir, exist_ok=True)
+    stamp = _time.strftime("%Y%m%d_%H%M%S")
+
+    is_mp4 = (video.filename or "v.mp4").lower().endswith(".mp4") and container != "webm"
+    vpath = os.path.join(exports_dir, f"client_video_{stamp}{'.mp4' if is_mp4 else '.webm'}")
+    with open(vpath, "wb") as vf:
+        while chunk := await video.read(1024 * 1024):
+            vf.write(chunk)
+
+    audio_p = audio_path or ""
+    if audio_p:
+        clean_rel = audio_p.replace("\\", "/").lstrip("/")
+        candidates = [
+            audio_p,
+            os.path.abspath(audio_p),
+            os.path.join(AUDIO_DIR, os.path.basename(audio_p)),
+            os.path.join(UPLOAD_DIR, "audio", os.path.basename(audio_p)),
+            os.path.join(os.path.dirname(AUDIO_DIR), clean_rel),
+        ]
+        audio_p = next((c for c in candidates if c and os.path.exists(c)), None)
+
+    if not audio_p:
+        return {
+            "status": "success",
+            "path": vpath,
+            "url": f"/outputs/exports/{os.path.basename(vpath)}",
+            "muxed": False,
+            "detail": "No audio path supplied; silent video returned",
+        }
+
+    out_path = os.path.join(
+        exports_dir,
+        f"{os.path.splitext(os.path.basename(audio_p))[0]}_vida_{stamp}.mp4"
+    )
+    ffmpeg_bin = get_ffmpeg_binary()
+    if is_mp4:
+        # Stream-copy the browser-encoded video, transcode audio only (fast)
+        cmd = [
+            ffmpeg_bin, "-y", "-i", vpath, "-i", audio_p,
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-shortest", "-movflags", "+faststart", out_path,
+        ]
+    else:
+        cmd = [
+            ffmpeg_bin, "-y", "-i", vpath,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart", out_path,
+        ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0 or not os.path.exists(out_path):
+        raise HTTPException(status_code=500, detail=f"Audio mux failed: {proc.stderr[-800:]}")
+    try:
+        os.remove(vpath)
+    except OSError:
+        pass
+    return {
+        "status": "success",
+        "path": out_path,
+        "url": f"/outputs/exports/{os.path.basename(out_path)}",
+        "muxed": True,
+    }
+
+
+class ExportPostYouTubeRequest(BaseModel):
+    video_path: str
+    song_title: Optional[str] = ""
+    artist_name: Optional[str] = ""
+    theme: Optional[str] = "trap_circle"
+    aspect_ratio: Optional[str] = "16:9"
+    privacy: Optional[str] = "public"
+    youtube_title: Optional[str] = None
+    youtube_description: Optional[str] = None
+
+
+@app.post("/api/export/post-youtube")
+async def export_post_youtube(req: ExportPostYouTubeRequest):
+    """Uploads a client-exported (WYSIWYG) video to YouTube with the same metadata builder."""
+    if not os.path.exists(req.video_path):
+        raise HTTPException(status_code=404, detail="Exported video not found")
+    try:
+        from backend.youtube_uploader import upload_video_to_youtube, build_youtube_metadata
+        meta = build_youtube_metadata(
+            song_title=req.song_title,
+            artist_name=req.artist_name,
+            lyrics_data=None,
+            theme=req.theme,
+            aspect_ratio=req.aspect_ratio,
+            custom_title=req.youtube_title,
+            custom_desc=req.youtube_description,
+        )
+        privacy = req.privacy if req.privacy in ("public", "unlisted", "private") else "public"
+        url = upload_video_to_youtube(
+            video_path=req.video_path,
+            title=meta["title"],
+            description=meta["description"],
+            tags=meta["tags"],
+            privacy_status=privacy,
+        )
+        return {"status": "success", "youtube_url": url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"YouTube upload failed: {str(e)}")
 
 @app.get("/api/demo")
 async def get_demo_assets():

@@ -478,7 +478,11 @@ def find_subtitles_for_audio(audio_path: str) -> Optional[str]:
         if os.path.isdir(base_dir):
             prefix = base_stem[:12] if len(base_stem) >= 12 else base_stem
             for fname in os.listdir(base_dir):
-                if fname.startswith(prefix) and fname.endswith(('.vtt', '.srt', '.lrc')):
+                f_low = fname.lower()
+                if fname.startswith(prefix) and f_low.endswith(('.vtt', '.srt', '.lrc')):
+                    # Companion translations ("<song>.<lang>-tr.srt") are never originals.
+                    if re.search(r'-tr\.(?:vtt|srt|lrc)$', f_low):
+                        continue
                     full_p = os.path.join(base_dir, fname)
                     if os.path.getsize(full_p) > 30:
                         return full_p

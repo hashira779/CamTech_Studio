@@ -3,6 +3,7 @@
  * Multi-Layer Ferrofluid Dynamic Ribbons • Subsurface Sheen • Organic Droplets
  */
 import { state, PALETTES } from '../core/state.js';
+import { glowLayer } from './glow.js';
 
 let liquidPhase = 0;
 const liquidDroplets = [];
@@ -86,6 +87,7 @@ export function drawHyperLiquid(ctx, w, h, bars, bass) {
   }
 
   // 2. Audio-Reactive Floating Liquid Droplets
+  const drops = [];
   for (let d of liquidDroplets) {
     const barAmp = bars[d.harmonicBin % bars.length] || 0;
     d.y += d.vy * (1 + bass * 3);
@@ -95,18 +97,29 @@ export function drawHyperLiquid(ctx, w, h, bars, bass) {
       d.y = h + 20;
       d.x = Math.random() * w;
     }
-
-    const dropRadius = d.r * (1 + barAmp * 2.5 + bass);
+    drops.push([d.x, d.y, d.r * (1 + barAmp * 2.5 + bass)]);
+  }
+  // Glow of droplet + its specular highlight (both drew with the shadow on),
+  // one low-res blur instead of 2 full-res blurs per droplet.
+  glowLayer(ctx, 12, (g) => {
+    g.fillStyle = pal.glow;
+    for (const [x, y, r] of drops) {
+      g.globalAlpha = 0.85;
+      g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+      g.globalAlpha = 0.7;
+      g.beginPath(); g.arc(x - r * 0.3, y - r * 0.3, r * 0.3, 0, Math.PI * 2); g.fill();
+    }
+  });
+  ctx.shadowBlur = 0;
+  for (const [x, y, dropRadius] of drops) {
     ctx.beginPath();
-    ctx.arc(d.x, d.y, dropRadius, 0, Math.PI * 2);
+    ctx.arc(x, y, dropRadius, 0, Math.PI * 2);
     ctx.fillStyle = `rgba(${priRgb}, 0.85)`;
-    ctx.shadowColor = pal.glow;
-    ctx.shadowBlur = 12;
     ctx.fill();
 
     // Specular highlight on droplet
     ctx.beginPath();
-    ctx.arc(d.x - dropRadius * 0.3, d.y - dropRadius * 0.3, dropRadius * 0.3, 0, Math.PI * 2);
+    ctx.arc(x - dropRadius * 0.3, y - dropRadius * 0.3, dropRadius * 0.3, 0, Math.PI * 2);
     ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
     ctx.fill();
   }
@@ -114,29 +127,26 @@ export function drawHyperLiquid(ctx, w, h, bars, bass) {
 
   // 3. Center Morphing Fluid Core Emblem
   const pulseRadius = coreRadius * (1 + bass * 0.3);
-  ctx.beginPath();
-  
+  const corePath = new Path2D();
+
   // Wobbly liquid perimeter
-  const numPetals = 16;
   for (let a = 0; a < Math.PI * 2; a += 0.05) {
     const wobble = Math.sin(a * 4 + liquidPhase * 2) * (6 + bass * 14);
     const r = pulseRadius + wobble;
     const px = cx + Math.cos(a) * r;
     const py = cy + Math.sin(a) * r;
-    if (a === 0) ctx.moveTo(px, py);
-    else ctx.lineTo(px, py);
+    if (a === 0) corePath.moveTo(px, py);
+    else corePath.lineTo(px, py);
   }
-  ctx.closePath();
+  corePath.closePath();
 
   ctx.fillStyle = "rgba(9, 12, 22, 0.88)";
-  ctx.fill();
+  ctx.fill(corePath);
 
-  ctx.strokeStyle = `rgb(${priRgb})`;
   ctx.lineWidth = 3 + bass * 3;
-  ctx.shadowColor = pal.glow;
-  ctx.shadowBlur = 22;
-  ctx.stroke();
-  ctx.shadowBlur = 0;
+  glowLayer(ctx, 22, (g) => { g.strokeStyle = pal.glow; g.stroke(corePath); });
+  ctx.strokeStyle = `rgb(${priRgb})`;
+  ctx.stroke(corePath);
 
   // Center Logo or Liquid Typography
   if (state.logoImageObj && state.logoImageObj.complete) {

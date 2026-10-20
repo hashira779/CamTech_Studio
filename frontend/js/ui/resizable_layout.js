@@ -496,10 +496,22 @@ function setupResizer(resizerId, type) {
 }
 
 /**
+ * Below the drawer breakpoint (see ui.css @media max-width: 820px) both panels
+ * float over the stage, so only one of them can be open at a time — otherwise
+ * the two overlays cover the preview completely.
+ */
+const DRAWER_QUERY = '(max-width: 820px)';
+function isDrawerMode() {
+  return typeof window !== 'undefined' && window.matchMedia
+    && window.matchMedia(DRAWER_QUERY).matches;
+}
+
+/**
  * Toggle Left Panel collapse state
  */
 export function toggleLeftPanel() {
   layoutState.leftCollapsed = !layoutState.leftCollapsed;
+  if (isDrawerMode() && !layoutState.leftCollapsed) layoutState.rightCollapsed = true;
   applyLayout({ animated: true });
   saveLayoutState();
   return !layoutState.leftCollapsed;
@@ -510,6 +522,7 @@ export function toggleLeftPanel() {
  */
 export function toggleRightPanel() {
   layoutState.rightCollapsed = !layoutState.rightCollapsed;
+  if (isDrawerMode() && !layoutState.rightCollapsed) layoutState.leftCollapsed = true;
   applyLayout({ animated: true });
   saveLayoutState();
   return !layoutState.rightCollapsed;
@@ -557,6 +570,9 @@ export function applyLayoutPreset(presetKey) {
   layoutState.bottomHeight = preset.bottom;
   layoutState.leftCollapsed = Boolean(preset.leftCollapsed);
   layoutState.rightCollapsed = Boolean(preset.rightCollapsed);
+  if (isDrawerMode() && !layoutState.leftCollapsed && !layoutState.rightCollapsed) {
+    layoutState.rightCollapsed = true;
+  }
 
   applyLayout({ animated: true });
   saveLayoutState();
@@ -582,6 +598,11 @@ export function getLayoutState() {
 export function initResizableLayout() {
   // Load saved configuration from localStorage
   loadSavedLayout();
+
+  // A narrow window can only host one floating panel at a time
+  if (isDrawerMode() && !layoutState.leftCollapsed && !layoutState.rightCollapsed) {
+    layoutState.rightCollapsed = true;
+  }
 
   // Apply initial layout dimensions
   applyLayout({ animated: false });
@@ -610,8 +631,14 @@ export function initResizableLayout() {
       layoutState.bottomHeight = maxBottom;
       changed = true;
     }
+    // Shrinking past the drawer breakpoint must not leave two overlays open
+    if (isDrawerMode() && !layoutState.leftCollapsed && !layoutState.rightCollapsed) {
+      layoutState.rightCollapsed = true;
+      changed = true;
+    }
     if (changed) {
       applyLayout({ animated: false });
+      saveLayoutState();
     }
   });
 

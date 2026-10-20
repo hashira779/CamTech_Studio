@@ -81,10 +81,10 @@ export const DIRECTOR_PRESETS = {
 /**
  * Evaluates active rule flow every frame
  */
-export function evaluateDirectorRules(bass, bars, width, height) {
+export function evaluateDirectorRules(bass, bars, width, height, nowMs = performance.now(), rand = Math.random) {
   if (!state.directorActive) return;
 
-  const now = performance.now();
+  const now = nowMs;
   const preset = DIRECTOR_PRESETS[state.activeDirectorPreset] || DIRECTOR_PRESETS.festival_drop;
 
   // 1. Drop & Transient Detection
@@ -112,7 +112,7 @@ export function evaluateDirectorRules(bass, bars, width, height) {
 
   // 2. Autonomous AI Theme Switching across song sections (every 16-24 bars or on major transitions)
   if (preset.autoSwitchThemes && (now - lastThemeSwitchTime > 14000)) {
-    if (isBassDrop || (bass > 0.6 && Math.random() > 0.95)) {
+    if (isBassDrop || (bass > 0.6 && rand() > 0.95)) {
       lastThemeSwitchTime = now;
       const themes = preset.themeSequence;
       const currentIdx = themes.indexOf(state.theme);
@@ -129,4 +129,11 @@ export function evaluateDirectorRules(bass, bars, width, height) {
   }
 
   prevBass = bass;
+}
+
+/** Clears director memory so a render session restarts deterministically from t = 0. */
+export function resetDirector() {
+  prevBass = 0;
+  lastDropTime = 0;
+  lastThemeSwitchTime = 0;
 }

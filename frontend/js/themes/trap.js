@@ -1,4 +1,13 @@
 import { state, PALETTES } from '../core/state.js';
+import { glowLayer } from './glow.js';
+
+function lerpRgb(a, b, t) {
+  return [
+    Math.floor(a[0] * (1 - t) + b[0] * t),
+    Math.floor(a[1] * (1 - t) + b[1] * t),
+    Math.floor(a[2] * (1 - t) + b[2] * t),
+  ];
+}
 
 export function drawTrapCircle(ctx, w, h, bars, bass) {
   const pal = PALETTES[state.palette] || PALETTES.cyberpunk;
@@ -24,46 +33,65 @@ export function drawTrapCircle(ctx, w, h, bars, bass) {
   ctx.lineCap = "round";
 
   const outerTips = [];
-  // Outer radial bars
+  const segs = new Array(total);
+  // Outer radial bars — geometry first
   for (let i = 0; i < total; i++) {
     const angle = (i / total) * Math.PI * 2 - Math.PI / 2;
     const len = Math.max(4, mirrored[i] * maxBarLength);
-
-    const x1 = cx + Math.cos(angle) * dynamicRadius;
-    const y1 = cy + Math.sin(angle) * dynamicRadius;
-    const x2 = cx + Math.cos(angle) * (dynamicRadius + len);
-    const y2 = cy + Math.sin(angle) * (dynamicRadius + len);
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    const x2 = cx + cos * (dynamicRadius + len);
+    const y2 = cy + sin * (dynamicRadius + len);
+    segs[i] = [cx + cos * dynamicRadius, cy + sin * dynamicRadius, x2, y2];
     outerTips.push({ x: x2, y: y2 });
+  }
 
-    const t = i / total;
-    const r = Math.floor(pal.primary[0] * (1 - t) + pal.secondary[0] * t);
-    const g = Math.floor(pal.primary[1] * (1 - t) + pal.secondary[1] * t);
-    const b = Math.floor(pal.primary[2] * (1 - t) + pal.secondary[2] * t);
+  // Glow for all bars in one low-res blur (was one full-res blur per bar)
+  glowLayer(ctx, 12, (g) => {
+    for (let i = 0; i < total; i++) {
+      const [r, gg, b] = lerpRgb(pal.primary, pal.secondary, i / total);
+      const s = segs[i];
+      g.strokeStyle = `rgba(${r}, ${gg}, ${b}, 0.65)`;
+      g.beginPath();
+      g.moveTo(s[0], s[1]);
+      g.lineTo(s[2], s[3]);
+      g.stroke();
+    }
+  });
 
+  // Crisp bars, exact per-bar colour
+  ctx.shadowBlur = 0;
+  for (let i = 0; i < total; i++) {
+    const [r, g, b] = lerpRgb(pal.primary, pal.secondary, i / total);
+    const s = segs[i];
     ctx.strokeStyle = `rgb(${r}, ${g}, ${b})`;
-    ctx.shadowColor = `rgba(${r}, ${g}, ${b}, 0.65)`;
-    ctx.shadowBlur = 12;
-
     ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
+    ctx.moveTo(s[0], s[1]);
+    ctx.lineTo(s[2], s[3]);
     ctx.stroke();
   }
 
   // Smooth Outer Aura Spline linking bar tips
   if (outerTips.length > 4) {
-    ctx.strokeStyle = `rgba(${pal.primary[0]}, ${pal.primary[1]}, ${pal.primary[2]}, 0.55)`;
+    const spline = (p) => {
+      p.beginPath();
+      p.moveTo((outerTips[0].x + outerTips[total - 1].x) / 2, (outerTips[0].y + outerTips[total - 1].y) / 2);
+      for (let i = 0; i < total; i++) {
+        const next = (i + 1) % total;
+        const xc = (outerTips[i].x + outerTips[next].x) / 2;
+        const yc = (outerTips[i].y + outerTips[next].y) / 2;
+        p.quadraticCurveTo(outerTips[i].x, outerTips[i].y, xc, yc);
+      }
+    };
     ctx.lineWidth = 2.0;
-    ctx.shadowColor = pal.glow;
-    ctx.shadowBlur = 16;
-    ctx.beginPath();
-    ctx.moveTo((outerTips[0].x + outerTips[total - 1].x) / 2, (outerTips[0].y + outerTips[total - 1].y) / 2);
-    for (let i = 0; i < total; i++) {
-      const next = (i + 1) % total;
-      const xc = (outerTips[i].x + outerTips[next].x) / 2;
-      const yc = (outerTips[i].y + outerTips[next].y) / 2;
-      ctx.quadraticCurveTo(outerTips[i].x, outerTips[i].y, xc, yc);
-    }
+    // shadow = stroke coverage (alpha 0.55) tinted with the palette glow
+    glowLayer(ctx, 16, (g) => {
+      g.globalAlpha = 0.55;
+      g.strokeStyle = pal.glow;
+      spline(g);
+      g.stroke();
+    });
+    ctx.strokeStyle = `rgba(${pal.primary[0]}, ${pal.primary[1]}, ${pal.primary[2]}, 0.55)`;
+    spline(ctx);
     ctx.stroke();
   }
   ctx.shadowBlur = 0;
@@ -217,12 +245,11 @@ function drawCenterDisc(ctx, cx, cy, radius, bass, pal) {
   ctx.restore();
 
   // 6. Audio-Reactive Glowing Outer Rim
-  ctx.strokeStyle = `rgb(${pal.primary.join(",")})`;
   ctx.lineWidth = 3.5 + bass * 2.5;
-  ctx.shadowColor = pal.glow;
-  ctx.shadowBlur = 18;
-  ctx.beginPath();
-  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-  ctx.stroke();
+  const rim = (p) => { p.beginPath(); p.arc(cx, cy, radius, 0, Math.PI * 2); };
+  glowLayer(ctx, 18, (g) => { g.strokeStyle = pal.glow; rim(g); g.stroke(); });
+  ctx.strokeStyle = `rgb(${pal.primary.join(",")})`;
   ctx.shadowBlur = 0;
+  rim(ctx);
+  ctx.stroke();
 }

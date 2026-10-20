@@ -1,0 +1,1265 @@
+/* ============================================================================
+   VIDA Studio — shared UI layer
+   ---------------------------------------------------------------------------
+   Loaded AFTER style.css. This file owns layout rhythm, buttons, fields and
+   the small-window behaviour, so panels stop carrying per-control inline
+   styles. Rules here intentionally override the older inline look with the
+   same or higher specificity; nothing here renames an id or a JS hook.
+
+   Conventions
+     .ui-sec      collapsible section (native <details>)
+     .ui-hd       section header row: title + trailing chip/button
+     .ui-field    label above a control
+     .ui-row      one horizontal line of controls
+     .ui-grid2    two equal columns, collapses to one when too narrow
+     .ui-acts     action button grid (replaces the old wrapped button soup)
+     .ui-btn      every clickable button; variants carry the colour
+   Colour appears only where it means something: primary action, AI action,
+   warning, destructive. Everything else stays neutral.
+   ========================================================================== */
+
+:root {
+  /* ---- STANDARD PALETTE (locked) -------------------------------------
+     One accent, four status colours, one neutral ramp. Nothing else may
+     be introduced into the chrome: no extra blues, no pink, no indigo,
+     no coloured glows. Tints (hover states) are the only variants and
+     they always stay inside their own family.
+
+       accent   #0ea5e9  (hover #38bdf8)   primary action / active state
+       ok       #34d399  (tint  #9eebd0)   confirmed, verified, on
+       ai       #a855f7  (tint  #c084fc)   model / generative actions
+       warn     #fbbf24  (tint  #fde68a)   attention, Khmer templates
+       bad      #f87171  (tint  #fca5a5)   destructive, errors
+
+       text     #f8fafc → #cbd5e1 → #94a3b8 → #64748b   (main → dim)
+       surface  #06080d → #0c1019 → #101522 → #161c2c   (app → elevated)
+       line     rgba(255,255,255,.06 / .10 / .20)
+       shadow   rgba(0,0,0,.45) only — coloured shadows are not allowed
+     ------------------------------------------------------------------ */
+  --ui-r-sm: 6px;
+  --ui-r-md: 8px;
+  --ui-r-lg: 12px;
+  --ui-fs-xs: 10px;
+  --ui-fs-sm: 11px;
+  --ui-fs-md: 12px;
+  --ui-fs-lg: 13px;
+  --ui-gap: 6px;
+  --ui-gap-lg: 10px;
+  --ui-line: rgba(255, 255, 255, 0.07);
+  --ui-surface: rgba(255, 255, 255, 0.045);
+  --ui-surface-2: rgba(255, 255, 255, 0.08);
+  --ui-accent: #0ea5e9;
+  --ui-ok: #34d399;
+  --ui-warn: #fbbf24;
+  --ui-ai: #a78bfa;
+  --ui-bad: #f87171;
+  --ui-min-h: 26px;
+}
+
+/* ---------- panel rhythm ---------- */
+.panel-content {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+.panel-content::-webkit-scrollbar { width: 8px; }
+.panel-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.panel-content > .glass-card,
+.panel-content > .ui-sec { margin: 0; }
+
+/* ---------- cards and collapsible sections ---------- */
+.glass-card { gap: 8px; padding: 11px; border-radius: var(--ui-r-lg); }
+/* stop cards from lighting up on hover — the old look made the panel flicker */
+.glass-card:hover { background: var(--bg-card); border-color: var(--border-subtle); }
+.card-title { font-size: var(--ui-fs-sm); letter-spacing: 0.01em; }
+.card-title-row { align-items: center; }
+.toggle-row { min-height: 24px; font-size: var(--ui-fs-sm); gap: 8px; }
+.toggle-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ui-sec {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--ui-r-lg);
+  overflow: hidden;
+}
+.ui-sec > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  font-size: var(--ui-fs-sm);
+  font-weight: 700;
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.02);
+  user-select: none;
+}
+.ui-sec > summary::-webkit-details-marker { display: none; }
+.ui-sec > summary:hover { background: rgba(255, 255, 255, 0.05); }
+.ui-sec > summary::before {
+  content: "▸";
+  font-size: 10px;
+  color: var(--text-dim);
+  transition: transform 0.15s ease;
+  flex: 0 0 auto;
+}
+.ui-sec[open] > summary::before { transform: rotate(90deg); }
+.ui-sec > summary .ui-spacer { flex: 1 1 auto; }
+.ui-sec-body {
+  padding: 10px 11px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--ui-line);
+}
+/* a section nested inside a section reads as a sub-group, not another card */
+.ui-sec--inner {
+  background: rgba(0, 0, 0, 0.22);
+  border-color: var(--ui-line);
+}
+.ui-sec--inner > summary {
+  padding: 7px 9px;
+  font-size: var(--ui-fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: transparent;
+}
+.ui-sec--inner > summary:hover { color: var(--text-main); background: rgba(255, 255, 255, 0.04); }
+.ui-sec--inner[open] > summary { color: var(--text-main); }
+.ui-sec--inner .ui-sec-body { padding: 8px 9px 9px; gap: 7px; }
+.ui-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ui-title {
+  font-size: var(--ui-fs-sm);
+  font-weight: 700;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.ui-sub {
+  font-size: var(--ui-fs-xs);
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+/* ---------- groups of controls ---------- */
+.ui-row { display: flex; align-items: center; gap: var(--ui-gap); min-width: 0; }
+.ui-row--split { justify-content: space-between; }
+.ui-row--wrap { flex-wrap: wrap; }
+.ui-grid2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ui-gap);
+  align-items: center;
+}
+.ui-grid3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ui-gap);
+  align-items: center;
+}
+.ui-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ui-field > * { min-width: 0; max-width: 100%; }
+.ui-lab {
+  font-size: var(--ui-fs-xs);
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ui-hint { font-size: var(--ui-fs-xs); color: var(--text-dim); line-height: 1.5; }
+.ui-sep { height: 1px; background: var(--ui-line); border: 0; margin: 2px 0; }
+
+/* ---------- buttons: one system, colour only for meaning ---------- */
+.ui-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: var(--ui-min-h);
+  padding: 0 9px;
+  width: auto;
+  border-radius: var(--ui-r-sm);
+  border: 1px solid var(--border-color);
+  background: var(--ui-surface);
+  color: var(--text-secondary, #cbd5e1);
+  font-family: inherit;
+  font-size: var(--ui-fs-sm);
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+.ui-btn:hover { background: var(--ui-surface-2); color: var(--text-main); border-color: var(--border-hover, rgba(255,255,255,0.2)); }
+.ui-btn:active { transform: translateY(1px); }
+.ui-btn:disabled,
+.ui-btn[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; transform: none; }
+.ui-btn .ui-ico { font-size: 12px; line-height: 1; flex: 0 0 auto; }
+.ui-btn--block { width: 100%; }
+.ui-btn--sm { min-height: 22px; padding: 0 7px; font-size: var(--ui-fs-xs); }
+.ui-btn--icon { min-height: 26px; width: 26px; padding: 0; }
+.ui-btn--primary {
+  background: var(--ui-accent);
+  border-color: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+.ui-btn--primary:hover { background: #38bdf8; color: #fff; }
+.ui-btn--go { border-color: rgba(52, 211, 153, 0.4); color: var(--ui-ok); background: rgba(52, 211, 153, 0.1); }
+.ui-btn--go:hover { background: rgba(52, 211, 153, 0.18); color: var(--ui-ok); }
+.ui-btn--ai { border-color: rgba(192, 132, 252, 0.4); color: var(--ui-ai); background: rgba(192, 132, 252, 0.1); }
+.ui-btn--ai:hover { background: rgba(192, 132, 252, 0.18); color: var(--ui-ai); }
+.ui-btn--warn { border-color: rgba(251, 191, 36, 0.4); color: var(--ui-warn); background: rgba(251, 191, 36, 0.1); }
+.ui-btn--warn:hover { background: rgba(251, 191, 36, 0.18); color: var(--ui-warn); }
+.ui-btn--bad { border-color: rgba(248, 113, 113, 0.4); color: var(--ui-bad); background: rgba(248, 113, 113, 0.1); }
+.ui-btn--bad:hover { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
+.ui-btn--ghost { background: transparent; border-color: transparent; color: var(--text-dim); }
+.ui-btn--ghost:hover { background: var(--ui-surface); color: var(--text-main); }
+.ui-btn--link {
+  background: transparent; border: 0; padding: 0 2px; min-height: 20px;
+  color: var(--ui-accent); font-weight: 600; text-decoration: none;
+}
+.ui-btn--link:hover { background: transparent; text-decoration: underline; color: var(--accent); }
+
+/* action grid — the tidy replacement for a wrapped row of 19 buttons */
+.ui-acts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ui-gap);
+}
+.ui-acts .ui-btn { width: 100%; }
+.ui-acts--1 { grid-template-columns: minmax(0, 1fr); }
+.ui-acts--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ui-acts .ui-btn--wide { grid-column: 1 / -1; }
+
+/* ---------- segmented control (display mode, tabs) ---------- */
+.ui-seg {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 4px;
+  padding: 3px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-r-md);
+}
+.ui-seg-btn {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 4px;
+  border-radius: var(--ui-r-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: var(--ui-fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.ui-seg-btn:hover { color: var(--text-main); background: rgba(255, 255, 255, 0.05); }
+.ui-seg-btn.is-active {
+  background: rgba(14, 165, 233, 0.22);
+  border-color: rgba(14, 165, 233, 0.5);
+  color: #e0f2fe;
+}
+.ui-seg-btn.is-disabled { opacity: 0.42; }
+.ui-seg-btn .tmb-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px; height: 14px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.09);
+  font-size: 9px;
+  line-height: 1;
+}
+.ui-seg-btn.is-active .tmb-num { background: rgba(14, 165, 233, 0.35); }
+.ui-seg-btn .tmb-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- chips / status ---------- */
+.ui-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--ui-line);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-dim);
+  font-size: var(--ui-fs-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ui-chip--ok { color: var(--ui-ok); border-color: rgba(52, 211, 153, 0.4); background: rgba(52, 211, 153, 0.12); }
+.ui-chip--info { color: var(--accent); border-color: rgba(14, 165, 233, 0.4); background: rgba(14, 165, 233, 0.14); }
+.ui-chip--warn { color: var(--ui-warn); border-color: rgba(251, 191, 36, 0.4); background: rgba(251, 191, 36, 0.12); }
+
+/* plain coloured status text (no chip chrome) — used by the badge status line */
+.ui-t { font-weight: 600; }
+.ui-t--ok { color: var(--ui-ok); }
+.ui-t--warn { color: var(--ui-warn); }
+.ui-t--dim { color: var(--text-dim); font-weight: 500; }
+.ui-t--pink { color: var(--ui-ai); }
+
+/* ---------- inputs, ranges, switches ---------- */
+.prop-select, .prop-input {
+  min-height: var(--ui-min-h);
+  font-size: var(--ui-fs-sm);
+  border-radius: var(--ui-r-sm);
+}
+.ui-range {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 20px;
+  background: transparent;
+  cursor: pointer;
+}
+.ui-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.14);
+}
+.ui-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px; height: 12px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+}
+.ui-range::-moz-range-track { height: 4px; border-radius: 4px; background: rgba(255, 255, 255, 0.14); }
+.ui-range::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #e2e8f0; border: 1px solid rgba(0,0,0,.4); }
+.ui-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  font-size: var(--ui-fs-xs);
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.ui-check:hover { color: var(--text-main); }
+.ui-check input[type="checkbox"],
+.ui-check input[type="radio"] { margin: 0; accent-color: var(--ui-accent); flex: 0 0 auto; }
+.ui-check--on { color: var(--text-main); }
+.ui-color {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: var(--ui-r-sm);
+  cursor: pointer;
+}
+/* text input with a trailing decorative icon */
+.ui-inputw { position: relative; display: flex; align-items: center; min-width: 0; }
+.ui-inputw > .prop-input { width: 100%; padding-right: 26px; }
+.ui-suffix {
+  position: absolute;
+  right: 8px;
+  font-size: var(--ui-fs-sm);
+  opacity: 0.45;
+  pointer-events: none;
+}
+/* live numeric read-out next to a slider */
+.ui-num {
+  font-family: var(--font-mono);
+  font-size: var(--ui-fs-xs);
+  font-weight: 700;
+  color: var(--ui-accent);
+  white-space: nowrap;
+}
+/* status pill: one line of state + an inline escape-hatch action */
+.ui-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--ui-r-sm);
+  border: 1px solid var(--ui-line);
+  background: rgba(0, 0, 0, 0.25);
+  font-size: var(--ui-fs-xs);
+  color: var(--text-dim);
+  min-width: 0;
+}
+.ui-pill > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.teleprompter-empty {
+  color: var(--text-dim);
+  text-align: center;
+  padding: 20px 0;
+  font-size: var(--ui-fs-md);
+}
+
+/* ---------- dropdown menu (export formats) ----------
+   Keep display toggling to the inline style the JS already owns
+   (export-sub-dropdown.style.display = 'block' | 'none'); these rules only
+   paint the menu, so no display declaration belongs here. */
+.ui-ddw { position: relative; display: inline-flex; min-width: 0; }
+.ui-dd {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 10001;
+  min-width: 200px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 5px;
+  border-radius: var(--ui-r-md);
+  border: 1px solid rgba(14, 165, 233, 0.28);
+  background: rgba(11, 15, 24, 0.98);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.7);
+}
+.ui-dd-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--ui-r-sm);
+  background: transparent;
+  color: #e2e8f0;
+  font-family: inherit;
+  font-size: var(--ui-fs-sm);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.ui-dd-item:hover { background: rgba(255, 255, 255, 0.07); color: var(--text-main); }
+.ui-dd-item--feature { color: var(--ui-ai); border-color: rgba(168, 85, 247, 0.4); background: rgba(168, 85, 247, 0.1); font-weight: 700; }
+.ui-dd-item--feature:hover { background: rgba(168, 85, 247, 0.18); color: var(--ui-ai); }
+.ui-dd-sep { height: 1px; background: var(--ui-line); margin: 4px 2px; }
+
+/* ---------- teleprompter list ---------- */
+.ui-tp {
+  flex: 1 1 auto;
+  min-height: 180px;
+  max-height: 46vh;
+  overflow-y: auto;
+  resize: vertical;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-radius: var(--ui-r-md);
+  border: 1px solid var(--ui-line);
+  background: rgba(8, 12, 22, 0.72);
+  font-size: var(--ui-fs-md);
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+.ui-tp::-webkit-scrollbar { width: 8px; }
+.ui-tp::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+/* lyric rows are built by renderLyricsTeleprompter() in main.js — the class is
+   the JS contract, the painting lives here so no inline styles are needed. */
+.teleprompter-line {
+  padding: 3px 6px;
+  border-left: 3px solid transparent;
+  border-radius: var(--ui-r-sm);
+  cursor: pointer;
+  user-select: none;
+  font-weight: 500;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+.teleprompter-line:hover { background: rgba(255, 255, 255, 0.05); }
+.teleprompter-line.active {
+  background: rgba(14, 165, 233, 0.16);
+  border-left-color: var(--ui-accent);
+  font-weight: 600;
+}
+.teleprompter-line.active .tp-text { color: #ffffff; }
+.teleprompter-line.active .tp-time { opacity: 0.9; color: var(--accent); }
+.tp-main { display: flex; align-items: baseline; gap: 5px; }
+.tp-time {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-dim);
+  opacity: 0.55;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.tp-text {
+  flex: 1;
+  line-height: 1.4;
+  font-size: var(--ui-fs-lg);
+  color: rgba(255, 255, 255, 0.88);
+  outline: none;
+  border-bottom: 1px dashed transparent;
+  transition: border-color 0.2s ease;
+}
+.tp-text:focus { border-bottom-color: rgba(14, 165, 233, 0.65); }
+.tp-tr {
+  margin: 1px 0 0 52px;
+  font-size: var(--ui-fs-sm);
+  line-height: 1.35;
+  color: var(--accent);
+}
+
+/* ---------- progress + stat read-outs ---------- */
+.ui-prog {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: var(--ui-r-sm);
+  border: 1px solid var(--ui-line);
+  background: rgba(0, 0, 0, 0.22);
+}
+.ui-prog-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--ui-fs-xs);
+  color: var(--text-dim);
+  min-width: 0;
+}
+.ui-prog-track {
+  height: 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.ui-prog-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 3px;
+  background: var(--ui-accent);
+  transition: width 0.3s ease-out;
+}
+.ui-stat3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  border-radius: var(--ui-r-sm);
+  overflow: hidden;
+  background: var(--ui-line);
+  border: 1px solid var(--ui-line);
+}
+.ui-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 4px;
+  background: rgba(0, 0, 0, 0.25);
+  min-width: 0;
+}
+.ui-stat-lab {
+  font-size: var(--ui-fs-xs);
+  color: var(--text-dim);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.ui-stat-val {
+  font-family: var(--font-mono);
+  font-size: var(--ui-fs-md);
+  font-weight: 700;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.ui-textarea {
+  width: 100%;
+  min-height: 56px;
+  max-height: 180px;
+  resize: vertical;
+  padding: 7px 8px;
+  font-size: var(--ui-fs-sm);
+  line-height: 1.45;
+  font-family: inherit;
+  color: var(--text-main);
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--ui-r-sm);
+}
+.ui-textarea:focus { outline: 2px solid rgba(14, 165, 233, 0.6); outline-offset: 1px; }
+
+/* ---------- modals ----------
+   The open/close code in main.js writes element.style.display, so these rules
+   never set `display` on the overlay itself — the class only paints the shell,
+   and the inline style="display:none" in the markup stays authoritative. */
+.ui-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(4, 7, 13, 0.85);
+}
+.ui-modal--top { z-index: 10002; }
+.ui-modal-card {
+  width: 100%;
+  max-width: 820px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #0c1018;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--ui-r-lg);
+  box-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.9);
+}
+.ui-modal-card--sm { max-width: 480px; }
+.ui-modal-card--xs { max-width: 340px; padding: 18px; align-items: stretch; }
+.ui-modal-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--ui-line);
+  background: rgba(255, 255, 255, 0.02);
+  flex: 0 0 auto;
+}
+.ui-modal-titlerow { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ui-modal-ico { font-size: 20px; flex: 0 0 auto; }
+.ui-modal-name { font-size: var(--ui-fs-lg); font-weight: 700; color: var(--text-main); margin: 0; }
+.ui-modal-x { width: 28px; height: 28px; min-height: 28px; padding: 0; flex: 0 0 auto; }
+.ui-modal-body {
+  padding: 14px 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+.ui-modal-ft {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--ui-line);
+  background: rgba(0, 0, 0, 0.25);
+  flex: 0 0 auto;
+}
+.ui-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--ui-line);
+  background: rgba(0, 0, 0, 0.2);
+  flex: 0 0 auto;
+}
+.ui-toolbar-right { margin-left: auto; display: flex; align-items: center; gap: 5px; }
+.ui-vdiv { width: 1px; height: 18px; background: var(--ui-line); margin: 0 2px; flex: 0 0 auto; }
+.ui-empty {
+  text-align: center;
+  color: var(--text-dim);
+  padding: 40px 12px;
+  font-size: var(--ui-fs-md);
+}
+.ui-empty-mark { display: block; font-size: 30px; margin-bottom: 10px; opacity: 0.5; }
+.ui-empty--bad { color: var(--ui-bad); }
+
+/* ---------- local library rows (built by main.js) ---------- */
+.lib-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-r-md);
+  background: rgba(255, 255, 255, 0.025);
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+.lib-row:hover { background: rgba(14, 165, 233, 0.12); border-color: rgba(14, 165, 233, 0.4); }
+.lib-row-ico { font-size: 20px; flex: 0 0 auto; }
+.lib-row-main { flex: 1 1 auto; min-width: 0; }
+.lib-row-name {
+  font-size: var(--ui-fs-md);
+  font-weight: 600;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lib-row-type { font-size: var(--ui-fs-xs); color: var(--text-dim); letter-spacing: 0.05em; }
+
+/* ---------- media pool ---------- */
+.media-item-badge--ok { color: var(--ui-ok); background: rgba(52, 211, 153, 0.14); border: 1px solid rgba(52, 211, 153, 0.32); }
+.upload-zone { font-size: var(--ui-fs-sm); gap: 4px; }
+.upload-zone-icon { font-size: 20px; }
+.studio-progress-box { margin: 0; }
+
+/* ---------- studio shell: let the columns shrink ----------
+   An auto grid track can never go below the min-content of its item, so the
+   1fr centre column used to force the whole shell wider than the window
+   (the canvas + resizers pushed it to ~1554px) and the right panel fell off
+   the screen. Every track that is supposed to flex gets minmax(0, …). */
+body.daw-theme { grid-template-columns: minmax(0, 1fr); }
+.daw-workspace {
+  min-width: 0;
+  grid-template-columns: var(--sidebar-left-width) minmax(0, 1fr) var(--sidebar-right-width);
+}
+.daw-workspace.left-collapsed { grid-template-columns: 0px minmax(0, 1fr) var(--sidebar-right-width); }
+.daw-workspace.right-collapsed { grid-template-columns: var(--sidebar-left-width) minmax(0, 1fr) 0px; }
+.daw-workspace.left-collapsed.right-collapsed { grid-template-columns: 0px minmax(0, 1fr) 0px; }
+.daw-workspace > .panel { min-width: 0; }
+.canvas-container,
+.canvas-studio-frame,
+.canvas-wrapper { min-width: 0; }
+
+/* The header is a fixed 52px row, so it must never wrap: items shrink and the
+   project capsule truncates instead of pushing the export button off-screen.
+   The shrink order is deliberate — the capsule gives way first, the working
+   controls on the right never do (a squeezed select reads as broken). */
+.daw-header { padding: 0 12px; gap: 8px; flex-wrap: nowrap; }
+.header-left, .header-right { gap: 8px; min-width: 0; }
+.header-left { flex: 0 1 auto; flex-wrap: nowrap; }
+.header-right { flex-wrap: nowrap; flex: 0 0 auto; }
+.header-center { min-width: 0; flex: 0 1 auto; }
+.project-title-capsule { min-width: 0; max-width: 100%; }
+.project-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-items { flex-wrap: nowrap; min-width: 0; }
+.nav-menu-item { flex: 0 0 auto; }
+.menu-trigger-btn { white-space: nowrap; padding: 4px 6px; }
+.panel-toggle-btn { white-space: nowrap; flex: 0 0 auto; }
+.logo { flex: 0 0 auto; }
+.ui-hgroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-r-md);
+  background: rgba(0, 0, 0, 0.22);
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.ui-hlabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--ui-fs-sm);
+  font-weight: 600;
+  color: #cbd5e1;
+  white-space: nowrap;
+  cursor: pointer;
+  min-width: 0;
+}
+.ui-hlabel > span { overflow: hidden; text-overflow: ellipsis; }
+.ui-hgroup > * { min-width: 0; flex: 0 1 auto; }
+#yt-connect-text { overflow: hidden; text-overflow: ellipsis; }
+.ui-hlabel input[type="checkbox"] { margin: 0; accent-color: var(--ui-accent); flex: 0 0 auto; }
+.ui-select--tight {
+  min-height: 26px;
+  padding: 0 6px;
+  font-size: var(--ui-fs-xs);
+  border-radius: var(--ui-r-sm);
+  /* .prop-select is width:100% for inspector rows; inside the header it must
+     size to its longest option or it swallows the whole row */
+  width: auto;
+  max-width: 190px;
+}
+.ui-only-sm { display: none; }
+
+/* ---------- modal size / tone variants ---------- */
+/* The SRT editor swaps between a long cue list and a single textarea, so the
+   card keeps a stable height instead of collapsing around the raw editor. */
+.ui-modal-card--wide { max-width: 960px; max-height: 92vh; height: min(92vh, 860px); }
+.ui-modal-card--lib { max-width: 800px; max-height: 80vh; }
+/* the translation editor is created by translation.js and sits above every
+   other sheet because it is the last step before saving a track */
+.ui-modal--te { z-index: 10005; }
+.ui-modal-card--te { max-width: 900px; max-height: 92vh; height: min(92vh, 820px); }
+.ui-modal-card--khmer {
+  max-width: 980px;
+  max-height: 90vh;
+  border-color: rgba(251, 191, 36, 0.4);
+  box-shadow: 0 25px 60px -12px rgba(0, 0, 0, 0.9);
+}
+/* cards that still carry the legacy .export-modal-card shell get the same
+   neutral surface; only the accent border keeps a hint of meaning */
+.export-modal-card.ui-modal-card--ai,
+.export-modal-card.ui-modal-card--yt {
+  width: 100%;
+  max-width: 580px;
+  padding: 18px 20px;
+  background: #0c1018;
+  border-radius: var(--ui-r-lg);
+  border: 1px solid rgba(192, 132, 252, 0.34);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.85);
+}
+.export-modal-card.ui-modal-card--yt { max-width: 560px; border-color: rgba(248, 113, 113, 0.34); }
+.export-modal-card .ui-modal-hd {
+  padding: 0 0 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--ui-line);
+  background: transparent;
+}
+.ui-modal-ico--lg { font-size: 26px; }
+.ui-modal-name { margin: 0; }
+.ui-modal-name--khmer { font-family: 'Kantumruy Pro', 'Khmer OS Battambang', sans-serif; }
+.ui-modal-sub {
+  display: block;
+  margin: 2px 0 0;
+  font-size: var(--ui-fs-sm);
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+.ui-title-sm { font-size: var(--ui-fs-sm); font-weight: 700; color: var(--text-main); }
+.ui-modal-form { display: flex; flex-direction: column; gap: 12px; }
+.ui-modal-foot {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--ui-line);
+  gap: 8px;
+}
+.ui-meta {
+  font-family: var(--font-mono);
+  font-size: var(--ui-fs-xs);
+  color: var(--text-dim);
+  gap: 10px;
+  padding-top: 2px;
+}
+.ui-meta span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ui-note {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--ui-line);
+  background: rgba(52, 211, 153, 0.07);
+  color: #9eebd0;
+  font-size: var(--ui-fs-xs);
+  line-height: 1.5;
+}
+.ui-modal-card--te .ui-modal-hd { flex-wrap: wrap; }
+.ui-modal-card--te .ui-modal-titlerow { flex: 1 1 auto; }
+.ui-modal-card--te #te-summary { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- SRT editor body ---------- */
+.ui-modal-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.ui-rawbody { flex: 1 1 auto; min-height: 0; padding: 12px 16px; display: flex; }
+.ui-raw-ta {
+  width: 100%;
+  height: 100%;
+  resize: none;
+  box-sizing: border-box;
+  padding: 12px;
+  color: #e2e8f0;
+  background: rgba(8, 12, 22, 0.9);
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-r-md);
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: var(--ui-fs-md);
+  line-height: 1.6;
+  tab-size: 2;
+  outline: none;
+}
+.ui-raw-ta:focus { border-color: rgba(14, 165, 233, 0.45); }
+
+/* ---------- status banner (AI progress inside the editor) ---------- */
+.ui-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 10px 16px 0;
+  padding: 8px 12px;
+  border-radius: var(--ui-r-md);
+  border: 1px solid rgba(192, 132, 252, 0.32);
+  background: rgba(192, 132, 252, 0.08);
+  color: var(--text-main);
+  font-size: var(--ui-fs-sm);
+}
+.ui-banner-ico { font-size: 14px; }
+.ui-banner-tag { font-size: var(--ui-fs-xs); font-weight: 700; color: var(--ui-ai); }
+/* gold variant: the Golden-Era singers callout inside the Khmer gallery */
+.ui-banner--gold {
+  grid-column: 1 / -1;
+  margin: 0;
+  align-items: center;
+  border-color: rgba(251, 191, 36, 0.34);
+  background: rgba(251, 191, 36, 0.1);
+}
+
+/* ---------- dropdown that opens upward (footer menus) ---------- */
+.ui-dd--up { top: auto; bottom: calc(100% + 4px); right: 0; margin: 0; }
+
+/* ---------- grid helpers used by the galleries ---------- */
+.ui-modal-body.ui-grid-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  /* the body has a definite height, so auto rows would be squeezed to share it
+     and clip every card — each row must size to its tallest card instead */
+  grid-auto-rows: max-content;
+  gap: 10px;
+  align-content: start;
+}
+
+/* ---------- Khmer template gallery (cards built by main.js) ----------
+   Only the preset swatch colour is data-driven (inline background); everything
+   else about the card is a single shared component. */
+.kc-swatch {
+  position: relative;
+  height: 58px;
+  display: flex;
+  align-items: flex-end;
+  padding: 8px 10px;
+  border-radius: var(--ui-r-sm);
+  overflow: hidden;
+  box-shadow: inset 0 -14px 24px rgba(0, 0, 0, 0.45);
+}
+.kc-badge {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--ui-warn);
+  background: rgba(0, 0, 0, 0.66);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+}
+.kc-cat,
+.kc-years {
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+.kc-cat { font-size: var(--ui-fs-xs); }
+.kc-years { font-size: var(--ui-fs-sm); font-weight: 700; color: #fde68a; }
+.kc-title {
+  margin: 0;
+  font-size: var(--ui-fs-lg);
+  font-weight: 700;
+  color: #ffffff;
+  line-height: 1.35;
+  font-family: 'Kantumruy Pro', 'Khmer OS Battambang', var(--font-ui, sans-serif);
+}
+.kc-role { margin-top: 1px; font-size: var(--ui-fs-sm); font-weight: 600; color: var(--ui-warn); }
+.kc-en { margin-top: 1px; font-size: var(--ui-fs-sm); color: var(--text-dim); }
+.kc-desc {
+  flex: 1;
+  margin: 0;
+  font-size: var(--ui-fs-sm);
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.72);
+}
+.kc-sec { margin-bottom: 4px; font-size: var(--ui-fs-xs); font-weight: 600; color: var(--text-dim); }
+.kc-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.kc-best { font-size: var(--ui-fs-xs); color: var(--ui-warn); }
+.kc-best strong { color: var(--ui-warn); }
+.kc-foot { display: flex; gap: 6px; }
+.kc-foot .ui-btn { flex: 1 1 auto; }
+.kc-legend {
+  font-size: var(--ui-fs-md);
+  font-weight: 700;
+  color: var(--ui-warn);
+  font-family: 'Kantumruy Pro', 'Khmer OS Battambang', sans-serif;
+}
+.kc-legend-en { font-size: var(--ui-fs-sm); font-weight: 600; color: rgba(255, 255, 255, 0.75); }
+.khmer-pill {
+  padding: 2px 7px;
+  border: 1px solid var(--ui-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-dim);
+  font-size: var(--ui-fs-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* singer cards carry their own accent colour through --kc-accent */
+.khmer-card--singer { border-color: rgba(251, 191, 36, 0.34); background: rgba(255, 255, 255, 0.025); }
+.khmer-card--singer { border-color: color-mix(in srgb, var(--kc-accent) 34%, transparent); }
+.khmer-card--singer .khmer-pill { color: #fef3c7; }
+.khmer-card--singer .khmer-pill { border-color: color-mix(in srgb, var(--kc-accent) 48%, transparent); }
+.ui-grid-yt {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: end;
+}
+.ui-row--end { justify-content: flex-end; }
+.ui-shift-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: center;
+  font-family: var(--font-mono);
+}
+.ui-input--full { width: 100%; }
+.ui-textarea--khmer {
+  min-height: 230px;
+  max-height: 46vh;
+  font-family: 'Kantumruy Pro', 'Battambang', sans-serif;
+  font-size: var(--ui-fs-md);
+  line-height: 1.6;
+  color: #f8fafc;
+}
+.ui-textarea--desc {
+  min-height: 120px;
+  max-height: 40vh;
+  font-family: var(--font-mono);
+  font-size: var(--ui-fs-sm);
+}
+
+/* ---------- floating background-render widget ---------- */
+.ui-pip {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 20002;
+  width: 280px;
+  padding: 10px 12px;
+  border-radius: var(--ui-r-lg);
+  background: rgba(12, 16, 25, 0.96);
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65);
+  cursor: pointer;
+}
+
+/* ---------- stage toggle: on = accent green, off = neutral ---------- */
+.ui-btn.is-on {
+  color: var(--ui-ok);
+  border-color: rgba(52, 211, 153, 0.4);
+  background: rgba(52, 211, 153, 0.12);
+}
+.ui-btn.is-on:hover { color: var(--ui-ok); background: rgba(52, 211, 153, 0.2); }
+
+/* ---------- legacy components pulled into the system ---------- */
+.srt-toolbar-btn:hover { filter: none; transform: none; background: var(--ui-surface-2); color: var(--text-main); }
+.srt-toolbar-btn:active { filter: none; }
+.progress-fill-bar { background: var(--ui-accent); box-shadow: none; }
+.export-modal-card .progress-track-bar { height: 8px; margin-top: 10px; }
+.ui-pip .progress-track-bar { height: 5px; margin: 5px 0 6px; }
+.srt-cue-actions { opacity: 0.5; }
+.srt-cue-row:hover .srt-cue-actions,
+.srt-cue-row.srt-cue-selected .srt-cue-actions { opacity: 1; }
+.srt-cue-action-btn:hover { transform: none; }
+.srt-cue-row.srt-cue-active { box-shadow: none; }
+.srt-cue-row.srt-cue-selected { box-shadow: none; }
+.srt-cue-row:hover { box-shadow: none; }
+.aspect-tabs button { min-height: 24px; }
+/* Tabs and short controls must never fold onto two lines — the label is
+   the control, and a wrapped label makes the bar look broken. */
+.segmented-tab,
+.aspect-tabs button,
+.ui-seg-btn,
+.menu-trigger-btn,
+.btn-youtube-dl,
+.ui-chip,
+.panel-header h1 {
+  white-space: nowrap;
+}
+.segmented-tab { font-size: var(--ui-fs-sm); }
+.khmer-tab--featured {
+  color: var(--ui-warn);
+  border-color: rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.14);
+  font-weight: 700;
+}
+.khmer-tab.active { background: #fbbf24; }
+.khmer-card:hover { transform: none; box-shadow: 0 10px 22px -8px rgba(0, 0, 0, 0.6); }
+
+/* ---------- responsive: fit the window instead of hiding the tools ---------- */
+/* 1240px and below: every control still has to live in one fixed 52px row. The
+   menu bar and the export button may never shrink (they would spill over the
+   project capsule), so the two purely decorative chips step out first and the
+   header tightens its own rhythm. */
+@media (max-width: 1240px) {
+  .daw-header { padding: 0 8px; gap: 6px; }
+  .header-left, .header-right { gap: 6px; }
+  .header-left { flex: 0 0 auto; }
+  .menu-items { flex: 0 0 auto; gap: 1px; }
+  .menu-trigger-btn { padding: 4px 5px; font-size: var(--ui-fs-xs); }
+  .panel-toggle-btn { padding: 5px 8px; font-size: var(--ui-fs-xs); }
+  #btn-export { flex: 0 0 auto; }
+  #select-export-preset { max-width: 168px; }
+  .project-format-badge { display: none; }
+  /* the LLM chip repeats what the AI Models menu already shows, and the layout
+     presets duplicate the two panel toggles that stay on screen */
+  .status-indicator { display: none; }
+  #layout-preset-menu { display: none; }
+  /* The YouTube cluster is the only group narrow enough to squeeze, and a 22px
+     "Auto-Post to YouTube" stub reads as broken. Swap it for the short label
+     here (1180px used to be the hand-over point, which left 1181-1240px in a
+     dead zone) and pin the two action buttons so they never truncate. */
+  .ui-hide-lg { display: none !important; }
+  .ui-only-sm { display: inline !important; }
+  /* nothing inside these two groups may shrink — they are the working controls */
+  #yt-cluster, #yt-cluster > * { flex: 0 0 auto; }
+  #header-progress-capsule, #header-progress-capsule > * { flex: 0 0 auto; }
+}
+@media (max-width: 1180px) {
+  .ui-hide-lg { display: none !important; }
+  .project-format-badge { display: none; }
+}
+@media (max-width: 1050px) {
+  .ui-hide-md { display: none !important; }
+  .panel-content { padding: 8px; gap: 7px; }
+  .glass-card, .ui-sec-body { padding-left: 9px; padding-right: 9px; }
+  /* layout presets duplicate the two panel toggles, which stay visible */
+  #layout-preset-menu { display: none; }
+  /* One 52px row cannot hold the menu bar, the publish cluster and the export
+     controls at this width. Every menu action is repeated on a panel button and
+     the privacy select duplicates the field inside the YouTube details modal,
+     so those two step out — the export controls keep their full labels. */
+  .menu-items { display: none; }
+  #select-youtube-privacy { display: none; }
+  #select-export-preset { max-width: 168px; }
+}
+@media (max-width: 900px) {
+  .panel-toggle-btn { padding: 5px 7px; }
+}
+/* Below 760px the studio is a single column with slide-over drawers, so the
+   header keeps only the transport toggles and the export controls. The publish
+   switches step out but the YouTube Details button stays — it is the only entry
+   point to the title / description / tags editor. */
+@media (max-width: 760px) {
+  #yt-cluster .ui-hlabel,
+  #btn-youtube-connect { display: none; }
+}
+
+/* Below 820px the old stylesheet simply display:none'd both panels, which
+   deleted the entire inspector. Here they become slide-over drawers driven by
+   the same left-collapsed / right-collapsed classes the layout code already
+   toggles, so every tool stays reachable in a small window. */
+@media (max-width: 820px) {
+  .daw-workspace,
+  .daw-workspace.left-collapsed,
+  .daw-workspace.right-collapsed,
+  .daw-workspace.left-collapsed.right-collapsed { grid-template-columns: minmax(0, 1fr) !important; }
+
+  .panel.left-panel,
+  .panel.right-panel {
+    display: flex !important;
+    position: fixed;
+    top: var(--header-height);
+    bottom: var(--timeline-height);
+    width: min(340px, 88vw);
+    z-index: 60;
+    opacity: 1 !important;
+    pointer-events: auto;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
+    transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .panel.left-panel { left: 0; border-left: 0; }
+  .panel.right-panel { right: 0; border-right: 0; }
+
+  .daw-workspace.left-collapsed .panel.left-panel { transform: translateX(-101%); }
+  .daw-workspace.right-collapsed .panel.right-panel { transform: translateX(101%); }
+  .daw-workspace:not(.left-collapsed) .panel.left-panel,
+  .daw-workspace:not(.right-collapsed) .panel.right-panel { transform: translateX(0); }
+
+  /* an off-screen drawer must also leave the tab order and the a11y tree;
+     the delayed visibility keeps the slide-out animation intact */
+  .daw-workspace.left-collapsed .panel.left-panel,
+  .daw-workspace.right-collapsed .panel.right-panel {
+    pointer-events: none;
+    visibility: hidden;
+    transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), visibility 0s linear 0.26s;
+  }
+  .daw-workspace:not(.left-collapsed) .panel.left-panel,
+  .daw-workspace:not(.right-collapsed) .panel.right-panel {
+    pointer-events: auto;
+    visibility: visible;
+    transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), visibility 0s;
+  }
+
+  .layout-resizer { display: none !important; }
+  .ui-hide-sm { display: none !important; }
+  .ui-only-sm { display: inline !important; }
+  .ui-acts--3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  /* modals must fit the short window: less padding, tighter chrome */
+  .ui-modal,
+  .export-modal-overlay { padding: 8px; }
+  .ui-modal-card,
+  .export-modal-card { max-height: calc(100vh - 16px); }
+  .ui-modal-card--wide,
+  .ui-modal-card--lib,
+  .ui-modal-card--khmer,
+  .export-modal-card.ui-modal-card--ai,
+  .export-modal-card.ui-modal-card--yt { max-height: calc(100vh - 16px); }
+  .ui-modal-hd { padding: 9px 11px; }
+  .ui-toolbar { padding: 7px 10px; }
+  .ui-banner { margin: 8px 10px 0; }
+  .ui-modal-body,
+  .ui-rawbody { padding: 10px; }
+  .ui-modal-ft { padding: 8px 10px; flex-wrap: wrap; }
+  .ui-grid-yt { grid-template-columns: minmax(0, 1fr); }
+  .ui-modal-body.ui-grid-cards { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+  .ui-pip { width: min(280px, calc(100vw - 24px)); }
+}
+
+@media (max-width: 560px) {
+  .ui-grid2, .ui-grid3, .ui-acts, .ui-acts--3 { grid-template-columns: minmax(0, 1fr); }
+  .ui-seg { grid-auto-flow: column; }
+  .ui-modal-body.ui-grid-cards { grid-template-columns: minmax(0, 1fr); }
+  .ui-textarea--khmer { min-height: 150px; }
+}
+
+/* ---------- accessibility ---------- */
+.ui-btn:focus-visible,
+.ui-seg-btn:focus-visible,
+.ui-sec > summary:focus-visible,
+.ui-check:focus-within,
+.prop-select:focus-visible,
+.prop-input:focus-visible {
+  outline: 2px solid rgba(14, 165, 233, 0.85);
+  outline-offset: 1px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-btn, .ui-seg-btn, .ui-sec > summary::before, .panel.left-panel, .panel.right-panel {
+    transition: none !important;
+  }
+}

@@ -1,4 +1,5 @@
 import { state, PALETTES } from '../core/state.js';
+import { glowLayer } from './glow.js';
 
 let peakHold = new Float32Array(256);
 let peakHoldDecay = new Float32Array(256);
@@ -211,33 +212,55 @@ export function drawSpectrumAnalyzer(ctx, w, h, bars, bass) {
     ctx.fill();
 
     // Spline Neon Stroke
-    ctx.beginPath();
-    ctx.moveTo(barPoints[0].x, barPoints[0].y);
-    for (let i = 0; i < barPoints.length - 1; i++) {
-      const pCurrent = barPoints[i];
-      const pNext = barPoints[i + 1];
-      const cx = (pCurrent.x + pNext.x) / 2;
-      const cy = (pCurrent.y + pNext.y) / 2;
-      ctx.quadraticCurveTo(pCurrent.x, pCurrent.y, cx, cy);
-    }
-    ctx.strokeStyle = `rgb(${primaryRgb})`;
+    const spline = (p) => {
+      p.beginPath();
+      p.moveTo(barPoints[0].x, barPoints[0].y);
+      for (let i = 0; i < barPoints.length - 1; i++) {
+        const pCurrent = barPoints[i];
+        const pNext = barPoints[i + 1];
+        p.quadraticCurveTo(pCurrent.x, pCurrent.y, (pCurrent.x + pNext.x) / 2, (pCurrent.y + pNext.y) / 2);
+      }
+    };
     ctx.lineWidth = 2.5;
-    ctx.shadowColor = pal.glow;
-    ctx.shadowBlur = 12 + bass * 10;
+    glowLayer(ctx, 12 + bass * 10, (g) => { g.strokeStyle = pal.glow; spline(g); g.stroke(); });
+    spline(ctx);
+    ctx.strokeStyle = `rgb(${primaryRgb})`;
     ctx.stroke();
     ctx.restore();
   }
 
   // ── 8. Render Segmented Glowing Spectrum Bars ──
+  const barRgb = (i) => {
+    const t = i / count;
+    return [
+      Math.floor(pal.primary[0] * (1 - t) + pal.secondary[0] * t),
+      Math.floor(pal.primary[1] * (1 - t) + pal.secondary[1] * t),
+      Math.floor(pal.primary[2] * (1 - t) + pal.secondary[2] * t),
+    ];
+  };
+  // Cap + peak-hold glows: one low-res blur each instead of 2 full-res blurs per bar
+  glowLayer(ctx, 6, (g) => {
+    for (let i = 0; i < count; i++) {
+      const [r, gg, b] = barRgb(i);
+      g.fillStyle = `rgb(${r}, ${gg}, ${b})`;
+      g.fillRect(barPoints[i].barX, baseY - barPoints[i].h - 1, barW, 2.5);
+    }
+  });
+  glowLayer(ctx, 8, (g) => {
+    g.fillStyle = "#ffffff";
+    for (let i = 0; i < count; i++) {
+      const pHold = peakHold[i] || 0;
+      if (pHold > 6) g.fillRect(barPoints[i].barX, baseY - pHold - 4, barW, 2);
+    }
+  });
+  ctx.shadowBlur = 0;
+
   for (let i = 0; i < count; i++) {
     const p = barPoints[i];
     const x = p.barX;
     const barHeight = p.h;
 
-    const t = i / count;
-    const r = Math.floor(pal.primary[0] * (1 - t) + pal.secondary[0] * t);
-    const g = Math.floor(pal.primary[1] * (1 - t) + pal.secondary[1] * t);
-    const b = Math.floor(pal.primary[2] * (1 - t) + pal.secondary[2] * t);
+    const [r, g, b] = barRgb(i);
 
     // Multi-stop high-tech bar gradient
     const barGrad = ctx.createLinearGradient(0, baseY, 0, baseY - barHeight);
@@ -262,22 +285,16 @@ export function drawSpectrumAnalyzer(ctx, w, h, bars, bass) {
       }
     }
 
-    // Top Peak Glow Cap
+    // Top Peak Cap (glow drawn above in one batch)
     ctx.fillStyle = isVintage ? "#fef3c7" : "#ffffff";
-    ctx.shadowColor = `rgb(${r}, ${g}, ${b})`;
-    ctx.shadowBlur = 6;
     ctx.fillRect(x, baseY - barHeight - 1, barW, 2.5);
-    ctx.shadowBlur = 0;
 
     // Peak Hold floating horizontal marker
     const pHold = peakHold[i] || 0;
     if (pHold > 6) {
       const peakY = baseY - pHold - 4;
       ctx.fillStyle = isVintage ? "#fde68a" : "#ffffff";
-      ctx.shadowColor = "#ffffff";
-      ctx.shadowBlur = 8;
       ctx.fillRect(x, peakY, barW, 2);
-      ctx.shadowBlur = 0;
     }
 
     // Floor Mirror Reflection
@@ -289,15 +306,12 @@ export function drawSpectrumAnalyzer(ctx, w, h, bars, bass) {
   }
 
   // ── 9. Baseline Horizon Glow Line ──
-  ctx.strokeStyle = isVintage ? "rgba(251, 191, 36, 0.75)" : `rgba(${primaryRgb}, 0.8)`;
   ctx.lineWidth = 2 + bass * 1.5;
-  ctx.shadowColor = pal.glow;
-  ctx.shadowBlur = 10 + bass * 8;
-  ctx.beginPath();
-  ctx.moveTo(marginX, baseY);
-  ctx.lineTo(w - marginX, baseY);
+  const baseLine = (p) => { p.beginPath(); p.moveTo(marginX, baseY); p.lineTo(w - marginX, baseY); };
+  glowLayer(ctx, 10 + bass * 8, (g) => { g.globalAlpha = isVintage ? 0.75 : 0.8; g.strokeStyle = pal.glow; baseLine(g); g.stroke(); });
+  ctx.strokeStyle = isVintage ? "rgba(251, 191, 36, 0.75)" : `rgba(${primaryRgb}, 0.8)`;
+  baseLine(ctx);
   ctx.stroke();
-  ctx.shadowBlur = 0;
 
   // ── 10. Vintage Cambodian / Modern Watermark Stamp ──
   if (state.logoImageObj && state.logoImageObj.complete) {

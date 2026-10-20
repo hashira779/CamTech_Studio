@@ -647,14 +647,8 @@ export function initSRTEditor(showToastFn, renderTeleprompterFn) {
 
   if (btnVisual && btnRaw) {
     btnVisual.addEventListener('click', () => {
-      btnVisual.classList.add('srt-mode-active');
-      btnVisual.style.background = 'rgba(56, 189, 248, 0.2)';
-      btnVisual.style.borderColor = 'rgba(56, 189, 248, 0.5)';
-      btnVisual.style.color = '#38bdf8';
-      btnRaw.classList.remove('srt-mode-active');
-      btnRaw.style.background = 'rgba(255,255,255,0.06)';
-      btnRaw.style.borderColor = 'rgba(255,255,255,0.12)';
-      btnRaw.style.color = '#94a3b8';
+      btnVisual.classList.add('srt-mode-active', 'is-active');
+      btnRaw.classList.remove('srt-mode-active', 'is-active');
       if (visualEditor) visualEditor.style.display = 'flex';
       if (rawEditor) rawEditor.style.display = 'none';
       if (btnApplyRaw) btnApplyRaw.style.display = 'none';
@@ -663,14 +657,8 @@ export function initSRTEditor(showToastFn, renderTeleprompterFn) {
     });
 
     btnRaw.addEventListener('click', () => {
-      btnRaw.classList.add('srt-mode-active');
-      btnRaw.style.background = 'rgba(56, 189, 248, 0.2)';
-      btnRaw.style.borderColor = 'rgba(56, 189, 248, 0.5)';
-      btnRaw.style.color = '#38bdf8';
-      btnVisual.classList.remove('srt-mode-active');
-      btnVisual.style.background = 'rgba(255,255,255,0.06)';
-      btnVisual.style.borderColor = 'rgba(255,255,255,0.12)';
-      btnVisual.style.color = '#94a3b8';
+      btnRaw.classList.add('srt-mode-active', 'is-active');
+      btnVisual.classList.remove('srt-mode-active', 'is-active');
       if (visualEditor) visualEditor.style.display = 'none';
       if (rawEditor) rawEditor.style.display = 'flex';
       if (btnApplyRaw) btnApplyRaw.style.display = 'inline-flex';
@@ -1033,12 +1021,6 @@ export function initSRTEditor(showToastFn, renderTeleprompterFn) {
     exportModalMenu.addEventListener('click', (e) => e.stopPropagation());
 
     exportModalMenu.querySelectorAll('.srt-export-choice').forEach(btn => {
-      btn.addEventListener('mouseenter', () => {
-        btn.style.background = 'rgba(56, 189, 248, 0.12)';
-      });
-      btn.addEventListener('mouseleave', () => {
-        btn.style.background = 'transparent';
-      });
       btn.addEventListener('click', () => {
         const format = btn.dataset.format;
         if (editorCues.length === 0) {
