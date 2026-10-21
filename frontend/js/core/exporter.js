@@ -114,7 +114,46 @@ export async function exportVideoWYSIWYG({ onProgress = () => {} } = {}) {
     output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
     error: (e) => { encError = e; },
   });
-  encoder.configure({ ...picked.cfg, hardwarePreference: 'prefer-hardware' });
+  encoder.configure({ ...picked.cfg, hardwareAcceleration: 'prefer-hardware', hardwarePreference: 'prefer-hardware' });
+
+  // Back-pressure without a busy-wait.
+  //
+  // The queue depth matters twice: shallow (`> 6`) made the loop wait on the
+  // encoder after nearly every frame, so rasterising frame i+1 could not
+  // overlap encoding frame i; and the wait itself used to be
+  // `while (queueSize > N) await nextTick()`, a postMessage spin that starves
+  // the rest of the task queue — including the encoder's own output callbacks —
+  // which froze the progress read-out and dragged throughput down to a crawl
+  // (measured: 0.6x realtime with the UI stuck). `dequeue` is the event the
+  // spec provides for exactly this: the loop parks until the encoder wakes it.
+  const queueSize = () => (typeof encoder.queueSize === 'number' ? encoder.queueSize : encoder.encodeQueueSize);
+  const QUEUE_HIGH = W * H >= 1500000 ? 12 : 24;   // frames in flight (~100 MB of 1080p RGBA at 12)
+  const QUEUE_LOW = Math.max(2, Math.floor(QUEUE_HIGH / 2));
+
+  async function waitForEncoderQueue() {
+    while (queueSize() > QUEUE_LOW && !encError) {
+      await new Promise((res) => {
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          encoder.removeEventListener('dequeue', onDequeue);
+          clearTimeout(guard);
+          res();
+        };
+        const onDequeue = () => { if (queueSize() <= QUEUE_LOW) done(); };
+        encoder.addEventListener('dequeue', onDequeue);
+        // Safety net: a stalled encoder that never dequeues must not hang the
+        // export forever. Timers are throttled in a hidden tab, so this is a
+        // backstop, not the normal path.
+        const guard = setTimeout(done, 2000);
+      });
+    }
+  }
+
+  // Yield frequency: every hop lets the browser run its own tasks; the progress
+  // line only needs a couple of updates per second.
+  const tickEvery = Math.max(10, Math.round(fps / 2));
 
   const total = Math.ceil(duration * fps);
   const t0 = performance.now();
@@ -126,14 +165,17 @@ export async function exportVideoWYSIWYG({ onProgress = () => {} } = {}) {
       const frame = new VideoFrame(canvas, {
         timestamp: Math.round(i * 1e6 / fps),
         duration: Math.round(1e6 / fps),
+        alpha: 'discard',
       });
       encoder.encode(frame, { keyFrame: i % (fps * 2) === 0 });
       frame.close();
-      while (encoder.encodeQueueSize > 6) await nextTick();
-      if (i % 10 === 0) {
+      if (queueSize() > QUEUE_HIGH) await waitForEncoderQueue();
+      if (i % tickEvery === 0) {
         const el = (performance.now() - t0) / 1000;
         const speed = el > 0.5 ? (t / el).toFixed(1) : '…';
-        onProgress(0.05 + 0.8 * (i / total), `Rendering ${W}x${H}@${fps} — ${speed}x realtime`);
+        const left = i > 20 && el > 0.5 ? ((el / i) * (total - i)) : null;
+        const eta = left == null ? '' : ` — about ${left >= 90 ? `${(left / 60).toFixed(1)} min` : `${Math.round(left)}s`} left`;
+        onProgress(0.05 + 0.8 * (i / total), `Rendering ${W}x${H}@${fps} — ${speed}x realtime${eta}`);
         await nextTick();
       }
     }
@@ -149,6 +191,16 @@ export async function exportVideoWYSIWYG({ onProgress = () => {} } = {}) {
   }
 
   const blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
+  const wallSec = (performance.now() - t0) / 1000;
+  // Remember what this machine actually managed, so the preset labels can show
+  // a measured speed instead of a guessed one.
+  state.lastExportSpeedX = wallSec > 0 ? duration / wallSec : 0;
+  try {
+    localStorage.setItem('vida_export_speed', JSON.stringify({
+      key: `${W}x${H}@${fps}`, xRealtime: +state.lastExportSpeedX.toFixed(2),
+      msPerFrame: +((wallSec * 1000) / total).toFixed(2), at: Date.now(),
+    }));
+  } catch (e) { /* storage full / disabled */ }
   onProgress(0.92, `Muxing original audio (${(blob.size / 1e6).toFixed(1)} MB video)`);
 
   const fd = new FormData();

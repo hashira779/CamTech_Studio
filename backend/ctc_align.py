@@ -8,10 +8,16 @@ token between lines absorbs ad-libs, humming or repeated choruses missing from t
 """
 
 import os
+import sys
 import logging
 import threading
 import unicodedata
 from typing import List, Dict, Any, Optional, Tuple
+
+try:
+    from backend.model_job import run_locked
+except ImportError:
+    from model_job import run_locked
 
 log = logging.getLogger(__name__)
 
@@ -34,10 +40,16 @@ def _get_model():
     global _MODEL, _DICT
     with _LOCK:
         if _MODEL is None:
+            import gc
             import torch
             import torchaudio
+            # Demucs leaves its CUDA blocks reserved, and torch's zip reader faults while
+            # mapping the aligner checkpoint into that pressure (hard crash, not an exception).
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             bundle = torchaudio.pipelines.MMS_FA
-            model = bundle.get_model(with_star=False)
+            model = bundle.get_model(with_star=False, dl_kwargs={"weights_only": True, "map_location": "cpu"})
             model.eval()
             torch.set_grad_enabled(False)
             _DICT = bundle.get_dict(star=None)
@@ -54,13 +66,24 @@ def _get_uroman():
     return _UROMAN
 
 
+def missing_dependency() -> Optional[str]:
+    """
+    Name of the first package this interpreter cannot see, or None when the aligner can run.
+    Resolved without importing: mapping torch into the web process leaves the aligner child too
+    little address space to load its checkpoint, which faults instead of raising.
+    """
+    import importlib.util
+    for module in ("torch", "torchaudio", "uroman"):
+        try:
+            if importlib.util.find_spec(module) is None:
+                return module
+        except (ImportError, ValueError):
+            return module
+    return None
+
+
 def is_available() -> bool:
-    try:
-        import torchaudio  # noqa: F401
-        import uroman  # noqa: F401
-        return hasattr(torchaudio.pipelines, "MMS_FA")
-    except Exception:
-        return False
+    return missing_dependency() is None
 
 
 def _lang_code(text: str) -> Optional[str]:
@@ -142,7 +165,7 @@ def _segment_end_after(t: float, segments: List[Tuple[float, float]]) -> float:
     return t
 
 
-def ctc_align_lyrics(
+def _ctc_align_lyrics_inproc(
     lyrics_lines: List[str],
     audio_path: str,
     vocal_segments: Optional[List[Tuple[float, float]]] = None,
@@ -369,3 +392,91 @@ def _repair_collapsed_lines(
             line["words"] = time_line_words(line["text"], s, e, onsets=onsets, vocal_spans=spans)
             repaired += 1
     return repaired
+
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_WORKER_TIMEOUT_S = 900.0
+
+
+def ctc_align_lyrics(
+    lyrics_lines: List[str],
+    audio_path: str,
+    vocal_segments: Optional[List[Tuple[float, float]]] = None,
+    min_confidence: float = MIN_CONFIDENCE,
+) -> Optional[List[Dict[str, Any]]]:
+    """
+    Word-level sync for the studio, run in a throwaway process.
+
+    Loading the wav2vec2 checkpoint right after Demucs has used the GPU faults inside
+    torch's file reader on Windows (measured: 4/4 native access violations, exit 139).
+    A fault cannot be caught from Python, so the aligner runs out-of-process and any
+    failure simply means "no word alignment" and the caller keeps its acoustic sync.
+    """
+    lines = [str(l).strip() for l in lyrics_lines]
+    if not any(lines) or not audio_path or not os.path.exists(audio_path):
+        return None
+    missing = missing_dependency()
+    if missing:
+        log.warning(
+            f"[CTC Align] '{missing}' is not installed for {sys.executable}, so word timing is off. "
+            f"Start VIDA with run_vida_desktop.bat to run the studio on the project venv."
+        )
+        return None
+
+    import json
+    import subprocess
+    import tempfile
+
+    job = {
+        "lyrics_lines": lines,
+        "audio_path": audio_path,
+        "vocal_segments": [list(s) for s in vocal_segments] if vocal_segments else None,
+        "min_confidence": min_confidence,
+    }
+    fd, job_path = tempfile.mkstemp(prefix="vida_ctc_job_", suffix=".json")
+    out_path = job_path.replace("vida_ctc_job_", "vida_ctc_res_")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(job, handle)
+        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+        # This machine sits near its commit limit during a sync, and torch faults instead of
+        # raising when it cannot map the aligner checkpoint. Hand back anything this process
+        # still holds, without importing torch just to look for it.
+        import gc
+        gc.collect()
+        torch = sys.modules.get("torch")
+        if torch is not None and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        def _aligned_lines():
+            for attempt in (1, 2):
+                proc = subprocess.run(
+                    [sys.executable, "-m", "backend.ctc_worker", job_path, out_path],
+                    cwd=_REPO_ROOT, env=env, timeout=_WORKER_TIMEOUT_S,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace",
+                )
+                if proc.returncode == 0 and os.path.exists(out_path):
+                    with open(out_path, encoding="utf-8") as handle:
+                        return json.load(handle).get("lines")
+                if os.path.exists(out_path):
+                    os.remove(out_path)
+                tail = " | ".join((proc.stderr or "").strip().splitlines()[-2:])
+                log.warning(f"[CTC Align] aligner process exited {proc.returncode:#x} (attempt {attempt}): {tail}")
+            return None
+
+        try:
+            aligned = run_locked(_aligned_lines)
+        except TimeoutError as busy:
+            log.warning(f"[CTC Align] {busy}; keeping acoustic sync")
+            return None
+        if aligned is None:
+            log.warning("[CTC Align] word aligner unavailable on this machine; keeping acoustic sync")
+        return aligned
+    except Exception as e:
+        log.warning(f"[CTC Align] aligner process failed: {e}")
+        return None
+    finally:
+        for path in (job_path, out_path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass

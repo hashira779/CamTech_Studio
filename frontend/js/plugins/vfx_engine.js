@@ -3,6 +3,8 @@
  * Camera Shake • Bass Shockwaves • Optical Bloom Flash • RGB Split • CRT Scanlines
  */
 import { state, PALETTES } from '../core/state.js';
+import { glowLayer } from '../themes/glow.js';
+import { cachedFill } from '../themes/fill_cache.js';
 
 let shakePower = 0;
 let flashAlpha = 0;
@@ -75,34 +77,57 @@ export function renderPostVFX(ctx, w, h, bass, dt = 1 / 60) {
   const pal = PALETTES[state.palette] || PALETTES.cyberpunk;
   const priRgb = pal.primary.join(',');
   const secRgb = pal.secondary.join(',');
+  const palKey = `${state.palette}|${priRgb}|${secRgb}`;
 
   // 1. Render Expanding Audio Shockwaves
   if (shockwaves.length > 0 && state.vfxShockwave) {
-    ctx.save();
+    // Advance every ring, drop the dead ones, then draw the survivors as ONE
+    // low-resolution glow. Each ring used to carry its own `shadowBlur = 18`,
+    // i.e. a full-resolution blur of a ~1200px circle — a whole extra frame of
+    // pixels shaded, once per ring, on every bass drop.
     for (let i = shockwaves.length - 1; i >= 0; i--) {
       const sw = shockwaves[i];
       sw.radius += sw.speed * k;
       sw.alpha *= Math.pow(0.93, k);
+      if (sw.alpha < 0.02 || sw.radius >= sw.maxRadius) shockwaves.splice(i, 1);
+    }
 
-      if (sw.alpha < 0.02 || sw.radius >= sw.maxRadius) {
-        shockwaves.splice(i, 1);
-        continue;
+    ctx.save();
+    ctx.shadowBlur = 0;
+    ctx.shadowColor = 'transparent';
+    if (shockwaves.length > 0) {
+      glowLayer(ctx, 18, (g) => {
+        g.lineCap = 'round';
+        for (const sw of shockwaves) {
+          g.strokeStyle = pal.glow;
+          g.lineWidth = Math.max(0.4, sw.width * sw.alpha);
+          g.globalAlpha = sw.alpha;
+          g.beginPath();
+          g.arc(sw.x, sw.y, sw.radius, 0, Math.PI * 2);
+          g.stroke();
+
+          g.lineWidth = Math.max(0.4, sw.width * 0.5);
+          g.globalAlpha = sw.alpha * 0.6;
+          g.beginPath();
+          g.arc(sw.x, sw.y, sw.radius * 0.96, 0, Math.PI * 2);
+          g.stroke();
+        }
+        g.globalAlpha = 1;
+      });
+      for (const sw of shockwaves) {
+        ctx.beginPath();
+        ctx.arc(sw.x, sw.y, sw.radius, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${secRgb}, ${sw.alpha})`;
+        ctx.lineWidth = sw.width * (sw.alpha);
+        ctx.stroke();
+
+        // Outer refraction ring
+        ctx.beginPath();
+        ctx.arc(sw.x, sw.y, sw.radius * 0.96, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${priRgb}, ${sw.alpha * 0.6})`;
+        ctx.lineWidth = sw.width * 0.5;
+        ctx.stroke();
       }
-
-      ctx.beginPath();
-      ctx.arc(sw.x, sw.y, sw.radius, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(${secRgb}, ${sw.alpha})`;
-      ctx.lineWidth = sw.width * (sw.alpha);
-      ctx.shadowColor = pal.glow;
-      ctx.shadowBlur = 18;
-      ctx.stroke();
-
-      // Outer refraction ring
-      ctx.beginPath();
-      ctx.arc(sw.x, sw.y, sw.radius * 0.96, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(${priRgb}, ${sw.alpha * 0.6})`;
-      ctx.lineWidth = sw.width * 0.5;
-      ctx.stroke();
     }
     ctx.restore();
   }
@@ -110,13 +135,18 @@ export function renderPostVFX(ctx, w, h, bass, dt = 1 / 60) {
   // 2. Optical Strobe Bloom Flash Overlay
   if (flashAlpha > 0.01 && state.vfxBloom) {
     ctx.save();
-    const flashGrad = ctx.createRadialGradient(w / 2, h / 2, 40, w / 2, h / 2, Math.min(w, h) * 0.7);
-    flashGrad.addColorStop(0, `rgba(255, 255, 255, ${flashAlpha * 0.85})`);
-    flashGrad.addColorStop(0.4, `rgba(${priRgb}, ${flashAlpha * 0.4})`);
-    flashGrad.addColorStop(1, 'transparent');
-
-    ctx.fillStyle = flashGrad;
-    ctx.fillRect(0, 0, w, h);
+    // Every stop scales with flashAlpha, so the wash is one fixed bitmap drawn
+    // at that alpha — cached and half-resolution instead of re-shading 2M
+    // pixels on each strobe frame.
+    cachedFill(ctx, `vfx.bloom|${palKey}`, (g, bw, bh) => {
+      g.setTransform(bw / w, 0, 0, bw / w, 0, 0);
+      const flashGrad = g.createRadialGradient(w / 2, h / 2, 40, w / 2, h / 2, Math.min(w, h) * 0.7);
+      flashGrad.addColorStop(0, 'rgba(255, 255, 255, 0.85)');
+      flashGrad.addColorStop(0.4, `rgba(${priRgb}, 0.4)`);
+      flashGrad.addColorStop(1, 'transparent');
+      g.fillStyle = flashGrad;
+      g.fillRect(0, 0, w, h);
+    }, 2, flashAlpha);
     ctx.restore();
 
     flashAlpha *= Math.pow(0.84, k); // Fast bloom decay
@@ -125,19 +155,25 @@ export function renderPostVFX(ctx, w, h, bass, dt = 1 / 60) {
   // 3. Cyberpunk CRT Scanlines
   if (state.vfxScanlines) {
     ctx.save();
-    ctx.fillStyle = "rgba(0, 0, 0, 0.12)";
-    for (let y = 0; y < h; y += 4) {
-      ctx.fillRect(0, y, w, 1.5);
-    }
+    cachedFill(ctx, `vfx.scanlines`, (g, bw, bh) => {
+      g.setTransform(bw / w, 0, 0, bw / w, 0, 0);
+      g.fillStyle = 'rgba(0, 0, 0, 0.12)';
+      for (let y = 0; y < h; y += 4) {
+        g.fillRect(0, y, w, 1.5);
+      }
+    }, 1);
     ctx.restore();
   }
 
-  // 4. Subtle Cinematic Vignette
+  // 4. Subtle Cinematic Vignette (same pixels every frame -> cached blit)
   ctx.save();
-  const vigGrad = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.min(w, h) * 0.75);
-  vigGrad.addColorStop(0, 'transparent');
-  vigGrad.addColorStop(1, 'rgba(0, 0, 0, 0.45)');
-  ctx.fillStyle = vigGrad;
-  ctx.fillRect(0, 0, w, h);
+  cachedFill(ctx, `vfx.vignette`, (g, bw, bh) => {
+    g.setTransform(bw / w, 0, 0, bw / w, 0, 0);
+    const vigGrad = g.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.min(w, h) * 0.75);
+    vigGrad.addColorStop(0, 'transparent');
+    vigGrad.addColorStop(1, 'rgba(0, 0, 0, 0.45)');
+    g.fillStyle = vigGrad;
+    g.fillRect(0, 0, w, h);
+  }, 2);
   ctx.restore();
 }

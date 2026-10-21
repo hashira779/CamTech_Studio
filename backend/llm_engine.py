@@ -6,7 +6,7 @@ import json
 from typing import Dict, Any, Optional, List, Tuple
 
 
-def call_gemini_api(prompt: str, json_mode: bool = False, timeout: int = 8) -> Optional[str]:
+def call_gemini_api(prompt: str, json_mode: bool = False, timeout: int = 25) -> Optional[str]:
     """Helper to query Gemini Cloud AI with auto-fallback across fast models."""
     try:
         try:
@@ -20,11 +20,13 @@ def call_gemini_api(prompt: str, json_mode: bool = False, timeout: int = 8) -> O
         import json
         models = [
             "gemini-flash-lite-latest",
-            "gemini-3-flash-preview",
+            "gemini-flash-latest",
             "gemini-3.1-flash-lite",
-            "gemini-3.1-flash-lite-preview",
-            "gemma-4-26b-a4b-it",
-            "gemini-flash-latest"
+            "gemini-3.5-flash-lite",
+            "gemini-3-flash-preview",
+            "gemini-3.5-flash",
+            "gemini-3.7-flash",
+            "gemini-3.8-flash"
         ]
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
         if json_mode:
@@ -596,17 +598,24 @@ class LocalLLMEngine:
         if not lyrics_data:
             return lyrics_data
 
-        # 1. ⚡ Gemini Cloud AI Fast-Path (1-2s, 100% accurate Khmer spelling)
+        sample_text = " ".join(str(l.get("text", "")) for l in lyrics_data[:10])
+        has_khmer = any(0x1780 <= ord(c) <= 0x17FF for c in sample_text)
+
+        # 1. ⚡ Gemini Cloud AI Fast-Path (1-2s, 100% accurate spelling)
         try:
             import json
             sample_input = [{"line_id": i, "text": l.get("text", "")} for i, l in enumerate(lyrics_data)]
+            if has_khmer:
+                role_prompt = "You are an expert Khmer linguist. Correct any phonetic spelling mistakes, typos, and missing subscript/diacritic errors in these Khmer singing lyrics while keeping identical line count and meaning."
+            else:
+                role_prompt = "You are an expert lyric editor. Clean up minor typos or phonetic misspellings in these singing lyrics while keeping the exact authentic language, line count, and meaning unchanged."
+
             gem_prompt = (
-                "You are an expert Khmer linguist. Correct any phonetic spelling mistakes, typos, "
-                "and missing subscript/diacritic errors in these Khmer singing lyrics while keeping identical line count and meaning.\n"
+                f"{role_prompt}\n"
                 "Return ONLY a JSON array with schema: [{\"line_id\": 0, \"text\": \"corrected text\"}]\n\n"
                 f"Input:\n{json.dumps(sample_input, ensure_ascii=False)}"
             )
-            gem_res = call_gemini_api(gem_prompt, json_mode=True, timeout=8)
+            gem_res = call_gemini_api(gem_prompt, json_mode=True, timeout=25)
             if gem_res:
                 corrected_list = json.loads(gem_res)
                 corrected_dict = {
@@ -623,53 +632,14 @@ class LocalLLMEngine:
         except Exception as gem_e:
             print(f"[Gemini Auto-Fix] Notice: {gem_e}. Falling back to local pipeline.")
 
-        if not self.is_loaded:
-            self.load_model()
-            
-        if self.llm is None:
-            # Fallback to local regex dictionary if no LLM installed
-            from backend.lyric_engine import normalize_khmer_orthography
-            for idx, line in enumerate(lyrics_data):
-                lyrics_data[idx]['text'] = normalize_khmer_orthography(line.get('text', ''))
+        # Guard: If non-Khmer (e.g. Vietnamese, English), DO NOT load the Khmer GGUF model into CPU RAM!
+        if not has_khmer:
             return lyrics_data
 
-        # Build numbered list
-        numbered_lines = []
-        for i, line in enumerate(lyrics_data):
-            numbered_lines.append(f"{i+1}. {line.get('text', '')}")
-            
-        raw_text_block = "\n".join(numbered_lines)
-        
-        prompt = (
-            "You are a Khmer linguistic expert. Correct the phonetic spelling mistakes in these Khmer singing lyrics. "
-            "Do not change the meaning or translate. Output exactly the same numbered list with corrected Khmer text.\n\n"
-            f"Original:\n{raw_text_block}\n\nCorrected:\n"
-        )
-        
-        try:
-            # We use max_tokens relative to the input length to ensure it can output all lines
-            output = self.llm(prompt, max_tokens=len(lyrics_data) * 20, temperature=0.1)
-            corrected_text = output['choices'][0]['text'].strip()
-            
-            # Parse numbered output
-            import re
-            corrected_dict = {}
-            for line in corrected_text.splitlines():
-                match = re.match(r"^(\d+)[\.\)]\s*(.+)$", line.strip())
-                if match:
-                    line_idx = int(match.group(1)) - 1
-                    corrected_dict[line_idx] = match.group(2).strip()
-                    
-            # Apply corrections while keeping 100% of the timestamps untouched!
-            for i, line_data in enumerate(lyrics_data):
-                if i in corrected_dict and corrected_dict[i]:
-                    lyrics_data[i]['text'] = corrected_dict[i]
-                    # We clear the words array so `double_check_lyrics` will cleanly re-interpolate the corrected words!
-                    lyrics_data[i]['words'] = [] 
-                    
-        except Exception as e:
-            print(f"LLM Auto-Fix Pipeline Failed: {e}")
-            
+        # For Khmer, apply instant regex dictionary normalization first
+        from backend.lyric_engine import normalize_khmer_orthography
+        for idx, line in enumerate(lyrics_data):
+            lyrics_data[idx]['text'] = normalize_khmer_orthography(line.get('text', ''))
         return lyrics_data
 
     def analyze_text(self, text: str) -> Dict[str, Any]:
@@ -760,8 +730,129 @@ class LocalLLMEngine:
     def translate_to_khmer(self, english_text: str) -> str:
         return self.translate_text(english_text, target_lang="Khmer")
 
-    def translate_lyrics_data(self, lyrics_data: List[Dict[str, Any]], target_lang: str = "Khmer") -> List[Dict[str, Any]]:
-        """Translates an array of lyrics_data objects to the target language using Gemini."""
+    @staticmethod
+    def _detect_source_language(texts: List[str]) -> str:
+        """Auto-detects the dominant source language from a list of lyric texts."""
+        sample = " ".join(texts[:30])
+        if not sample.strip():
+            return "Unknown"
+
+        def _share(pred):
+            letters = [c for c in sample if c.isalpha()]
+            if not letters:
+                return 0.0
+            return sum(1 for c in letters if pred(c)) / len(letters)
+
+        if _share(lambda c: '\u4E00' <= c <= '\u9FFF') >= 0.25:
+            return "Chinese"
+        if _share(lambda c: '\u3040' <= c <= '\u309F' or '\u30A0' <= c <= '\u30FF') >= 0.10:
+            return "Japanese"
+        if _share(lambda c: '\uAC00' <= c <= '\uD7AF' or '\u1100' <= c <= '\u11FF') >= 0.20:
+            return "Korean"
+        if _share(lambda c: '\u0E00' <= c <= '\u0E7F') >= 0.25:
+            return "Thai"
+        if _share(lambda c: '\u0E80' <= c <= '\u0EFF') >= 0.25:
+            return "Lao"
+        if _share(lambda c: '\u1000' <= c <= '\u109F') >= 0.25:
+            return "Myanmar"
+        if _share(lambda c: '\u1780' <= c <= '\u17FF') >= 0.25:
+            return "Khmer"
+        # Vietnamese: Latin script with significant diacritics
+        vi_re = re.compile(
+            r'[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]',
+            re.IGNORECASE
+        )
+        vi_marks = len(vi_re.findall(sample))
+        latin_letters = sum(1 for c in sample if c.isalpha() and 'a' <= c.lower() <= 'z')
+        if latin_letters and vi_marks >= 2 and (vi_marks / latin_letters) >= 0.06:
+            return "Vietnamese"
+        return "English"
+
+    @staticmethod
+    def _build_khmer_translation_prompt(
+        source_lang: str,
+        payload_str: str,
+        song_title: str = "",
+        artist: str = ""
+    ) -> str:
+        """Builds the culturally-adapted Khmer lyric translation prompt.
+
+        Implements the studio adaptation brief: never word-for-word, natural everyday Khmer,
+        emotion and meaning preserved, rhythm matched, Khmer script only in the output. The
+        output contract stays JSON (id/text) so cue order and timings are never disturbed.
+        """
+        return (
+            "You are an expert Khmer song lyric translator and cultural adapter. "
+            "Your task is to translate song lyrics from foreign languages into natural, "
+            "beautiful Khmer (ភាសាខ្មែរ).\n\n"
+
+            "## CRITICAL RULES:\n\n"
+            "1. **DO NOT translate word-by-word (កុំបកប្រែពាក្យម៉ាត់ៗ)**\n"
+            "   - ❌ 'I can't stop loving you' → 'ខ្ញុំមិនអាចបញ្ឈប់ការស្រឡាញ់អ្នក'\n"
+            "   - ✅ 'I can't stop loving you' → 'បេះដូងនេះមិនធ្លាប់ភ្លេចអូនសោះ'\n\n"
+            "2. **Must sound like natural Khmer (ត្រូវតែស្ដាប់ជាខ្មែរធម្មជាតិ)**\n"
+            "   - Use Khmer poetic expressions and idioms where appropriate\n"
+            "   - The translation should feel like it was originally written in Khmer\n"
+            "   - A Khmer listener must understand it immediately, without confusion\n\n"
+            "3. **Preserve the emotion and meaning (រក្សាអារម្មណ៍ និងអត្ថន័យ)**\n"
+            "   - Keep the original song's emotional tone (sad, happy, romantic, energetic)\n"
+            "   - The core message must remain the same\n"
+            "   - Adapt cultural references to Khmer equivalents when needed\n\n"
+            "4. **Use everyday Khmer vocabulary (ប្រើពាក្យខ្មែរដែលប្រើប្រចាំថ្ងៃ)**\n"
+            "   - Avoid overly formal or literary Khmer that sounds unnatural\n"
+            "   - Avoid Pali/Sanskrit heavy words unless they are commonly used\n"
+            "   - Use words that ordinary Khmer speakers would easily understand\n\n"
+            "5. **Match the rhythm and flow (ឱ្យត្រូវនឹងចង្វាក់បទ)**\n"
+            "   - Keep a similar syllable count per line where possible\n"
+            "   - The Khmer text must flow smoothly when read aloud or sung along\n\n"
+            "6. **Khmer script only in the output (សរសេរអក្សរខ្មែរប៉ុណ្ណោះ)**\n"
+            "   - Never leave Thai, Lao, Myanmar, Vietnamese or Chinese characters inside a translated line\n"
+            "   - ❌ 'ปล่อយវាទៅ' (Thai characters slipped in) → ✅ 'លែងវាទៅ'\n\n"
+
+            "## EXAMPLES (word-for-word ❌ versus natural Khmer ✅):\n\n"
+            "English → Khmer\n"
+            "  'You are the sunshine of my life'\n"
+            "    ❌ 'អ្នកជាពន្លឺថ្ងៃនៃជីវិតរបស់ខ្ញុំ'   ✅ 'អូនជាពន្លឺបំភ្លឺបេះដូងបង'\n"
+            "  'Every breath you take, I'll be watching you'\n"
+            "    ❌ 'រាល់ដង្ហើមដែលអ្នកដក ខ្ញុំនឹងមើលអ្នក'   ✅ 'រាល់ដង្ហើមរបស់អូន បងនៅតែមើលថែ'\n"
+            "  'Let it go, let it go, can't hold it back anymore'\n"
+            "    ❌ 'ទុកវាទៅ ទុកវាទៅ មិនអាចកាន់វាត្រឡប់ទៀតទេ'   ✅ 'លែងវាទៅ លែងខ្វល់ទៀតហើយ លែងអាចស៊ូទ្រាំទៀតហើយ'\n"
+            "Chinese → Khmer\n"
+            "  '月亮代表我的心'\n"
+            "    ❌ 'ព្រះច័ន្ទតំណាងបេះដូងរបស់ខ្ញុំ'   ✅ 'ព្រះច័ន្ទជាសាក្សីស្នេហ៍បង'\n"
+            "Korean → Khmer\n"
+            "  '사랑해요' (Saranghaeyo)\n"
+            "    ❌ 'ស្រឡាញ់អ្នក'   ✅ 'បងស្រឡាញ់អូន'\n"
+            "Thai → Khmer\n"
+            "  'คิดถึงเธอทุกวัน'\n"
+            "    ❌ 'គិតដល់អ្នករាល់ថ្ងៃ'   ✅ 'នឹកអូនរាល់ថ្ងៃមិនធ្លាប់ភ្លេច'\n\n"
+
+            "## SONG CONTEXT:\n"
+            f"- Source language: {source_lang}\n"
+            f"- Song title: {song_title or 'not provided'}\n"
+            f"- Artist: {artist or 'not provided'}\n\n"
+
+            "## OUTPUT FORMAT:\n"
+            "Return ONLY a valid JSON array with one object per input line, in the same order:\n"
+            "  [{\"id\": <original id>, \"text\": \"<Khmer line>\"}, ...]\n"
+            "Each original line must get exactly one Khmer line: never merge lines, never skip lines, "
+            "never transliterate the source, and add no explanations, notes or markdown.\n\n"
+            f"## ORIGINAL LYRICS (line by line):\n{payload_str}"
+        )
+
+    def translate_lyrics_data(
+        self,
+        lyrics_data: List[Dict[str, Any]],
+        target_lang: str = "Khmer",
+        song_title: str = "",
+        artist: str = ""
+    ) -> List[Dict[str, Any]]:
+        """Translates an array of lyrics_data objects to the target language using Gemini.
+
+        When the target is Khmer, uses the culturally-adapted prompt that enforces natural
+        poetic Khmer instead of word-for-word output. Song title and artist are passed as
+        context because they steer pronoun choice (បង/អូន) and register.
+        """
         if not lyrics_data:
             return lyrics_data
 
@@ -772,26 +863,40 @@ class LocalLLMEngine:
                 "id": l.get("line_id", i),
                 "text": l.get("text", "")
             })
-            
+
         import json
         payload_str = json.dumps(simplified_lines, ensure_ascii=False)
-        
-        prompt = (
-            f"You are a professional lyric translator. Translate the following lyrics to {target_lang}. "
-            "Keep the meaning, poetic tone, and context intact. "
-            "IMPORTANT: Return ONLY a valid JSON array of objects. Each object MUST have an 'id' (matching the original) and a 'text' (the translated text).\n"
-            f"Input:\n{payload_str}"
-        )
-        
+
+        # Detect whether to use the rich Khmer cultural prompt
+        is_khmer_target = target_lang.lower().strip() in ("khmer", "km", "cambodian", "ខ្មែរ")
+
+        if is_khmer_target:
+            texts = [l.get("text", "") for l in lyrics_data]
+            source_lang = self._detect_source_language(texts)
+            prompt = self._build_khmer_translation_prompt(
+                source_lang, payload_str, song_title=song_title, artist=artist
+            )
+        else:
+            prompt = (
+                f"You are a professional song lyric translator. Translate the following lyrics to {target_lang}. "
+                "Translate naturally — do NOT translate word-by-word. "
+                "Keep the poetic tone, emotion, and singability intact. "
+                "The translation should sound like it was originally written in the target language. "
+                f"Song title: {song_title or 'not provided'}. Artist: {artist or 'not provided'}. "
+                "IMPORTANT: Return ONLY a valid JSON array of objects. Each object MUST have an 'id' (matching the original) and a 'text' (the translated text). "
+                "One translated line per input line, same order, no notes.\n"
+                f"Input:\n{payload_str}"
+            )
+
         try:
-            res_str = call_gemini_api(prompt, json_mode=True, timeout=15)
+            res_str = call_gemini_api(prompt, json_mode=True, timeout=30)
             if not res_str:
                 return lyrics_data
-                
+
             translated_lines = json.loads(res_str)
             # Create a lookup map by id
             trans_map = {str(item.get("id")): item.get("text", "") for item in translated_lines if "id" in item}
-            
+
             # Map back to original structure
             result_data = []
             for i, l in enumerate(lyrics_data):

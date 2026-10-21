@@ -265,6 +265,12 @@
   border: 1px solid var(--ui-line);
   border-radius: var(--ui-r-md);
 }
+/* Pulse used when the stage chip points you at the control that owns the mode. */
+.ui-seg.is-flash { animation: ui-seg-flash 1.4s ease; }
+@keyframes ui-seg-flash {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0); border-color: var(--ui-line); }
+  25%, 75% { box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.45); border-color: var(--ui-accent); }
+}
 .ui-seg-btn {
   appearance: none;
   display: flex;
@@ -535,6 +541,17 @@
   line-height: 1.35;
   color: var(--accent);
 }
+
+/* Mode-aware teleprompter: the list mirrors what the stage paints. In "Translation only"
+   the original line is context, so it recedes and the sung line takes the emphasis. */
+.tp-text, .tp-tr { transition: opacity 0.2s ease, color 0.2s ease; }
+.ui-tp[data-display-mode="translation_only"] .tp-main .tp-text { opacity: 0.42; }
+.ui-tp[data-display-mode="translation_only"] .tp-tr {
+  color: #ffffff;
+  font-weight: 600;
+  font-size: var(--ui-fs-md);
+}
+.ui-tp[data-display-mode="original_only"] .tp-tr { opacity: 0.55; }
 
 /* ---------- progress + stat read-outs ---------- */
 .ui-prog {

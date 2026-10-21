@@ -329,7 +329,7 @@
               <div class="ui-field">
                 <span class="ui-lab">Lyrics</span>
                 <div class="ui-acts--1 ui-acts">
-                  <button id="btn-transcribe-ai" class="ui-btn ui-btn--go" title="Transcribe and word-sync the lyrics with Gemini AI"><span>Auto-Sync Lyrics (Gemini AI)</span></button>
+                  <button id="btn-transcribe-ai" class="ui-btn ui-btn--go" title="Transcribe the singer audio, or word-sync the lyrics you already loaded, on this machine. Original lyrics text is never replaced."><span>Auto-Sync Lyrics</span></button>
                   <div class="ui-row">
                     <button id="btn-ai-auto-fix" class="ui-btn ui-btn--ai" style="flex: 1 1 auto;" title="Use the LLM to fix phonetic spelling across the whole song without breaking timestamps"><span>AI Fix Spelling</span></button>
                     <button id="btn-upload-lrc" class="ui-btn" title="Import an LRC, SRT or VTT subtitle file"><span>Import Sub</span></button>
@@ -483,6 +483,9 @@
         <div class="stage-actions">
           <button id="btn-stage-center-badge" class="ui-btn ui-btn--sm" title="Customize Center Circle Badge / Logo (or click the circle directly!)">
             <span class="ui-hide-sm">Center Badge</span>
+          </button>
+          <button id="btn-stage-lyric-mode" class="ui-btn ui-btn--sm" title="Which lyric line the stage and the export actually paint — click to change">
+            <span id="stage-lyric-mode-text">Mode: Both</span>
           </button>
           <button id="btn-toggle-lyrics-overlay" class="ui-btn ui-btn--sm is-on" title="Toggle Lyrics Overlay on Video">
             <span id="toggle-lyrics-icon">👁️</span> <span id="toggle-lyrics-text">Lyrics: ON</span>
@@ -819,7 +822,9 @@
             <summary>Synced Teleprompter
               <span class="ui-spacer"></span>
               <span id="lyrics-count-badge" class="ui-chip ui-chip--info">0 Lines</span>
-              <span id="lyrics-verified-badge" class="ui-chip ui-chip--ok" style="display: none;">100% Verified</span>
+              <span id="lyrics-mode-badge" class="ui-chip" title="What the stage and export actually paint">Original only</span>
+              <span id="studio-engine-chip" class="ui-chip ui-chip--warn" style="display: none;">Energy sync only</span>
+              <span id="lyrics-verified-badge" class="ui-chip ui-chip--warn" style="display: none;">Timing Checked</span>
             </summary>
             <div class="ui-sec-body">
 
@@ -828,8 +833,8 @@
                 <div class="ui-acts">
                   <button id="btn-autofix-lyrics" class="ui-btn ui-btn--warn" title="Auto-fix phonetic and spelling mistakes in words in place without changing any line structure or timing">Fix Words</button>
                   <button id="btn-paste-align-lyrics" class="ui-btn ui-btn--ai" title="Paste authentic original lyrics to fix Whisper misheard words while preserving timestamps">Paste &amp; Align</button>
-                  <button id="btn-sync-vocal-timing" class="ui-btn ui-btn--go" title="Acoustically snap every line start &amp; end to the singer's vocal phrasing &amp; tempo (fixes fast or slow singing timing)">Re-Sync to Music</button>
-                  <button id="btn-verify-lyrics" class="ui-btn ui-btn--go" title="Double-Check, auto-correct and guarantee 100% correct lyrics timing">Double-Check</button>
+                  <button id="btn-sync-vocal-timing" class="ui-btn ui-btn--go" title="Measure every line and word start against the selected singer audio and rewrite the timestamps. The lyric text you loaded stays exactly as it is.">Re-Sync to Music</button>
+                  <button id="btn-verify-lyrics" class="ui-btn ui-btn--go" title="Re-check the timestamps against the singer audio. If the check cannot be done honestly, it refuses instead of guessing.">Double-Check</button>
                 </div>
               </div>
 

@@ -619,13 +619,12 @@ def _ensure_vocal_stem(audio_path: str) -> None:
     if not audio_path or not os.path.exists(audio_path) or get_cached_vocals_path(audio_path):
         return
     try:
-        import torch
-        if not torch.cuda.is_available():
-            return
         try:
-            from backend.vocal_separator import separate_vocals_demucs
+            from backend.vocal_separator import separate_vocals_demucs, cuda_available, missing_dependency
         except ImportError:
-            from vocal_separator import separate_vocals_demucs
+            from vocal_separator import separate_vocals_demucs, cuda_available, missing_dependency
+        if missing_dependency() or not cuda_available():
+            return
         separate_vocals_demucs(audio_path, device="cuda")
     except Exception as e:
         log.info(f"[Force Align] Vocal stem unavailable, aligning on full mix: {e}")

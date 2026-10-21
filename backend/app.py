@@ -65,7 +65,7 @@ from backend.lyric_engine import (
     tokenize_line_words,
     compute_weighted_word_timestamps
 )
-from backend.vocal_align import calibrate_lyrics_with_vocal_activity
+from backend.vocal_align import force_align_lyrics_to_audio
 from kmvm.youtube_downloader import download_youtube_audio, is_youtube_url, extract_youtube_url
 from backend.llm_engine import llm_engine
 
@@ -162,6 +162,17 @@ async def _on_startup():
     print(msg, flush=True)
     import logging; logging.getLogger("uvicorn").info(msg)
 
+    # Started on an interpreter without the sync engines, the studio silently degrades to energy
+    # spacing and looks broken. Say so on the console before the user has to guess.
+    from backend.ctc_align import missing_dependency as aligner_missing
+    from backend.vocal_separator import missing_dependency as separator_missing
+    for label, gap in (("word aligner", aligner_missing()), ("vocal separator", separator_missing())):
+        if gap:
+            warn = (f"[VIDA] {label} disabled: '{gap}' is not installed for {sys.executable}. "
+                    f"Start VIDA with run_vida_desktop.bat (venv\\Scripts\\python.exe).")
+            print(warn, flush=True)
+            logging.getLogger("uvicorn").warning(warn)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -188,7 +199,25 @@ async def add_cors_headers(request: Request, call_next):
 @app.get("/health")
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "app": "VIDA Studio", "engine": "online"}
+    """Reports which sync engines this interpreter can actually run, without loading any model."""
+    from backend.ctc_align import missing_dependency as aligner_missing
+    from backend.vocal_separator import missing_dependency as separator_missing
+
+    venv_python = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               "venv", "Scripts", "python.exe")
+    gap = aligner_missing()
+    sep_gap = separator_missing()
+    return {
+        "status": "ok",
+        "app": "VIDA Studio",
+        "engine": "online",
+        "python": sys.executable,
+        "venv_python": venv_python if os.path.exists(venv_python) else None,
+        "word_aligner": {"ready": gap is None, "missing": gap},
+        "vocal_separator": {"ready": sep_gap is None, "missing": sep_gap},
+        # The word aligner and Demucs each need a process of their own on this machine.
+        "sync_grade": "word" if gap is None else ("phrase" if sep_gap is None else "energy"),
+    }
 
 _last_desktop_heartbeat = _time.time()
 _desktop_client_connected = False
@@ -468,45 +497,20 @@ def transcribe_audio(req: TranscribeRequest):
     if is_khmer_target and not target_lang:
         target_lang = "km"
 
-    # 0. User Provided / Existing Lyrics Guard:
-    # When user already provided or loaded authentic lyrics, NEVER run speech-to-text to overwrite them!
-    # Force-align the user's authentic lyrics to the singer's actual singing voice!
-    if req.lyrics_data and len(req.lyrics_data) >= 2:
-        update_transcribe_progress(25, f"🎧 Aligning {len(req.lyrics_data)} authentic lyrics to singer's voice...")
-        try:
-            from backend.khmer_lyric_matcher import align_lyrics_with_gemini_multimodal
-            base_t = os.path.splitext(os.path.basename(req.audio_path))[0]
-            c_title, c_artist = clean_youtube_title_and_artist(req.song_title or base_t, req.artist_name or "", use_gemini=False)
-            aligned = align_lyrics_with_gemini_multimodal(
-                audio_path=req.audio_path,
-                lyrics_input=req.lyrics_data,
-                title=c_title or base_t,
-                artist=c_artist or ""
-            )
-            if aligned and len(aligned) >= 2:
-                try:
-                    base_audio, _ = os.path.splitext(req.audio_path)
-                    for ext in (".lrc", ".km.lrc"):
-                        export_lyrics_to_lrc(aligned, f"{base_audio}{ext}")
-                    srt_str = export_subtitles_to_srt(aligned)
-                    for ext in (".srt", ".km.srt"):
-                        with open(f"{base_audio}{ext}", "w", encoding="utf-8") as sf:
-                            sf.write(srt_str)
-                except Exception:
-                    pass
-                update_transcribe_progress(100, f"✅ Verified lyrics aligned to singing voice ({len(aligned)} lines)")
-                return {
-                    "status": "success",
-                    "source": "multimodal_ai_forced_alignment",
-                    "detected_language": target_lang or "km",
-                    "lyrics": aligned,
-                    "count": len(aligned)
-                }
-        except Exception as e:
-            print(f"[Transcribe] Golden lyrics forced alignment notice: {e}")
+    if req.lyrics_data:
+        update_transcribe_progress(25, "Aligning original lyrics to the selected singer audio")
+        audio_p = _resolve_alignment_audio(req.audio_path)
+        verified, report, source = _align_selected_lyrics(req.lyrics_data, audio_p)
+        _save_aligned_subtitles(verified, audio_p)
+        update_transcribe_progress(100, f"Aligned {len(verified)} original lyric lines")
+        return {
+            "status": "success", "source": source,
+            "detected_language": target_lang or detect_text_language(" ".join(line["text"] for line in verified)),
+            "lyrics": verified, "count": len(verified), "report": report,
+        }
 
     # 1. Ultra-Fast Check: Matching studio subtitle/LRC file (.km.lrc, .lrc, .srt, .vtt)
-    # ONLY use instant disk cache if NOT force_ai! When user clicks "Auto-Sync (AI)" or "Re-Sync", ALWAYS run Gemini AI!
+    # Disk cache is skipped when the user forces a re-sync, so the button always re-measures.
     sub_path = None
     if not req.force_ai:
         sub_path = find_matching_subtitles(req.audio_path, target_lang=target_lang)
@@ -559,9 +563,10 @@ def transcribe_audio(req: TranscribeRequest):
         except Exception as lrc_err:
             print(f"[LRCLIB Fast-Path] Notice: {lrc_err}")
 
-    # ⚡ GEMINI CLOUD AI FAST-PATH (Ultra-Fast 1-2s, 100% accurate, bypasses slow CPU Demucs!)
+    # ⚡ LYRIC RETRIEVAL FAST-PATH — the cloud finds the authentic Khmer words; the timings are
+    # always re-measured here against the singer audio, never trusted from the cloud.
     if is_khmer_target and (req.model_size == "gemini-fast" or req.model_size != "qwen3-khmer"):
-        update_transcribe_progress(15, "⚡ Gemini AI retrieving authentic lyrics & timestamps...")
+        update_transcribe_progress(15, "Retrieving authentic Khmer lyrics...")
         try:
             try:
                 from backend.khmer_lyric_matcher import match_or_fetch_khmer_lyrics
@@ -571,18 +576,35 @@ def transcribe_audio(req: TranscribeRequest):
             clean_t, clean_a = clean_youtube_title_and_artist(base_title, use_gemini=True)
             matcher_res = match_or_fetch_khmer_lyrics(req.audio_path, clean_t, clean_a, progress_callback=update_transcribe_progress)
             if matcher_res:
-                lrc_path, aligned = matcher_res
+                lrc_path, _matcher_aligned = matcher_res
                 lyrics = parse_subtitle_file(lrc_path, audio_path=req.audio_path)
                 if lyrics:
-                    update_transcribe_progress(100, f"✅ Gemini AI: Synced {len(lyrics)} lines!")
-                    return {
-                        "status": "success",
-                        "source": "gemini-cloud",
-                        "file": os.path.basename(lrc_path),
-                        "detected_language": target_lang or "km",
-                        "lyrics": lyrics,
-                        "count": len(lyrics)
-                    }
+                    try:
+                        audio_p = _resolve_alignment_audio(req.audio_path)
+                        verified, report, local_source = _align_selected_lyrics(lyrics, audio_p)
+                        update_transcribe_progress(100, f"Aligned {len(verified)} Khmer lines to the singer audio")
+                        return {
+                            "status": "success",
+                            "source": local_source,
+                            "file": os.path.basename(lrc_path),
+                            "detected_language": target_lang or "km",
+                            "lyrics": verified,
+                            "count": len(verified),
+                            "report": report,
+                        }
+                    except HTTPException as align_notice:
+                        # Retrieval succeeded but the audio could not be re-measured; hand back
+                        # the retrieved sheet and say plainly where its timings came from.
+                        print(f"[Khmer Local Align] {align_notice.detail} — returning retrieved timings")
+                        update_transcribe_progress(100, f"Retrieved {len(lyrics)} lines (timing not re-measured)")
+                        return {
+                            "status": "success",
+                            "source": "retrieved-timing",
+                            "file": os.path.basename(lrc_path),
+                            "detected_language": target_lang or "km",
+                            "lyrics": lyrics,
+                            "count": len(lyrics),
+                        }
         except Exception as gem_err:
             print(f"[Gemini Transcribe Fast-Path] Notice: {gem_err}. Continuing with fallback.")
 
@@ -593,8 +615,11 @@ def transcribe_audio(req: TranscribeRequest):
     can_run_demucs = False
     if req.use_demucs or req.model_size == "qwen3-khmer":
         try:
-            import torch
-            can_run_demucs = torch.cuda.is_available()
+            try:
+                from backend.vocal_separator import cuda_available
+            except ImportError:
+                from vocal_separator import cuda_available
+            can_run_demucs = cuda_available()
             if not can_run_demucs:
                 print("[Demucs] Skipped on CPU (no CUDA GPU). Using ultra-fast direct acoustic alignment.")
         except Exception:
@@ -607,7 +632,7 @@ def transcribe_audio(req: TranscribeRequest):
             except ImportError:
                 from vocal_separator import separate_vocals_demucs
             update_transcribe_progress(20, "Demucs: Isolating singing vocals from instruments...")
-            sep_result = separate_vocals_demucs(req.audio_path, progress_callback=update_transcribe_progress)
+            sep_result = separate_vocals_demucs(req.audio_path, device="cuda", progress_callback=update_transcribe_progress)
             if sep_result.get("vocals") and os.path.exists(sep_result["vocals"]):
                 transcribe_path = sep_result["vocals"]
                 print(f"[Demucs] Using isolated vocals for transcription: {transcribe_path}")
@@ -701,10 +726,20 @@ def transcribe_audio(req: TranscribeRequest):
                         lrc_p, _ = gem_res
                         lyrics = parse_subtitle_file(lrc_p)
                         detected_lang = "km"
-                        source_type = "gemini-cloud"
-                        print(f"[KMVM Transcribe] ✅ Replaced Whisper hallucination with {len(lyrics)} authentic Gemini lyrics!")
+                        source_type = "retrieved-timing"
+                        print(f"[KMVM Transcribe] Replaced Whisper hallucination with {len(lyrics)} retrieved Khmer lines!")
                 except Exception as fb_err:
                     print(f"[KMVM Transcribe] Gemini fallback notice: {fb_err}")
+
+        if source_type == "retrieved-timing":
+            # Retrieved sheets come with cloud timings; re-measure the words against the singer
+            # audio so nothing guessed by the model is ever cached or drawn on stage.
+            try:
+                audio_p = _resolve_alignment_audio(req.audio_path)
+                verified, _report, local_source = _align_selected_lyrics(lyrics, audio_p)
+                lyrics, source_type = verified, local_source
+            except HTTPException as align_notice:
+                print(f"[KMVM Local Align] {align_notice.detail} — keeping the retrieved sheet as-is")
 
         lang_str = str(detected_lang).upper() if detected_lang else "SYNCED"
 
@@ -763,72 +798,22 @@ async def upload_lyrics_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=f"Failed to parse uploaded subtitle file: {str(e)}")
 
 @app.post("/api/lyrics/verify")
-async def verify_lyrics_api(req: LyricsVerifyRequest):
-    """
-    Double checks, auto-corrects, and validates lyrics for 100% accuracy and millisecond sync.
-    If audio_path is provided, invokes Google Gemini Multimodal AI to actively re-listen and verify against the singer!
-    """
+def verify_lyrics_api(req: LyricsVerifyRequest):
     try:
         lyrics = req.lyrics_data or []
-        audio_p = req.audio_path
-        if audio_p:
-            clean_rel = audio_p.replace("\\", "/").lstrip("/")
-            candidates = [
-                audio_p,
-                os.path.abspath(audio_p),
-                os.path.join(AUDIO_DIR, os.path.basename(audio_p)),
-                os.path.join(UPLOAD_DIR, "audio", os.path.basename(audio_p)),
-                os.path.join(os.path.dirname(AUDIO_DIR), clean_rel)
-            ]
-            audio_p = next((c for c in candidates if c and os.path.exists(c)), None)
-
-        if not audio_p and os.path.exists(AUDIO_DIR):
-            all_audios = [
-                os.path.join(AUDIO_DIR, f) for f in os.listdir(AUDIO_DIR)
-                if f.lower().endswith(('.mp3', '.wav', '.flac', '.m4a', '.ogg'))
-            ]
-            if all_audios:
-                all_audios.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-                audio_p = all_audios[0]
-
-        if audio_p and os.path.exists(audio_p) and len(lyrics) >= 2:
-            try:
-                from backend.khmer_lyric_matcher import align_lyrics_with_gemini_multimodal
-                base_t = os.path.splitext(os.path.basename(audio_p))[0]
-                c_title, c_artist = clean_youtube_title_and_artist(base_t, use_gemini=False)
-                print(f"[Double-Check] 🎧 Google Gemini AI double-checking {len(lyrics)} lines against audio: {audio_p}")
-                ai_aligned = align_lyrics_with_gemini_multimodal(
-                    audio_path=audio_p,
-                    lyrics_input=lyrics,
-                    title=c_title or base_t,
-                    artist=c_artist or ""
-                )
-                if ai_aligned and len(ai_aligned) >= 2:
-                    lyrics = ai_aligned
-                    print(f"[Double-Check] ✅ Google Gemini AI successfully verified {len(ai_aligned)} cues!")
-            except Exception as e:
-                print(f"[Double-Check] Gemini notice: {e}")
-
-        verified, report = double_check_lyrics(lyrics)
-
-        # Update companion .lrc and .srt on disk if audio path is known
-        if audio_p and os.path.exists(audio_p):
-            try:
-                base_audio, _ = os.path.splitext(audio_p)
-                for ext in (".lrc", ".km.lrc"):
-                    lrc_out = f"{base_audio}{ext}"
-                    export_lyrics_to_lrc(verified, lrc_out)
-                for ext in (".srt", ".km.srt"):
-                    srt_out = f"{base_audio}{ext}"
-                    with open(srt_out, "w", encoding="utf-8") as sf:
-                        sf.write(export_subtitles_to_srt(verified))
-            except Exception:
-                pass
-
+        if req.audio_path:
+            audio_p = _resolve_alignment_audio(req.audio_path)
+            verified, report, source = _align_selected_lyrics(lyrics, audio_p)
+            _save_aligned_subtitles(verified, audio_p)
+        else:
+            verified, report = double_check_lyrics(lyrics, preserve_text=True)
+            report.pop("confidence", None)
+            report["status"] = "Timestamp structure checked; no singer audio was checked"
+            source = "timestamp_validation"
         return {
             "status": "success",
             "verified": True,
-            "confidence": 100.0,
+            "source": source,
             "lines_count": len(verified),
             "words_count": report.get("total_words", 0),
             "corrections_made": report.get("corrections_count", 0),
@@ -836,11 +821,13 @@ async def verify_lyrics_api(req: LyricsVerifyRequest):
             "lyrics": verified,
             "srt_content": export_subtitles_to_srt(verified)
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Lyrics verification error: {str(e)}")
 
 @app.post("/api/lyrics/auto_fix")
-async def auto_fix_lyrics_api(req: LyricsVerifyRequest):
+def auto_fix_lyrics_api(req: LyricsVerifyRequest):
     """Passes the transcribed lyrics through the local LLM to fix phonetic/contextual errors."""
     try:
         from backend.llm_engine import llm_engine
@@ -858,31 +845,11 @@ async def auto_fix_lyrics_api(req: LyricsVerifyRequest):
         raise HTTPException(status_code=500, detail=f"LLM Auto-Fix Error: {str(e)}")
 
 @app.post("/api/lyrics/correct-with-reference")
-async def correct_lyrics_with_reference_api(req: LyricsCorrectReferenceRequest):
-    """
-    Aligns user-provided ground-truth original lyrics to the singer's actual singing voice.
-    1. The user's provided lyrics text is 100% sacred and preserved verbatim (zero speech-to-text overwriting).
-    2. Performs Multimodal AI Audio Alignment listening directly to the singer in the audio.
-    3. Calibrates start (0.28s early lead-in) and flush end timestamps to the singing voice.
-    4. Automatically writes companion .lrc and .srt files on disk.
-    """
+def correct_lyrics_with_reference_api(req: LyricsCorrectReferenceRequest):
     if not req.reference_text or not req.reference_text.strip():
         raise HTTPException(status_code=400, detail="Please paste reference lyrics text")
 
-    # Resolve audio_path if provided, relative, or infer latest from library
-    audio_p = req.audio_path
-    if audio_p and not os.path.exists(audio_p):
-        cand = os.path.join(AUDIO_DIR, os.path.basename(audio_p))
-        if os.path.exists(cand):
-            audio_p = cand
-    if not audio_p and os.path.exists(AUDIO_DIR):
-        all_audios = [
-            os.path.join(AUDIO_DIR, f) for f in os.listdir(AUDIO_DIR)
-            if f.lower().endswith(('.mp3', '.wav', '.flac', '.m4a', '.ogg'))
-        ]
-        if all_audios:
-            all_audios.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-            audio_p = all_audios[0]
+    audio_p = _resolve_alignment_audio(req.audio_path)
 
     raw_lines = [l.strip() for l in req.reference_text.splitlines() if l.strip()]
     ref_lines = []
@@ -898,66 +865,17 @@ async def correct_lyrics_with_reference_api(req: LyricsCorrectReferenceRequest):
     if not ref_lines:
         raise HTTPException(status_code=400, detail="No readable lyric lines found in pasted text")
 
-    aligned_lyrics = None
-    source_used = "gemini_multimodal_audio"
-
-    # Step 1: Multimodal AI Audio Alignment (Gemini listening to singer & matching pasted lyrics)
-    if audio_p and os.path.exists(audio_p) and len(ref_lines) >= 2:
-        try:
-            from backend.khmer_lyric_matcher import align_lyrics_with_gemini_multimodal
-            base_t = os.path.splitext(os.path.basename(audio_p))[0]
-            c_title, c_artist = clean_youtube_title_and_artist(base_t, use_gemini=False)
-            print(f"[Paste Align] 🎧 Gemini Multimodal listening to singer & aligning {len(ref_lines)} pasted lines to {audio_p}...")
-            aligned_lyrics = align_lyrics_with_gemini_multimodal(
-                audio_path=audio_p,
-                lyrics_input=ref_lines,
-                title=c_title or base_t,
-                artist=c_artist or ""
-            )
-            if aligned_lyrics and len(aligned_lyrics) >= 2:
-                print(f"[Paste Align] ✅ Multimodal AI successfully aligned {len(aligned_lyrics)} cues!")
-        except Exception as e:
-            print(f"[Paste Align] Gemini Multimodal Alignment notice: {e}")
-
-    # Step 2: Fallback to acoustic alignment if Gemini failed or offline
-    if not aligned_lyrics and audio_p and os.path.exists(audio_p) and len(ref_lines) >= 2:
-        try:
-            from backend.vocal_align import force_align_lyrics_to_audio
-            print(f"[Paste Align] Fallback to acoustic vocal alignment for {len(ref_lines)} lines...")
-            aligned_lyrics = force_align_lyrics_to_audio(ref_lines, audio_path=audio_p)
-            source_used = "acoustic_vocal_align"
-        except Exception as e:
-            print(f"[Paste Align] Acoustic alignment notice: {e}")
-
-    # Step 3: Final fallback to sequence alignment with existing cues or proportional spacing
-    if not aligned_lyrics:
-        from backend.llm_engine import align_and_correct_lyrics_with_reference
-        aligned_lyrics, report = align_and_correct_lyrics_with_reference(
-            lyrics_data=req.lyrics_data or [],
-            reference_text=req.reference_text,
-            audio_path=audio_p
-        )
-        source_used = "sequence_alignment"
-
-    # Step 4: Persist synchronized companion files (.lrc, .srt) on disk for permanent 0s future load
-    if audio_p and os.path.exists(audio_p) and aligned_lyrics:
-        try:
-            base_audio, _ = os.path.splitext(audio_p)
-            for ext in (".lrc", ".km.lrc"):
-                export_lyrics_to_lrc(aligned_lyrics, f"{base_audio}{ext}")
-            srt_str = export_subtitles_to_srt(aligned_lyrics)
-            for ext in (".srt", ".km.srt"):
-                with open(f"{base_audio}{ext}", "w", encoding="utf-8") as sf:
-                    sf.write(srt_str)
-            print(f"[Paste Align] ✅ Synced .lrc & .srt saved to disk for {base_audio}")
-        except Exception as disk_err:
-            print(f"[Paste Align] Notice saving companion files: {disk_err}")
+    aligned_lyrics, report, source_used = _align_selected_lyrics(
+        [{"text": text} for text in ref_lines], audio_p
+    )
+    _save_aligned_subtitles(aligned_lyrics, audio_p)
 
     return {
         "status": "success",
         "lines_count": len(aligned_lyrics),
         "changes_count": len(aligned_lyrics),
         "source": source_used,
+        "report": report,
         "lyrics": aligned_lyrics
     }
 
@@ -1005,6 +923,8 @@ async def save_subtitles_api(req: SubtitleSaveRequest):
 class TranslateLinesRequest(BaseModel):
     lines: List[str]
     target_lang: str = "English"
+    song_title: str = ""
+    artist: str = ""
 
 class TranslationSaveRequest(BaseModel):
     audio_path: Optional[str] = None
@@ -1079,14 +999,19 @@ def build_translation_display_lyrics(lyrics: List[Dict[str, Any]], mode: str,
     return out
 
 @app.post("/api/lyrics/translate-lines")
-async def translate_lyrics_lines_api(req: TranslateLinesRequest):
+def translate_lyrics_lines_api(req: TranslateLinesRequest):
     """AI-translates lyric lines to any target language, preserving 1:1 line order."""
     lines = [str(l) for l in (req.lines or [])]
     if not lines:
         return {"status": "success", "lines": []}
     try:
         payload = [{"line_id": i, "text": t} for i, t in enumerate(lines)]
-        translated = llm_engine.translate_lyrics_data(payload, target_lang=req.target_lang or "English")
+        translated = llm_engine.translate_lyrics_data(
+            payload,
+            target_lang=req.target_lang or "English",
+            song_title=req.song_title or "",
+            artist=req.artist or "",
+        )
         out = [str(l.get("text", "")) for l in translated]
         unchanged = sum(1 for a, b in zip(out, lines) if a.strip() == b.strip())
         if unchanged == len(lines):
@@ -1259,7 +1184,7 @@ async def export_subtitles_capcut_api(req: SubtitleExportRequest):
         raise HTTPException(status_code=400, detail=f"CapCut export failed: {str(e)}")
 
 @app.post("/api/subtitles/ai-fix")
-async def ai_fix_subtitles_api(req: SubtitleAIFixRequest):
+def ai_fix_subtitles_api(req: SubtitleAIFixRequest):
     """
     AI Core Subtitle Enhancer:
     1. Repairs phonetic and Khmer orthography errors using Gemini AI / LLM engine.
@@ -1280,162 +1205,119 @@ async def ai_fix_subtitles_api(req: SubtitleAIFixRequest):
             print(f"[AI Subtitle Fix] LLM step notice: {e}")
             llm_fixed = lyrics
 
-        # Step 2: Multimodal AI Audio Alignment if audio_path is provided
-        if req.align_vocals and req.audio_path:
-            audio_p = req.audio_path
-            # Try multiple resolution strategies to find the audio file
-            if not os.path.exists(audio_p):
-                candidates = [
-                    os.path.join(AUDIO_DIR, os.path.basename(audio_p)),
-                    os.path.join(UPLOAD_DIR, "audio", os.path.basename(audio_p)),
-                ]
-                audio_p = next((c for c in candidates if os.path.exists(c)), None)
-
-            # Last resort: find the most recent audio file
-            if not audio_p or not os.path.exists(audio_p):
-                if os.path.exists(AUDIO_DIR):
-                    all_audios = [
-                        os.path.join(AUDIO_DIR, f) for f in os.listdir(AUDIO_DIR)
-                        if f.lower().endswith(('.mp3', '.wav', '.flac', '.m4a', '.ogg'))
-                    ]
-                    if all_audios:
-                        all_audios.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-                        audio_p = all_audios[0]
-
-            if audio_p and os.path.exists(audio_p):
-                print(f"[AI Subtitle Fix] 🎙️ Multimodal AI alignment with audio: {audio_p}")
-                try:
-                    from backend.khmer_lyric_matcher import align_lyrics_with_gemini_multimodal
-                    ai_aligned = align_lyrics_with_gemini_multimodal(audio_p, llm_fixed)
-                    if ai_aligned and len(ai_aligned) >= 2:
-                        llm_fixed = ai_aligned
-                        print(f"[AI Subtitle Fix] ✅ Successfully aligned {len(ai_aligned)} cues with Gemini Multimodal AI")
-                    else:
-                        llm_fixed = calibrate_lyrics_with_vocal_activity(llm_fixed, audio_path=audio_p)
-                except Exception as ve:
-                    print(f"[AI Subtitle Fix] Vocal align notice: {ve}")
-                    llm_fixed = calibrate_lyrics_with_vocal_activity(llm_fixed, audio_path=audio_p)
-            else:
-                print(f"[AI Subtitle Fix] ⚠️ Audio file not found for vocal alignment: {req.audio_path}")
-
-        # Step 3: 100% Monotonic Verification & Millisecond Sync Pass
-        verified, report = double_check_lyrics(llm_fixed)
+        source = "timestamp_validation"
+        audio_p = None
+        if req.align_vocals:
+            audio_p = _resolve_alignment_audio(req.audio_path)
+            verified, report, source = _align_selected_lyrics(llm_fixed, audio_p)
+        else:
+            verified, report = double_check_lyrics(llm_fixed, preserve_text=True)
+            report.pop("confidence", None)
+            report["status"] = "Timestamp structure checked; no singer audio was checked"
         srt_content = export_subtitles_to_srt(verified)
-
-        # Step 4: Persist aligned lyrics and subtitles to disk if audio is known
-        if req.audio_path:
-            try:
-                base_audio, _ = os.path.splitext(req.audio_path)
-                for ext in (".lrc", ".km.lrc"):
-                    lrc_out = f"{base_audio}{ext}"
-                    if os.path.exists(os.path.dirname(lrc_out)):
-                        export_lyrics_to_lrc(verified, lrc_out)
-                for ext in (".srt", ".km.srt"):
-                    srt_out = f"{base_audio}{ext}"
-                    if os.path.exists(os.path.dirname(srt_out)):
-                        with open(srt_out, "w", encoding="utf-8") as sf:
-                            sf.write(srt_content)
-            except Exception:
-                pass
+        if audio_p:
+            _save_aligned_subtitles(verified, audio_p)
 
         return {
             "status": "success",
             "verified": True,
-            "confidence": 100.0,
+            "source": source,
             "count": len(verified),
             "corrections_made": report.get("corrections_count", 0),
             "report": report,
             "lyrics": verified,
             "srt_content": srt_content
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI Subtitle Fix failed: {str(e)}")
 
-@app.post("/api/subtitles/align-audio")
-async def align_subtitles_to_audio_api(req: SubtitleAIFixRequest):
-    """
-    Multimodal AI Audio Alignment:
-    Listens directly to the audio recording to detect the singer's vocal phrasing.
-    Eliminates drift during instrumental intros, guitar solos, and pauses with 100% precision.
-    """
-    try:
-        lyrics = req.lyrics_data or []
-        if not lyrics:
-            return {"status": "success", "lyrics": [], "count": 0}
+def _resolve_alignment_audio(audio_path: Optional[str]) -> str:
+    if not audio_path:
+        raise HTTPException(status_code=400, detail="Select an audio track before syncing lyrics")
+    decoded = urllib.parse.unquote(audio_path).replace("\\", "/")
+    candidates = [decoded, os.path.join(AUDIO_DIR, os.path.basename(decoded))]
+    audio_p = next((p for p in candidates if os.path.isfile(p)), None)
+    if not audio_p:
+        raise HTTPException(status_code=404, detail="Selected audio file not found")
+    return os.path.abspath(audio_p)
 
-        audio_p = req.audio_path
-        if audio_p:
-            clean_rel = audio_p.replace("\\", "/").lstrip("/")
-            candidates = [
-                audio_p,
-                os.path.abspath(audio_p),
-                os.path.join(AUDIO_DIR, os.path.basename(audio_p)),
-                os.path.join(UPLOAD_DIR, "audio", os.path.basename(audio_p)),
-                os.path.join(os.path.dirname(AUDIO_DIR), clean_rel)
-            ]
-            audio_p = next((c for c in candidates if c and os.path.exists(c)), None)
 
-        if not audio_p and os.path.exists(AUDIO_DIR):
-            all_audios = [
-                os.path.join(AUDIO_DIR, f) for f in os.listdir(AUDIO_DIR)
-                if f.lower().endswith(('.mp3', '.wav', '.flac', '.m4a', '.ogg'))
-            ]
-            if all_audios:
-                all_audios.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-                audio_p = all_audios[0]
+def _align_selected_lyrics(lyrics: List[Dict[str, Any]], audio_p: str):
+    from backend.audio_analyzer import decode_audio_to_numpy
+    import math
 
-        if not audio_p or not os.path.exists(audio_p):
-            raise HTTPException(status_code=400, detail="Audio file not found for vocal calibration")
+    texts = [str(line.get("text", "")).strip() for line in lyrics]
+    if not texts or not all(texts):
+        raise HTTPException(status_code=400, detail="Every lyric line must contain text")
+    _, _, duration = decode_audio_to_numpy(audio_p, target_sr=8000)
+    aligned = force_align_lyrics_to_audio(texts, audio_p, duration)
+    if not aligned or [line.get("text") for line in aligned] != texts:
+        raise HTTPException(status_code=422, detail="Could not align every original lyric line to this audio; lyrics were not replaced")
+    verified, report = double_check_lyrics(aligned, preserve_text=True)
+    if [line["text"] for line in verified] != texts:
+        raise HTTPException(status_code=422, detail="Alignment changed the original lines; lyrics were not replaced")
+    for original, line in zip(lyrics, verified):
+        if not (math.isfinite(line["start"]) and math.isfinite(line["end"]) and 0 <= line["start"] < line["end"] <= duration):
+            raise HTTPException(status_code=422, detail="Alignment falls outside the selected audio; lyrics were not replaced")
+        if any(not (math.isfinite(w["start"]) and math.isfinite(w["end"]) and line["start"] <= w["start"] < w["end"] <= line["end"]) for w in line["words"]):
+            raise HTTPException(status_code=422, detail="Invalid word timing; lyrics were not replaced")
+        line["line_id"] = original.get("line_id", line["line_id"])
+    for line, aligned_line in zip(verified, aligned):
+        if "confidence" in aligned_line:
+            line["confidence"] = aligned_line["confidence"]
+    source = "ctc_word_alignment" if all("confidence" in line for line in aligned) else "acoustic_estimate"
+    if source == "acoustic_estimate":
+        from backend.vocal_align import detect_vocal_segments
+        if len(detect_vocal_segments(audio_p)) < 2:
+            raise HTTPException(status_code=422, detail="No reliable singing phrases detected; lyrics were not replaced")
+    report.pop("confidence", None)
+    report["status"] = "Timestamp structure checked; singing accuracy requires playback review"
+    return verified, report, source
 
-        # Step 1: Multimodal AI Audio Alignment (Listening directly to singer)
-        aligned_from_audio = None
-        ref_lines = [str(l.get("text", "")).strip() for l in lyrics if str(l.get("text", "")).strip()]
-        if len(ref_lines) >= 2:
+
+def _save_aligned_subtitles(lyrics: List[Dict[str, Any]], audio_p: str):
+    base_audio = os.path.splitext(audio_p)[0]
+    suffixes = ("", ".km") if detect_text_language(" ".join(line["text"] for line in lyrics)) == "km" else ("",)
+    srt_content = export_subtitles_to_srt(lyrics)
+    # Caption parsers drop bracket punctuation, so compare bare words only.
+    cue_words = lambda cues: [re.sub(r"[^\w\s]+", "", c["text"], flags=re.UNICODE).strip().lower() for c in cues]
+    new_texts = cue_words(lyrics)
+    for suffix in suffixes:
+        export_lyrics_to_lrc(lyrics, f"{base_audio}{suffix}.lrc")
+        srt_path = f"{base_audio}{suffix}.srt"
+        if os.path.exists(srt_path):
+            # Only refresh an .srt that holds these same words. A human-made or translated
+            # caption track must never be silently replaced by estimated timings.
             try:
-                from backend.khmer_lyric_matcher import align_lyrics_with_gemini_multimodal
-                base_t = os.path.splitext(os.path.basename(audio_p))[0]
-                c_title, c_artist = clean_youtube_title_and_artist(base_t, use_gemini=False)
-                print(f"[Vocal Align] 🎧 Gemini Multimodal AI listening to singer & aligning {len(ref_lines)} lyric lines...")
-                aligned_from_audio = align_lyrics_with_gemini_multimodal(
-                    audio_path=audio_p,
-                    lyrics_input=lyrics,
-                    title=c_title or base_t,
-                    artist=c_artist or ""
-                )
-                if aligned_from_audio and len(aligned_from_audio) >= 2:
-                    print(f"[Vocal Align] ✅ Gemini Multimodal AI successfully aligned {len(aligned_from_audio)} cues!")
-            except Exception as gem_err:
-                print(f"[Vocal Align] Multimodal AI alignment notice: {gem_err}")
+                existing = cue_words(parse_subtitle_file(srt_path))
+            except Exception:
+                existing = None
+            if existing != new_texts:
+                continue
+        with open(srt_path, "w", encoding="utf-8") as f:
+            f.write(srt_content)
 
-        # Step 2: Fallback to acoustic calibration only if AI call failed
-        if aligned_from_audio:
-            calibrated = aligned_from_audio
-        else:
-            calibrated = calibrate_lyrics_with_vocal_activity(lyrics, audio_path=audio_p)
 
-        verified, report = double_check_lyrics(calibrated, preserve_text=True)
-
-        # Step 3: Automatically update companion .lrc and .srt on disk for permanent 0s future load
-        try:
-            base_audio, _ = os.path.splitext(audio_p)
-            for ext in (".lrc", ".km.lrc"):
-                lrc_out = f"{base_audio}{ext}"
-                export_lyrics_to_lrc(verified, lrc_out)
-            for ext in (".srt", ".km.srt"):
-                srt_out = f"{base_audio}{ext}"
-                srt_str = export_subtitles_to_srt(verified)
-                with open(srt_out, "w", encoding="utf-8") as sf:
-                    sf.write(srt_str)
-        except Exception:
-            pass
-
+@app.post("/api/subtitles/align-audio")
+def align_subtitles_to_audio_api(req: SubtitleAIFixRequest):
+    try:
+        if not req.lyrics_data:
+            raise HTTPException(status_code=400, detail="Load lyrics before syncing")
+        audio_p = _resolve_alignment_audio(req.audio_path)
+        verified, report, source = _align_selected_lyrics(req.lyrics_data, audio_p)
+        _save_aligned_subtitles(verified, audio_p)
         return {
             "status": "success",
+            "source": source,
             "count": len(verified),
             "lyrics": verified,
             "report": report,
             "srt_content": export_subtitles_to_srt(verified)
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Vocal subtitle alignment error: {str(e)}")
 

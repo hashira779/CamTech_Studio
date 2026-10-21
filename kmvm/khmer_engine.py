@@ -66,10 +66,57 @@ COMMON_KHMER_WORDS = {
 }
 FINAL_DIACRITICS = {'\u17CB', '\u17CD', '\u17D0', '\u17CF', '\u17C6', '\u17C7'}
 
+def _segment_unit_to_syllables(unit: str) -> List[str]:
+    """Segments a single word or token into Khmer orthographic syllables."""
+    if not unit:
+        return []
+    m_p = re.search(r'[!?,.:;«»"\'()\[\]\u17D4\u17D5]+$', unit)
+    trailing_p = m_p.group(0) if m_p else ''
+    core = unit[:len(unit)-len(trailing_p)] if trailing_p else unit
+    
+    # Check known dictionary words
+    for cw in sorted(COMMON_KHMER_WORDS, key=len, reverse=True):
+        if core == cw:
+            return [unit]
+
+    sylls = []
+    i = 0
+    n = len(core)
+    while i < n:
+        start = i
+        c = core[i]
+        i += 1
+        while i < n and core[i] == COENG and i + 1 < n:
+            i += 2
+        has_v = False
+        while i < n and core[i] in DEPENDENT_VOWELS:
+            has_v = True
+            i += 1
+        while i < n and core[i] in DIACRITICS:
+            i += 1
+        if i < n and core[i] in CONSONANTS:
+            next_is_syll = False
+            if i + 1 < n and (core[i+1] == COENG or core[i+1] in DEPENDENT_VOWELS):
+                next_is_syll = True
+            if not next_is_syll:
+                if i + 1 < n and core[i+1] in FINAL_DIACRITICS:
+                    i += 2
+                elif has_v or core[start:i+1] in COMMON_KHMER_WORDS:
+                    i += 1
+        syll = core[start:i]
+        if syll:
+            sylls.append(syll)
+    if sylls:
+        if trailing_p:
+            sylls[-1] += trailing_p
+        return sylls
+    return [unit] if unit else []
+
 def segment_khmer_syllables(text: str) -> List[str]:
     """
-    Breaks Khmer text into linguistically correct orthographic syllables and words.
-    Uses Node Intl.Segmenter when available, or robust phonetic clustering with inherent vowel support.
+    Breaks Khmer text into linguistically correct orthographic syllables.
+    Uses Node Intl.Segmenter when available to find word boundaries, then decomposes
+    compound words into orthographic syllables with subscript consonant ligature safety.
     """
     if not text:
         return []
@@ -78,6 +125,7 @@ def segment_khmer_syllables(text: str) -> List[str]:
         return []
 
     # 1. Fast Node Intl.Segmenter (gold-standard Unicode Annex #29)
+    words = None
     try:
         import subprocess, json
         js_code = (
@@ -103,63 +151,20 @@ def segment_khmer_syllables(text: str) -> List[str]:
             timeout=1.5
         )
         if res.returncode == 0 and res.stdout.strip():
-            words = json.loads(res.stdout.strip())
-            if words and len(words) > 0:
-                return [w.strip() for w in words if w.strip()]
+            raw_words = json.loads(res.stdout.strip())
+            if raw_words and len(raw_words) > 0:
+                words = [w.strip() for w in raw_words if w.strip()]
     except Exception:
-        pass
+        words = None
 
-    # 2. Pure Python Linguistic Fallback
-    raw_units = clean.split()
+    if not words:
+        words = clean.split()
+
     results = []
-    for unit in raw_units:
-        m_p = re.search(r'[!?,.:;«»"\'()\[\]\u17D4\u17D5]+$', unit)
-        trailing_p = m_p.group(0) if m_p else ''
-        core = unit[:len(unit)-len(trailing_p)] if trailing_p else unit
-        
-        # Check known dictionary words
-        matched = False
-        for cw in sorted(COMMON_KHMER_WORDS, key=len, reverse=True):
-            if core == cw:
-                results.append(unit)
-                matched = True
-                break
-        if matched:
-            continue
+    for w in words:
+        sylls = _segment_unit_to_syllables(w)
+        results.extend(sylls)
 
-        sylls = []
-        i = 0
-        n = len(core)
-        while i < n:
-            start = i
-            c = core[i]
-            i += 1
-            while i < n and core[i] == COENG and i + 1 < n:
-                i += 2
-            has_v = False
-            while i < n and core[i] in DEPENDENT_VOWELS:
-                has_v = True
-                i += 1
-            while i < n and core[i] in DIACRITICS:
-                i += 1
-            if i < n and core[i] in CONSONANTS:
-                next_is_syll = False
-                if i + 1 < n and (core[i+1] == COENG or core[i+1] in DEPENDENT_VOWELS):
-                    next_is_syll = True
-                if not next_is_syll:
-                    if i + 1 < n and core[i+1] in FINAL_DIACRITICS:
-                        i += 2
-                    elif has_v or core[start:i+1] in COMMON_KHMER_WORDS:
-                        i += 1
-            syll = core[start:i]
-            if syll:
-                sylls.append(syll)
-        if sylls:
-            if trailing_p:
-                sylls[-1] += trailing_p
-            results.extend(sylls)
-        else:
-            results.append(unit)
     return [r for r in results if r]
 
 def insert_khmer_word_breaks(text: str) -> str:

@@ -1,7 +1,12 @@
 import urllib.request
 import json
+import glob
+import os
 
-req_data = json.dumps({'audio_path': 'uploads/audio/tBu4Qq5fSiU.mp3'}).encode('utf-8')
+audio_files = glob.glob('uploads/audio/*.mp3') + glob.glob('uploads/audio/*.wav')
+target_audio = audio_files[0] if audio_files else 'uploads/audio/THIÊN ĐƯỜNG VỚI NGƯỜI THƯƠNG - Phương Mỹ Chi x DTAP.mp3'
+
+req_data = json.dumps({'audio_path': target_audio, 'force_ai': False}).encode('utf-8')
 req = urllib.request.Request('http://127.0.0.1:8000/api/transcribe', data=req_data, headers={'Content-Type': 'application/json'})
 resp = urllib.request.urlopen(req)
 data = json.loads(resp.read().decode('utf-8'))

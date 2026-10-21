@@ -291,6 +291,9 @@ def remove_repetitions(text: str, max_consecutive_repeats: int = 2) -> str:
     if not text:
         return ""
 
+    if '\n' in text:
+        return '\n'.join(remove_repetitions(line, max_consecutive_repeats) for line in text.split('\n'))
+
     tokens = text.split()
     if len(tokens) <= 2:
         return text
@@ -456,7 +459,10 @@ def clean_subtitle_text(text: str) -> str:
     text = re.sub(r'<.*?>', '', text)
     text = re.sub(r'\{.*?\}', '', text)
     text = re.sub(r'^\s*[-–—:]\s*', '', text)  # Strip leading speaker hyphen
-    text = re.sub(r'\s+', ' ', text).strip()
+    if '\n' in text:
+        text = '\n'.join(re.sub(r'[ \t\r\f\v]+', ' ', l).strip() for l in text.split('\n'))
+    else:
+        text = re.sub(r'\s+', ' ', text).strip()
 
     # Filter out stray single Khmer vowel diacritics or non-word debris (e.g. ាើ, single consonants)
     if is_khmer_text(text) and len(text) <= 2:
@@ -1122,7 +1128,7 @@ def format_srt_for_capcut(lyrics: List[Dict[str, Any]], max_chars_per_line: int 
 
         # Check if line is too long for CapCut safe zone (> max_chars_per_line)
         # and has multiple words that can be split into 2 singing phrases
-        if len(text) > max_chars_per_line and words and len(words) >= 4:
+        if '\n' not in text and len(text) > max_chars_per_line and words and len(words) >= 4:
             mid_idx = len(words) // 2
             part1_words = words[:mid_idx]
             part2_words = words[mid_idx:]
@@ -1437,8 +1443,8 @@ class WhisperTranscriber:
             c_type = "int8"
 
             try:
-                import torch
-                if torch.cuda.is_available():
+                from backend.vocal_separator import cuda_available
+                if cuda_available():
                     dev = "cuda"
                     c_type = "float16"
             except ImportError:

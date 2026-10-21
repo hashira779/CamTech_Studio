@@ -118,6 +118,13 @@ def get_credentials(allow_interactive: bool = False):
             return creds
         except Exception as e:
             print(f"[YouTube Auth] Refresh token error: {e}")
+            if "invalid_grant" in str(e).lower() or "bad request" in str(e).lower():
+                try:
+                    if os.path.exists(TOKEN_PATH):
+                        os.remove(TOKEN_PATH)
+                        print(f"[YouTube Auth] Cleaned up expired/invalid token at {TOKEN_PATH}")
+                except Exception as del_err:
+                    print(f"[YouTube Auth] Failed to delete expired token: {del_err}")
             creds = None
 
     if allow_interactive:

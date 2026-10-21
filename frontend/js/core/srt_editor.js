@@ -178,6 +178,37 @@ function getExportBaseName() {
   return title || 'subtitles';
 }
 
+/** Resolves cue text to match active lyrics display mode (Original, Translation only, or Bilingual) */
+export function getExportCuesWithTranslation(lyrics) {
+  const source = lyrics || state.lyrics || [];
+  if (!source || !source.length) return [];
+  const trCfg = state.translation || {};
+  const mode = trCfg.displayMode || 'original_only';
+  const trLines = Array.isArray(trCfg.lines) ? trCfg.lines : [];
+
+  if (mode === 'original_only' || !trLines.length) {
+    return source.map(c => ({ ...c }));
+  }
+
+  return source.map((cue, idx) => {
+    const origText = (cue.text || '').trim();
+    const trEntry = trLines[idx];
+    const trText = ((trEntry && (typeof trEntry === 'string' ? trEntry : trEntry.text)) || '').trim();
+
+    let text = origText;
+    if (mode === 'bilingual' && trText) {
+      text = `${origText}\n${trText}`;
+    } else if (mode === 'translation_only' && trText) {
+      text = trText || origText;
+    }
+
+    return {
+      ...cue,
+      text
+    };
+  });
+}
+
 /** Generates CapCut-optimized SRT with non-overlapping timings and safe-zone line splits */
 export function generateCapCutSRT(lyrics) {
   if (!lyrics || lyrics.length === 0) return '';
@@ -198,8 +229,9 @@ export function generateCapCutSRT(lyrics) {
     }
 
     let text = (cue.text || '').trim();
-    // Split long lines at word boundary if line is too long (> 40 chars)
-    if (text.length > 40 && text.includes(' ')) {
+    // Split single long lines at word boundary if line is too long (> 40 chars)
+    // Never split multi-line (bilingual) cues across timestamps!
+    if (!text.includes('\n') && text.length > 40 && text.includes(' ')) {
       const words = text.split(/\s+/);
       if (words.length >= 4) {
         const mid = Math.floor(words.length / 2);
@@ -223,8 +255,10 @@ export function generateCapCutSRT(lyrics) {
 
 /** Exports 100% voice-synced SRT optimized specifically for CapCut */
 export async function exportSubtitlesForCapCut(lyrics, showToastFn) {
-  lyrics = lyrics || state.lyrics;
-  if (!lyrics || lyrics.length === 0) return false;
+  const rawLyrics = lyrics || state.lyrics;
+  if (!rawLyrics || rawLyrics.length === 0) return false;
+  const activeLyrics = getExportCuesWithTranslation(rawLyrics);
+  const isBilingual = (state.translation && state.translation.displayMode === 'bilingual' && Array.isArray(state.translation.lines) && state.translation.lines.length > 0);
   const baseName = getExportBaseName();
 
   try {
@@ -232,7 +266,7 @@ export async function exportSubtitlesForCapCut(lyrics, showToastFn) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        lyrics_data: lyrics,
+        lyrics_data: activeLyrics,
         title: baseName
       })
     });
@@ -241,7 +275,8 @@ export async function exportSubtitlesForCapCut(lyrics, showToastFn) {
       if (data.content) {
         downloadFile(data.content, data.filename || `${baseName}_CapCut.srt`, 'text/plain');
         if (showToastFn) {
-          showToastFn('🎬 CapCut SRT Ready', `${data.cues_count} cues exported! Ready to drag & drop into CapCut.`, 'success', 3500);
+          const modeLabel = isBilingual ? ' (Bilingual)' : '';
+          showToastFn('🎬 CapCut SRT Ready', `${data.cues_count} cues exported${modeLabel}! Ready to drag & drop into CapCut.`, 'success', 3500);
         }
         return true;
       }
@@ -251,23 +286,27 @@ export async function exportSubtitlesForCapCut(lyrics, showToastFn) {
   }
 
   // Client-side fallback
-  const content = generateCapCutSRT(lyrics);
+  const content = generateCapCutSRT(activeLyrics);
   downloadFile(content, `${baseName}_CapCut.srt`, 'text/plain');
   if (showToastFn) {
-    showToastFn('🎬 CapCut SRT Exported', `${lyrics.length} cues formatted for CapCut video editor.`, 'success', 3500);
+    const modeLabel = isBilingual ? ' (Bilingual)' : '';
+    showToastFn('🎬 CapCut SRT Exported', `${activeLyrics.length} cues formatted${modeLabel} for CapCut video editor.`, 'success', 3500);
   }
   return true;
 }
 
 /** Exports subtitles in the specified format with backend verification and client fallback */
 export async function exportSubtitles(format, lyrics, showToastFn) {
-  lyrics = lyrics || state.lyrics;
-  if (!lyrics || lyrics.length === 0) return false;
+  const rawLyrics = lyrics || state.lyrics;
+  if (!rawLyrics || rawLyrics.length === 0) return false;
 
-  const baseName = getExportBaseName();
   if (format === 'capcut' || format === 'capcut_srt') {
-    return exportSubtitlesForCapCut(lyrics, showToastFn);
+    return exportSubtitlesForCapCut(rawLyrics, showToastFn);
   }
+
+  const activeLyrics = getExportCuesWithTranslation(rawLyrics);
+  const baseName = getExportBaseName();
+  const isBilingual = (state.translation && state.translation.displayMode === 'bilingual' && Array.isArray(state.translation.lines) && state.translation.lines.length > 0);
 
   // 1. Try server-side verified export first for 100% studio-grade precision
   try {
@@ -275,7 +314,7 @@ export async function exportSubtitles(format, lyrics, showToastFn) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        lyrics_data: lyrics,
+        lyrics_data: activeLyrics,
         format: format,
         title: baseName,
         artist: state.artistName || ''
@@ -287,39 +326,32 @@ export async function exportSubtitles(format, lyrics, showToastFn) {
         downloadFile(data.content, data.filename || `${baseName}.${format}`, data.mime_type || 'text/plain');
         if (showToastFn) {
           const formatNames = { srt: 'SRT', vtt: 'WebVTT', lrc: 'LRC', ass: 'ASS', txt: 'Plain Text' };
-          showToastFn('📤 Subtitles Exported', `✅ ${lyrics.length} cues exported as studio-grade ${formatNames[format] || format}.`, 'success', 3000);
+          const modeLabel = isBilingual ? ' (Bilingual)' : '';
+          showToastFn('📤 Subtitles Exported', `✅ ${activeLyrics.length} cues exported as studio-grade ${formatNames[format] || format}${modeLabel}.`, 'success', 3000);
         }
         return true;
       }
     }
   } catch (err) {
-    console.warn('Backend export notice, using client generator:', err);
+    console.warn('Backend export notice, using client fallback:', err);
   }
 
-  // 2. Client-side fallback with strict validation
-  switch (format) {
-    case 'srt':
-      downloadFile(generateSRT(lyrics), `${baseName}.srt`, 'text/plain');
-      break;
-    case 'vtt':
-      downloadFile(generateVTT(lyrics), `${baseName}.vtt`, 'text/vtt');
-      break;
-    case 'lrc':
-      downloadFile(generateLRC(lyrics), `${baseName}.lrc`, 'text/plain');
-      break;
-    case 'ass':
-      downloadFile(generateASS(lyrics), `${baseName}.ass`, 'text/plain');
-      break;
-    case 'txt':
-      downloadFile(generateTXT(lyrics), `${baseName}.txt`, 'text/plain');
-      break;
-    default:
-      downloadFile(generateSRT(lyrics), `${baseName}.srt`, 'text/plain');
-      break;
+  // 2. Client-side fallback
+  let content = '';
+  if (format === 'srt') {
+    content = generateSRT(activeLyrics);
+  } else if (format === 'vtt') {
+    content = generateVTT(activeLyrics);
+  } else if (format === 'lrc') {
+    content = generateLRC(activeLyrics);
+  } else {
+    content = activeLyrics.map(l => l.text).join('\n');
   }
+
+  downloadFile(content, `${baseName}.${format}`, 'text/plain');
   if (showToastFn) {
-    const formatNames = { srt: 'SRT', vtt: 'WebVTT', lrc: 'LRC', ass: 'ASS', txt: 'Plain Text' };
-    showToastFn('📤 Subtitles Exported', `✅ ${lyrics.length} cues exported as ${formatNames[format] || format}.`, 'success', 3000);
+    const modeLabel = isBilingual ? ' (Bilingual)' : '';
+    showToastFn('📤 Subtitles Exported', `${activeLyrics.length} cues saved as ${format.toUpperCase()}${modeLabel}.`, 'success', 3000);
   }
   return true;
 }
@@ -369,27 +401,71 @@ export function parseSRTText(srtText) {
 
 let editorCues = [];     // Working copy of cues in the editor
 let selectedCueIndices = new Set();
+let rawEditorSnapshot = { text: null, cues: [] };
+
+/** Keeps word objects and nested metadata isolated from studio state. */
+function cloneCue(cue) {
+  return structuredClone({ ...cue, words: Array.isArray(cue.words) ? cue.words : [] });
+}
+
+/** Maps existing word timings proportionally into an explicitly edited cue span. */
+function retimeCue(cue, start, end) {
+  const oldStart = Number(cue.start);
+  const oldEnd = Number(cue.end);
+  if (start === oldStart && end === oldEnd) return;
+
+  if (Array.isArray(cue.words) && cue.words.length) {
+    const validSpan = Number.isFinite(oldStart) && Number.isFinite(oldEnd) && oldEnd > oldStart
+      && Number.isFinite(start) && Number.isFinite(end) && end > start;
+    const validWords = cue.words.every(word => Number.isFinite(word.start) && Number.isFinite(word.end));
+    if (validSpan && validWords) {
+      const scale = (end - start) / (oldEnd - oldStart);
+      const mapTime = time => Math.max(start, Math.min(end, start + (time - oldStart) * scale));
+      cue.words = cue.words.map(word => ({ ...word, start: mapTime(word.start), end: mapTime(word.end) }));
+    } else {
+      cue.words = [];
+    }
+  }
+  cue.start = start;
+  cue.end = end;
+}
+
+/** Retains omitted metadata while honoring word timings supplied by alignment. */
+function mergeAlignmentCues(lyrics, originals) {
+  return lyrics.map((line, index) => {
+    const original = (line.line_id != null && originals.find(cue => cue.line_id === line.line_id)) || originals[index];
+    const cue = cloneCue(original || line);
+    if (original) {
+      if (line.text !== undefined && line.text !== original.text) cue.words = [];
+      retimeCue(cue, line.start ?? cue.start, line.end ?? cue.end);
+    }
+    return cloneCue({ ...cue, ...line, words: Array.isArray(line.words) ? line.words : cue.words });
+  });
+}
+
+function alignmentErrorMessage(data, fallback) {
+  const detail = data.detail || data.error || data.message;
+  return typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : fallback;
+}
 
 /** Clones the studio lyrics into the editor working copy */
 function loadCuesFromState() {
-  editorCues = (state.lyrics || []).map(l => ({
-    start: l.start,
-    end: l.end,
-    text: l.text
-  }));
+  editorCues = (state.lyrics || []).map(cloneCue);
   selectedCueIndices.clear();
 }
 
 /** Applies editor cues back to the studio state */
 function applyCuesToState(showToastFn) {
-  state.lyrics = editorCues.map(c => ({
-    start: c.start,
-    end: c.end,
-    text: c.text,
-    words: []
-  }));
+  state.lyrics = editorCues.map(cloneCue);
+  try {
+    localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics));
+  } catch (err) {
+    console.warn('Could not save applied subtitles locally:', err);
+    if (showToastFn) showToastFn('Subtitles Applied', 'Cues synced to studio, but local saving failed.', 'warning', 3000);
+    return;
+  }
   if (showToastFn) {
-    showToastFn('✅ Subtitles Applied', `${editorCues.length} cues synced to studio.`, 'success', 2500);
+    showToastFn('Subtitles Applied', `${editorCues.length} cues synced to studio and saved locally.`, 'success', 2500);
   }
 }
 
@@ -505,7 +581,7 @@ function attachCueRowListeners() {
         }
       });
       startInput.addEventListener('change', () => {
-        editorCues[index].start = parseSrtTimestamp(startInput.value);
+        retimeCue(editorCues[index], parseSrtTimestamp(startInput.value), editorCues[index].end);
         // Update duration badge
         const durSpan = row.querySelector('.srt-cue-duration');
         if (durSpan) durSpan.textContent = `${(editorCues[index].end - editorCues[index].start).toFixed(1)}s`;
@@ -517,7 +593,7 @@ function attachCueRowListeners() {
     const endInput = row.querySelector('.srt-time-end');
     if (endInput) {
       endInput.addEventListener('change', () => {
-        editorCues[index].end = parseSrtTimestamp(endInput.value);
+        retimeCue(editorCues[index], editorCues[index].start, parseSrtTimestamp(endInput.value));
         const durSpan = row.querySelector('.srt-cue-duration');
         if (durSpan) durSpan.textContent = `${(editorCues[index].end - editorCues[index].start).toFixed(1)}s`;
         updateEditorStats();
@@ -528,6 +604,7 @@ function attachCueRowListeners() {
     const textArea = row.querySelector('.srt-cue-text');
     if (textArea) {
       textArea.addEventListener('input', () => {
+        if (editorCues[index].text !== textArea.value) editorCues[index].words = [];
         editorCues[index].text = textArea.value;
         // Auto-resize textarea
         textArea.style.height = 'auto';
@@ -544,9 +621,9 @@ function attachCueRowListeners() {
     const dupBtn = row.querySelector('.srt-cue-duplicate');
     if (dupBtn) {
       dupBtn.addEventListener('click', () => {
-        const clone = { ...editorCues[index] };
-        clone.start = editorCues[index].end;
-        clone.end = clone.start + (editorCues[index].end - editorCues[index].start);
+        const source = editorCues[index];
+        const clone = cloneCue(source);
+        retimeCue(clone, source.end, source.end + (source.end - source.start));
         editorCues.splice(index + 1, 0, clone);
         renderVisualEditor();
       });
@@ -595,16 +672,63 @@ function syncToRawEditor() {
   const textarea = document.getElementById('srt-raw-textarea');
   if (textarea) {
     textarea.value = generateSRT(editorCues);
+    const rendered = parseSRTText(textarea.value);
+    rawEditorSnapshot = {
+      text: textarea.value,
+      cues: editorCues.filter(cue => (cue.text || '').trim()).map((cue, index) => ({
+        original: cloneCue(cue), rendered: rendered[index]
+      }))
+    };
   }
 }
 
-/** Parses raw SRT textarea back to editor cues */
+/** Restores metadata omitted by SRT, without treating export normalization as an edit. */
 function syncFromRawEditor() {
   const textarea = document.getElementById('srt-raw-textarea');
-  if (textarea) {
-    editorCues = parseSRTText(textarea.value);
-    renderVisualEditor();
+  if (!textarea || textarea.value === rawEditorSnapshot.text) return;
+
+  const parsed = parseSRTText(textarea.value);
+  const matches = new Map();
+  const unused = new Set(rawEditorSnapshot.cues.map((_, index) => index));
+  const matchCues = predicate => {
+    parsed.forEach((cue, index) => {
+      if (matches.has(index)) return;
+      for (const sourceIndex of unused) {
+        if (predicate(cue, rawEditorSnapshot.cues[sourceIndex].rendered, index, sourceIndex)) {
+          matches.set(index, rawEditorSnapshot.cues[sourceIndex]);
+          unused.delete(sourceIndex);
+          break;
+        }
+      }
+    });
+  };
+  // Match unchanged cues first so inserted or edited cues cannot steal their timings.
+  matchCues((cue, source) => cue.text === source.text && cue.start === source.start && cue.end === source.end);
+  matchCues((cue, source) => cue.text === source.text);
+  matchCues((cue, source) => cue.start === source.start && cue.end === source.end);
+  if (parsed.length === rawEditorSnapshot.cues.length) {
+    matchCues((cue, source, index, sourceIndex) => index === sourceIndex);
   }
+
+  editorCues = parsed.map((cue, index) => {
+    const match = matches.get(index);
+    if (!match) return cloneCue(cue);
+    const restored = cloneCue(match.original);
+    if (cue.text !== match.rendered.text) {
+      restored.text = cue.text;
+      restored.words = [];
+    }
+    retimeCue(restored,
+      cue.start === match.rendered.start ? restored.start : cue.start,
+      cue.end === match.rendered.end ? restored.end : cue.end);
+    return restored;
+  });
+  rawEditorSnapshot = {
+    text: textarea.value,
+    cues: editorCues.map((cue, index) => ({ original: cloneCue(cue), rendered: parsed[index] }))
+  };
+  selectedCueIndices.clear();
+  renderVisualEditor();
 }
 
 
@@ -647,13 +771,13 @@ export function initSRTEditor(showToastFn, renderTeleprompterFn) {
 
   if (btnVisual && btnRaw) {
     btnVisual.addEventListener('click', () => {
+      // Do not overwrite visual edits from an inactive raw textarea.
+      if (rawEditor && rawEditor.style.display !== 'none') syncFromRawEditor();
       btnVisual.classList.add('srt-mode-active', 'is-active');
       btnRaw.classList.remove('srt-mode-active', 'is-active');
       if (visualEditor) visualEditor.style.display = 'flex';
       if (rawEditor) rawEditor.style.display = 'none';
       if (btnApplyRaw) btnApplyRaw.style.display = 'none';
-      // Parse raw back if we were in raw mode
-      syncFromRawEditor();
     });
 
     btnRaw.addEventListener('click', () => {
@@ -782,8 +906,8 @@ export function initSRTEditor(showToastFn, renderTeleprompterFn) {
           return;
         }
         editorCues.forEach(cue => {
-          cue.start = Math.max(0, cue.start + offset);
-          cue.end = Math.max(cue.start + 0.1, cue.end + offset);
+          const start = Math.max(0, cue.start + offset);
+          retimeCue(cue, start, Math.max(start + 0.1, cue.end + offset));
         });
         renderVisualEditor();
         syncToRawEditor();
@@ -803,8 +927,8 @@ export function initSRTEditor(showToastFn, renderTeleprompterFn) {
   if (btnSrtShowEarlier) {
     btnSrtShowEarlier.addEventListener('click', () => {
       editorCues.forEach(cue => {
-        cue.start = Math.max(0, Math.round((cue.start - 0.5) * 100) / 100);
-        cue.end = Math.max(cue.start + 0.35, Math.round((cue.end - 0.5) * 100) / 100);
+        const start = Math.max(0, Math.round((cue.start - 0.5) * 100) / 100);
+        retimeCue(cue, start, Math.max(start + 0.35, Math.round((cue.end - 0.5) * 100) / 100));
       });
       renderVisualEditor();
       syncToRawEditor();
@@ -821,10 +945,9 @@ export function initSRTEditor(showToastFn, renderTeleprompterFn) {
       for (let i = 0; i < editorCues.length - 1; i++) {
         if (editorCues[i].end > editorCues[i + 1].start) {
           // Trim end of current cue to match start of next
-          editorCues[i].end = editorCues[i + 1].start - 0.01;
-          if (editorCues[i].end < editorCues[i].start) {
-            editorCues[i].end = editorCues[i].start + 0.1;
-          }
+          let end = editorCues[i + 1].start - 0.01;
+          if (end < editorCues[i].start) end = editorCues[i].start + 0.1;
+          retimeCue(editorCues[i], editorCues[i].start, end);
           fixed++;
         }
       }
@@ -866,40 +989,38 @@ export function initSRTEditor(showToastFn, renderTeleprompterFn) {
       btnAiFix.disabled = true;
       btnAiFix.style.opacity = '0.6';
       if (aiBanner) aiBanner.style.display = 'flex';
-      if (aiStatusText) aiStatusText.textContent = '🤖 AI Core correcting Khmer spelling, phonetic accuracy & millisecond timestamps...';
+      if (aiStatusText) aiStatusText.textContent = 'AI Core reviewing Khmer spelling, phonetic accuracy and timestamps...';
 
       try {
+        const requestCues = editorCues.map(cloneCue);
         const res = await fetch('/api/subtitles/ai-fix', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            lyrics_data: editorCues,
+            lyrics_data: requestCues,
             audio_path: state.audioServerPath || state.audioPath || window.__VIDA_SERVER_PATH || '',
             align_vocals: true
           })
         });
 
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(alignmentErrorMessage(data, `HTTP ${res.status}`));
 
         if (data.status === 'success' && Array.isArray(data.lyrics)) {
-          editorCues = data.lyrics.map(l => ({
-            start: l.start,
-            end: l.end,
-            text: l.text
-          }));
+          editorCues = mergeAlignmentCues(data.lyrics, requestCues);
+          selectedCueIndices.clear();
           renderVisualEditor();
           syncToRawEditor();
           const count = data.corrections_made || 0;
           if (showToastFn) {
-            showToastFn('✨ AI Auto-Fix Complete', `Guaranteed 100% correct! ${count} correction(s) applied.`, 'success', 3500);
+            showToastFn('AI Auto-Fix Complete', `${count} correction(s) prepared. Review lyrics and timing before Apply.`, 'success', 3500);
           }
         } else {
-          throw new Error(data.detail || 'AI correction returned unexpected format');
+          throw new Error(alignmentErrorMessage(data, 'AI correction returned unexpected format'));
         }
       } catch (err) {
         console.error('AI Subtitle Fix Error:', err);
-        if (showToastFn) showToastFn('⚠️ AI Correction Notice', `Fallback used: ${err.message}`, 'warning', 3000);
+        if (showToastFn) showToastFn('AI Correction Failed', err.message, 'warning', 3000);
       } finally {
         btnAiFix.disabled = false;
         btnAiFix.style.opacity = '1';
@@ -916,43 +1037,46 @@ export function initSRTEditor(showToastFn, renderTeleprompterFn) {
         syncFromRawEditor();
       }
       if (editorCues.length === 0) {
-        if (showToastFn) showToastFn('⚠️ No Cues', 'No subtitle cues to align. Add cues first.', 'warning', 2500);
+        if (showToastFn) showToastFn('No Cues', 'No subtitle cues to align. Add cues first.', 'warning', 2500);
+        return;
+      }
+      const audioPath = (state.audioServerPath || state.audioPath || window.__VIDA_SERVER_PATH || '').trim();
+      if (!audioPath) {
+        if (showToastFn) showToastFn('Audio Required', 'Select an audio track in studio before using Vocal Sync.', 'warning', 3000);
         return;
       }
 
       btnVocalAlign.disabled = true;
       btnVocalAlign.style.opacity = '0.6';
       if (aiBanner) aiBanner.style.display = 'flex';
-      if (aiStatusText) aiStatusText.textContent = '🎙️ Snapping subtitle boundaries to real singing vocal acoustics...';
+      if (aiStatusText) aiStatusText.textContent = 'Aligning subtitle and word timings to the selected audio...';
 
       try {
+        const requestCues = editorCues.map(cloneCue);
         const res = await fetch('/api/subtitles/align-audio', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            lyrics_data: editorCues,
-            audio_path: state.audioServerPath || state.audioPath || window.__VIDA_SERVER_PATH || ''
+            lyrics_data: requestCues,
+            audio_path: audioPath
           })
         });
 
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(alignmentErrorMessage(data, `HTTP ${res.status}`));
 
         if (data.status === 'success' && Array.isArray(data.lyrics)) {
-          editorCues = data.lyrics.map(l => ({
-            start: l.start,
-            end: l.end,
-            text: l.text
-          }));
+          editorCues = mergeAlignmentCues(data.lyrics, requestCues);
+          selectedCueIndices.clear();
           renderVisualEditor();
           syncToRawEditor();
-          if (showToastFn) showToastFn('🎯 Vocal Sync Applied', `${editorCues.length} cues calibrated to vocal waveform.`, 'success', 3000);
+          if (showToastFn) showToastFn('Vocal Sync Ready', `${editorCues.length} cues aligned. Review timing, then Apply to save.`, 'success', 3000);
         } else {
-          throw new Error(data.detail || 'Vocal alignment failed');
+          throw new Error(alignmentErrorMessage(data, 'Vocal alignment failed'));
         }
       } catch (err) {
-        console.warn('Vocal align notice:', err);
-        if (showToastFn) showToastFn('🎙️ Vocal Sync Notice', 'Make sure an audio track is loaded in studio.', 'info', 3000);
+        console.warn('Vocal alignment failed:', err);
+        if (showToastFn) showToastFn('Vocal Sync Failed', err.message, 'error', 4000);
       } finally {
         btnVocalAlign.disabled = false;
         btnVocalAlign.style.opacity = '1';

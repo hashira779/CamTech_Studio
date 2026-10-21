@@ -2,6 +2,7 @@ import { state, PALETTES } from './state.js';
 import { getFrameSpectrum, hasFeatures } from './audio_features.js';
 import { renderRand, resetRenderSeed } from './rng.js';
 import { renderActiveTheme } from '../themes/index.js?v=20261012-v1';
+import { cachedFill } from '../themes/fill_cache.js';
 import { updateLyricState, drawLyrics } from './lyrics.js?v=20261012-v2';
 import { getCameraShakeOffset, renderPostVFX, resetVFX } from '../plugins/vfx_engine.js';
 import { evaluateDirectorRules, resetDirector } from '../plugins/director_rules.js';
@@ -20,6 +21,21 @@ let smoothedBass = 0.2;
 // Time constants derived from the original 60fps coefficients
 const TAU_ATTACK = -1 / (60 * Math.log(1 - 0.6));
 const TAU_BASS = -1 / (60 * Math.log(0.8));
+
+// Ambient particle fill styles: one `rgba()` per (palette, alpha) instead of one
+// per particle per frame (80 string allocations -> a couple of lookups).
+const dotStyles = new Map();
+function dotFill(rgb, a) {
+  const q = Math.min(255, Math.max(0, Math.round(a * 255)));
+  const ck = rgb + '|' + q;
+  let s = dotStyles.get(ck);
+  if (!s) {
+    s = `rgba(${rgb}, ${(q / 255).toFixed(3)})`;
+    dotStyles.set(ck, s);
+    if (dotStyles.size > 900) dotStyles.clear();
+  }
+  return s;
+}
 
 // Ambient Particles (seeded so preview & export reproduce the same field)
 const particles = [];
@@ -178,13 +194,22 @@ export function renderScene(context, surface, t, dt) {
   } else if (state.bgImageObj && state.bgImageObj.complete) {
     context.drawImage(state.bgImageObj, 0, 0, width, height);
   } else {
+    // The default wash is a fixed image for a given size + palette: shade it
+    // once, blit it every frame. It is opaque once composited, so it is cached
+    // on black and drawn at half resolution (two-stop radial = pure gradient).
     const curPal = PALETTES[state.palette] || PALETTES.cyberpunk;
-    const bgGrad = context.createRadialGradient(width / 2, height * 0.45, width * 0.05, width / 2, height / 2, width * 0.75);
-    bgGrad.addColorStop(0, `rgba(${curPal.secondary.join(',')}, 0.08)`);
-    bgGrad.addColorStop(0.55, "#0b0e17");
-    bgGrad.addColorStop(1, "#040508");
-    context.fillStyle = bgGrad;
-    context.fillRect(0, 0, width, height);
+    cachedFill(context, `bg.wash|${state.palette}|${curPal.secondary.join(',')}`, (g, bw, bh) => {
+      g.fillStyle = '#000000';
+      g.fillRect(0, 0, bw, bh);
+      const s = bw / width;
+      g.setTransform(s, 0, 0, s, 0, 0);
+      const bgGrad = g.createRadialGradient(width / 2, height * 0.45, width * 0.05, width / 2, height / 2, width * 0.75);
+      bgGrad.addColorStop(0, `rgba(${curPal.secondary.join(',')}, 0.08)`);
+      bgGrad.addColorStop(0.55, "#0b0e17");
+      bgGrad.addColorStop(1, "#040508");
+      g.fillStyle = bgGrad;
+      g.fillRect(0, 0, width, height);
+    }, 2);
   }
 
   const rawData = getFrameSpectrum(t);
@@ -263,8 +288,11 @@ export function renderScene(context, surface, t, dt) {
   if (state.particlesLevel > 0) {
     context.save();
     const activePalette = PALETTES[state.palette] || PALETTES.cyberpunk;
+    const rgb = activePalette.primary.join(',');
     const k = dt * 60;
     const flickerP = Math.min(1, (0.02 + bass * 0.1) * k);
+    const aScale = state.particlesLevel / 3;
+    let lastFill = '';
     for (const p of particles) {
       if (renderRand() < flickerP) p.alpha = Math.min(1, p.alpha + 0.1);
 
@@ -276,7 +304,11 @@ export function renderScene(context, surface, t, dt) {
       if (p.y < 0) p.y = height;
 
       if (p.alpha > 0.05) {
-        context.fillStyle = `rgba(${activePalette.primary.join(',')}, ${p.alpha * (state.particlesLevel / 3)})`;
+        // 80 dots share one colour and differ only by alpha, and alpha is only
+        // ever 0.05..1 in ~0.05 steps after the flicker quantising — so reuse
+        // the style string instead of building 80 of them per frame.
+        const fill = dotFill(rgb, p.alpha * aScale);
+        if (fill !== lastFill) { context.fillStyle = fill; lastFill = fill; }
         context.beginPath();
         context.arc(p.x, p.y, p.r + (bass * 1.5), 0, Math.PI * 2);
         context.fill();

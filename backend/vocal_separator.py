@@ -2,15 +2,28 @@
 Vocal Separation Module for VIDA.
 Uses Demucs (htdemucs) to isolate pure vocals from instruments and music.
 Includes caching, progress reporting, and graceful acoustic filtering fallback.
+
+Demucs runs in a throwaway child process. This machine sits close to its commit limit, and a
+long-lived server that has mapped torch's CUDA context leaves too little address space for the
+next model to load: torch's reader faults (exit 139) instead of raising, killing the server and
+every sync request in flight. One short process per model keeps the peak at a single model.
 """
 
 import os
 import gc
 import sys
+import json
 import shutil
 import logging
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Optional, Callable, Dict, Any
+
+try:
+    from backend.model_job import run_locked
+except ImportError:
+    from model_job import run_locked
 
 # Enable offline mode for HuggingFace if model is cached locally
 # This completely prevents "ReadTimeoutError: HTTPSConnectionPool(host='huggingface.co', port=443)"
@@ -23,6 +36,39 @@ log = logging.getLogger(__name__)
 # Cache directory for isolated stems
 STEMS_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "uploads", "stems")
 os.makedirs(STEMS_CACHE_DIR, exist_ok=True)
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_PROGRESS_PREFIX = "VIDA_STEM|"
+_SEPARATION_TIMEOUT_S = 1800.0
+_CUDA_OK = None
+
+
+def missing_dependency() -> Optional[str]:
+    """First package Demucs needs that this interpreter cannot see, or None when it can run."""
+    import importlib.util
+    for module in ("demucs", "torch"):
+        try:
+            if importlib.util.find_spec(module) is None:
+                return module
+        except (ImportError, ValueError):
+            return module
+    return None
+
+
+def cuda_available() -> bool:
+    """Reports whether a GPU can separate vocals, probed once in a child so the server stays torch-free."""
+    global _CUDA_OK
+    if _CUDA_OK is None:
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", "import torch; print('CUDA' if torch.cuda.is_available() else 'CPU')"],
+                cwd=_REPO_ROOT, capture_output=True, text=True, timeout=300,
+            )
+            _CUDA_OK = "CUDA" in proc.stdout
+        except Exception as e:
+            print(f"[Demucs] CUDA probe failed, assuming CPU: {e}")
+            _CUDA_OK = False
+    return _CUDA_OK
 
 
 def get_cached_vocals_path(audio_path: str) -> Optional[str]:
@@ -39,7 +85,7 @@ def separate_vocals_demucs(
     progress_callback: Optional[Callable[[int, str], None]] = None,
     device: str = "cpu",
     model_name: str = "htdemucs"
-) -> Dict[str, str]:
+) -> Dict[str, Any]:
     """
     Isolates singing vocals from background instruments using Demucs.
     Returns dict with 'vocals' and 'accompaniment' file paths.
@@ -59,7 +105,75 @@ def separate_vocals_demucs(
             "cached": True
         }
 
-    # 2. Try importing Demucs
+    # 2. Otherwise separate in a child process that hands all its memory back when it exits
+    return _separate_in_child(audio_path, vocals_out, accompaniment_out, device, model_name, progress_callback)
+
+
+def _separate_in_child(
+    audio_path: str,
+    vocals_out: str,
+    accompaniment_out: str,
+    device: str,
+    model_name: str,
+    progress_callback: Optional[Callable[[int, str], None]]
+) -> Dict[str, Any]:
+    fd, out_path = tempfile.mkstemp(prefix="vida_stem_result_", suffix=".json")
+    os.close(fd)
+    os.remove(out_path)
+    cmd = [sys.executable, "-m", "backend.demucs_worker", audio_path, out_path,
+           vocals_out, accompaniment_out, model_name, device]
+    try:
+        return run_locked(lambda: _spawn_separator(cmd, out_path, audio_path, progress_callback))
+    except TimeoutError as busy:
+        print(f"[Demucs] {busy}. Falling back to the original audio.")
+        return {"vocals": audio_path, "accompaniment": "", "error": str(busy)}
+    finally:
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
+
+
+def _spawn_separator(cmd, out_path, audio_path, progress_callback):
+    """Runs one Demucs child alone; two torch models loading at once exhaust commit space and fault."""
+    try:
+        proc = subprocess.Popen(
+            cmd, cwd=_REPO_ROOT, text=True, encoding="utf-8", errors="replace",
+            env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1"),
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        )
+        for raw in proc.stdout:
+            line = raw.rstrip("\n")
+            if not line.startswith(_PROGRESS_PREFIX) or progress_callback is None:
+                continue
+            pct, _, msg = line[len(_PROGRESS_PREFIX):].partition("|")
+            try:
+                progress_callback(int(pct), msg)
+            except (TypeError, ValueError):
+                pass
+        code = proc.wait(timeout=_SEPARATION_TIMEOUT_S)
+        if not os.path.exists(out_path):
+            print(f"[Demucs] Separator process exited {code:#x}. Falling back to the original audio.")
+            return {"vocals": audio_path, "accompaniment": "", "error": f"separator exited {code:#x}"}
+        with open(out_path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception as e:
+        print(f"[Demucs] Separator process failed: {e}. Falling back to the original audio.")
+        if progress_callback:
+            progress_callback(25, f"Demucs notice: {e}, continuing...")
+        return {"vocals": audio_path, "accompaniment": "", "error": str(e)}
+
+
+def _separate_inproc(
+    audio_path: str,
+    vocals_out: str,
+    accompaniment_out: str,
+    device: str = "cpu",
+    model_name: str = "htdemucs",
+    progress_callback: Optional[Callable[[int, str], None]] = None
+) -> Dict[str, Any]:
+    """The Demucs run itself. Only ever called inside backend.demucs_worker."""
+    # 1. Try importing Demucs
     try:
         import demucs.api as demucs_api
         import torch

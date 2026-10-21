@@ -100,6 +100,24 @@ document.addEventListener('DOMContentLoaded', () => {
   // Initialize Studio Resizable Layout System
   initResizableLayout();
 
+  // A backend started on the wrong interpreter silently loses the word aligner and Demucs, which
+  // makes sync look broken. Say which engine is missing instead of letting the timings drift quietly.
+  (async () => {
+    const chip = document.getElementById('studio-engine-chip');
+    if (!chip) return;
+    try {
+      const info = await (await fetch('/api/health')).json();
+      if (info.sync_grade === 'word') return;
+      const missing = (info.word_aligner && info.word_aligner.missing) ||
+                      (info.vocal_separator && info.vocal_separator.missing);
+      chip.style.display = 'inline-block';
+      chip.textContent = info.sync_grade === 'phrase' ? 'Phrase sync only' : 'Energy sync only';
+      chip.title = missing
+        ? `"${missing}" is missing from ${info.python}. Start VIDA with run_vida_desktop.bat so it runs ${info.venv_python || 'the project venv'}.`
+        : `Sync is running with reduced engines on ${info.python}.`;
+    } catch (e) { /* backend unreachable; every other call already reports that */ }
+  })();
+
   // ============ Restore Session & Lyrics Persistence ============
   const cachedLyricsStr = localStorage.getItem('vida_lyrics');
   const cachedTitle = localStorage.getItem('vida_song_title');
@@ -679,7 +697,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (triggerBtn) setButtonLoading(triggerBtn, 'Aligning...');
     setGlobalProgress(25, true, 'Aligning with Original Lyrics & Audio...');
 
-    const audioFilePath = state.audioPath || state.audioServerPath || window.__VIDA_SERVER_PATH || '';
+    const audioFilePath = state.audioServerPath || state.audioPath || window.__VIDA_SERVER_PATH || '';
 
     try {
       const res = await fetch('/api/lyrics/correct-with-reference', {
@@ -692,19 +710,18 @@ document.addEventListener('DOMContentLoaded', () => {
         })
       });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Lyrics alignment failed');
       setGlobalProgress(100, true, 'Lyrics Alignment Complete');
 
       if (data.status === 'success' && data.lyrics && data.lyrics.length > 0) {
         state.lyrics = data.lyrics;
         try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(e) {}
         renderLyricsTeleprompter(state.lyrics, true);
-        const lyricsVerifiedBadge = document.getElementById('lyrics-verified-badge');
-        if (lyricsVerifiedBadge) lyricsVerifiedBadge.style.display = 'inline-block';
-
+        const wordAligned = data.source === 'ctc_word_alignment';
         showToast(
-          '100% Lyrics Aligned & Corrected',
-          `Successfully matched & fixed ${data.changes_count || data.lines_count} lines! Audio timestamps & kinetic glow preserved.`,
-          'success',
+          wordAligned ? 'Original Lyrics Aligned' : 'Estimated Vocal Timing',
+          `Preserved ${data.lines_count} original lines. ${wordAligned ? 'Word timings aligned to singer audio.' : 'Acoustic estimates need playback review.'}`,
+          wordAligned ? 'success' : 'warning',
           4500
         );
         return true;
@@ -1536,9 +1553,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Double-Check Lyrics (100% Correct Verification)
+  // Double-Check Lyrics (re-measure timing against the selected singer audio)
   const btnVerifyLyrics = document.getElementById('btn-verify-lyrics');
-  const lyricsVerifiedBadge = document.getElementById('lyrics-verified-badge');
   if (btnVerifyLyrics) {
     btnVerifyLyrics.addEventListener('click', async () => {
       if (!state.lyrics || state.lyrics.length === 0) {
@@ -1546,8 +1562,8 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
       const audioFilePath = state.audioServerPath || state.audioPath || window.__VIDA_SERVER_PATH || '';
-      setButtonLoading(btnVerifyLyrics, 'Verifying 100%...');
-      setGlobalProgress(20, true, 'Gemini AI Double-Checking with Singer Audio...');
+      setButtonLoading(btnVerifyLyrics, 'Checking...');
+      setGlobalProgress(20, true, 'Checking lyric timing against selected singer audio...');
       try {
         const res = await fetch('/api/lyrics/verify', {
           method: 'POST',
@@ -1558,14 +1574,18 @@ document.addEventListener('DOMContentLoaded', () => {
           })
         });
         const data = await res.json();
-        setGlobalProgress(100, true, '100% Lyrics Verified by Gemini AI');
+        if (!res.ok) throw new Error(data.detail || 'Lyric timing check failed');
+        setGlobalProgress(100, true, 'Lyric timing checked');
         if (data.status === 'success' && data.lyrics) {
           state.lyrics = data.lyrics;
+          try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(e) {}
           renderLyricsTeleprompter(state.lyrics, true);
           showToast(
-            'Gemini AI Double-Checked',
-            `Verified ${data.lines_count} lines (${data.words_count || 0} words) with singer vocals! 100% precision.`,
-            'success',
+            'Lyric Timing Checked',
+            data.source === 'ctc_word_alignment'
+              ? `Aligned ${data.lines_count} lines (${data.words_count || 0} words) to singer audio. Review playback.`
+              : 'Timing structure checked; estimated singing timing still needs playback review.',
+            data.source === 'ctc_word_alignment' ? 'success' : 'warning',
             3500
           );
         } else {
@@ -1607,16 +1627,19 @@ document.addEventListener('DOMContentLoaded', () => {
           })
         });
         const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Lyric synchronization failed');
         setGlobalProgress(100, true, 'Timing Re-Sync Complete');
         if (data.status === 'success' && data.lyrics && data.lyrics.length > 0) {
           state.lyrics = data.lyrics;
           try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(e) {}
           renderLyricsTeleprompter(state.lyrics, true);
-          if (lyricsVerifiedBadge) lyricsVerifiedBadge.style.display = 'inline-block';
+          const wordAligned = data.source === 'ctc_word_alignment';
           showToast(
-            'Lyrics Perfectly Synced',
-            `Calibrated ${data.count || state.lyrics.length} lines to singing tempo & vocal cutoffs! Fast & slow phrases matched.`,
-            'success',
+            wordAligned ? 'Singer Timing Aligned' : 'Estimated Vocal Timing',
+            wordAligned
+              ? `Aligned ${data.count || state.lyrics.length} original lines and word timings. Review playback.`
+              : 'Acoustic estimates applied; the word aligner could not confidently match this song. Review playback.',
+            wordAligned ? 'success' : 'warning',
             4000
           );
         } else {
@@ -1742,10 +1765,9 @@ document.addEventListener('DOMContentLoaded', () => {
           state.lyrics = data.lyrics;
           try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(e) {}
           renderLyricsTeleprompter(state.lyrics, true);
-          if (lyricsVerifiedBadge) lyricsVerifiedBadge.style.display = 'inline-block';
           showToast(
             'Words Fixed (Structure Preserved)',
-            `Fixed spelling & phonetic errors across ${data.lyrics.length} lines in place! All timestamps 100% intact.`,
+            `Fixed spelling & phonetic errors across ${data.lyrics.length} lines in place. Line timings preserved; word highlights were regenerated.`,
             'success',
             4000
           );
@@ -1834,9 +1856,8 @@ document.addEventListener('DOMContentLoaded', () => {
       state.lyrics = [];
       renderLyricsTeleprompter([]);
       try { localStorage.removeItem('vida_lyrics'); } catch(e) {}
-      if (lyricsVerifiedBadge) lyricsVerifiedBadge.style.display = 'none';
       const btnTranscribe = document.getElementById('btn-transcribe-ai');
-      if (btnTranscribe) clearButtonLoading(btnTranscribe, 'Auto-Sync Lyrics (AI)');
+      if (btnTranscribe) clearButtonLoading(btnTranscribe, 'Auto-Sync Lyrics');
       showToast('Lyrics Cleared', 'Loaded lyrics have been removed from studio', 'info', 3000);
     });
   }
@@ -1893,8 +1914,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (badge) badge.textContent = `${lyrics.length} Lines`;
     if (verifiedBadge) {
+      const wordTimed = lyrics.every((l) => Number.isFinite(l.confidence));
       verifiedBadge.style.display = 'inline-block';
-      verifiedBadge.textContent = '100% Verified';
+      verifiedBadge.classList.toggle('ui-chip--ok', wordTimed);
+      verifiedBadge.classList.toggle('ui-chip--warn', !wordTimed);
+      verifiedBadge.textContent = wordTimed ? 'Word-Timed' : 'Timing Checked';
+      verifiedBadge.title = wordTimed
+        ? 'Line and word timings measured from the selected singer audio. Still review playback.'
+        : 'Timestamps are ordered and inside the track, but were not measured word-by-word from the singing. Review playback.';
     }
     el.innerHTML = '';
 
@@ -2966,7 +2993,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Active polling for real-time progress & synchronization
     const pollInterval = setInterval(async () => {
       if (isFinished) return;
-      elapsed += 0.4;
+      elapsed += 0.8;
 
       try {
         const res = await fetch('/api/transcribe/progress');
@@ -2997,7 +3024,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (progressFill) progressFill.style.width = `${displayPct}%`;
       if (btnTranscribe) btnTranscribe.textContent = `⏳ AI ${displayPct}%`;
       setStudioPipelineProgress(3, displayPct, progressStatus ? progressStatus.textContent : `AI Lyrics (${displayPct}%)...`, 'AI Lyrics Engine');
-    }, 400);
+    }, 800);
 
     try {
       const hasExistingLyrics = state.lyrics && Array.isArray(state.lyrics) && state.lyrics.length >= 2;
@@ -3016,6 +3043,7 @@ document.addEventListener('DOMContentLoaded', () => {
         })
       });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Lyric synchronization failed');
       isFinished = true;
       clearInterval(pollInterval);
 
@@ -3036,9 +3064,10 @@ document.addEventListener('DOMContentLoaded', () => {
           if (state.artistName) localStorage.setItem('vida_artist_name', state.artistName);
           if (state.audioUrl) localStorage.setItem('vida_audio_src', state.audioUrl);
         } catch(e) {}
-        const src = data.source === 'subtitle' ? 'Captions' : (data.source === 'gemini-cloud' ? 'Gemini AI' : 'Whisper AI');
+        const sources = { subtitle: 'Captions', 'retrieved-timing': 'Retrieved Captions', ctc_word_alignment: 'Singer Word Alignment', acoustic_estimate: 'Acoustic Estimates' };
+        const src = sources[data.source] || 'Whisper AI';
         const langTag = data.detected_language ? ` [${data.detected_language.toUpperCase()}]` : '';
-        showToast('Lyrics Ready', `${data.count} lines synced from ${src}${langTag}! Ready for 1-click CapCut export.`, 'success', 6000);
+        showToast('Lyrics Ready', `${data.count} lines from ${src}${langTag}. Review singing timing in playback.`, data.source === 'acoustic_estimate' ? 'warning' : 'success', 6000);
 
         setTimeout(() => {
           if (progressBox) progressBox.style.display = 'none';
@@ -3046,7 +3075,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return data;
       } else {
         if (progressStatus) progressStatus.textContent = 'No Lyrics Detected';
-        if (btnTranscribe) clearButtonLoading(btnTranscribe, 'Auto-Sync Lyrics (AI)');
+        if (btnTranscribe) clearButtonLoading(btnTranscribe, 'Auto-Sync Lyrics');
         setStudioPipelineProgress(3, 0, 'No vocal segments detected', 'AI Whisper Lyrics', false);
         showToast('No Lyrics', 'No vocal segments detected in audio', 'info');
         setTimeout(() => {
@@ -3058,7 +3087,7 @@ document.addEventListener('DOMContentLoaded', () => {
       isFinished = true;
       clearInterval(pollInterval);
       if (progressStatus) progressStatus.textContent = 'Failed';
-      if (btnTranscribe) clearButtonLoading(btnTranscribe, 'Auto-Sync Lyrics (AI)');
+      if (btnTranscribe) clearButtonLoading(btnTranscribe, 'Auto-Sync Lyrics');
       setStudioPipelineProgress(3, 0, 'Transcription failed', 'AI Whisper Lyrics', false);
       showToast('Transcription Error', err.message, 'error');
       setTimeout(() => {

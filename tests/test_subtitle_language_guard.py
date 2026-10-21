@@ -157,6 +157,41 @@ def run():
         check(picked_km.endswith(".km.srt"),
               f"the real Khmer cue sheet is still found ({picked_km})")
 
+        # --- A re-sync must never overwrite a caption sheet holding different words ------
+        from backend.app import _save_aligned_subtitles
+
+        vi_srt_path = os.path.join(tmp, "capitao.mp3")
+        open(vi_srt_path, "wb").write(b"\x00" * 128)
+        human_srt = os.path.join(tmp, "capitao.srt")
+        write(human_srt, EN_SRT)
+        human_bytes = open(human_srt, "rb").read()
+
+        vi_lyrics = [{"line_id": i, "start": 10.0 + i, "end": 12.0 + i, "text": t, "words": []}
+                     for i, t in enumerate(["Hỡi ơi người ơi", "Em không cần tìm kiếm đâu xa",
+                                            "Vì em biết là anh thương em nhất mà"])]
+        _save_aligned_subtitles(vi_lyrics, vi_srt_path)
+        check(open(human_srt, "rb").read() == human_bytes,
+              "Vietnamese re-sync leaves the English caption .srt byte-identical")
+        check(os.path.exists(os.path.join(tmp, "capitao.lrc")),
+              "the studio .lrc cache is still written for the re-synced audio")
+
+        same_words = [{"line_id": i, "start": 40.0 + i, "end": 42.0 + i, "text": t, "words": []}
+                      for i, t in enumerate([
+                          "Oh my dear, oh my dear",
+                          "I don't need to search anywhere far",
+                          "Because I know you love me the most by far",
+                          "Oh my dear, oh my dear",
+                          "We don't need to go anywhere else at all",
+                          "Paradise is sitting at the bottom of a well with the one I adore",
+                          "This love is as sweet as freshly squeezed orange juice",
+                          "There's no way it can escape anyone's view",
+                          "Do you love me? (Bong sro-lanh uon tê?)",
+                      ])]
+        _save_aligned_subtitles(same_words, os.path.join(tmp, "capitao.mp3"))
+        refreshed = open(human_srt, encoding="utf-8").read()
+        check("00:00:40,000" in refreshed and "00:00:10,760" not in refreshed,
+              "an .srt carrying these same words is refreshed with the new timings")
+
         print(f"\n{len(PASS)} passed, {len(FAIL)} failed\n")
         for m in FAIL:
             print("FAILED: " + m)

@@ -267,6 +267,27 @@ function syncUI() {
     badge.classList.toggle('ui-chip--info', n > 0);
   }
 
+  // The stage only ever paints one thing, but the teleprompter always lists the original
+  // first — so without this the "Translation only" stage looked like the original was lost.
+  // The chip names the active mode and the list dims whichever line the video drops.
+  const modeBadge = document.getElementById('lyrics-mode-badge');
+  if (modeBadge) {
+    modeBadge.textContent = MODE_LABELS[mode];
+    modeBadge.classList.toggle('ui-chip--info', mode !== 'original_only');
+  }
+  const tpList = document.getElementById('lyrics-teleprompter');
+  if (tpList) tpList.dataset.displayMode = mode;
+
+  // Always-visible read-out above the stage: the inspector can be scrolled away, the
+  // stage can't. This is what tells you why the video shows one line instead of two.
+  const stageMode = document.getElementById('stage-lyric-mode-text');
+  if (stageMode) {
+    const lang = LANG_NAMES[state.translation.lang] || state.translation.lang;
+    stageMode.textContent = mode === 'original_only'
+      ? `Lyrics: original only`
+      : (mode === 'translation_only' ? `Lyrics: ${lang} only` : `Lyrics: both + ${lang}`);
+  }
+
   const langSel = document.getElementById('select-translation-lang');
   if (langSel) {
     const kmOpt = langSel.querySelector('option[value="km"]');
@@ -317,15 +338,46 @@ async function postJSON(url, body, timeoutMs = 120000) {
   }
 }
 
-async function translateViaAI(texts) {
-  const data = await postJSON('/api/lyrics/translate-lines', {
-    lines: texts,
-    target_lang: targetLangName()
-  }, 180000);
-  if (data.status !== 'success' || !Array.isArray(data.lines)) {
-    throw new Error(data.detail || 'Translation service returned no lines');
+async function translateViaAI(texts, onProgress) {
+  const BATCH_SIZE = 25;
+  if (texts.length <= BATCH_SIZE) {
+    if (onProgress) onProgress(25);
+    const data = await postJSON('/api/lyrics/translate-lines', {
+      lines: texts,
+      target_lang: targetLangName(),
+      // Title + artist steer pronoun choice (បង/អូន) and register in the Khmer prompt.
+      song_title: String(state.songTitle || '').trim(),
+      artist: String(state.artistName || '').trim()
+    }, 180000);
+    if (data.status !== 'success' || !Array.isArray(data.lines)) {
+      throw new Error(data.detail || 'Translation service returned no lines');
+    }
+    if (onProgress) onProgress(100);
+    return data.lines;
   }
-  return data.lines;
+
+  // Multi-batch for large lyric sets
+  const allLines = [];
+  const total = texts.length;
+  for (let i = 0; i < total; i += BATCH_SIZE) {
+    const chunk = texts.slice(i, i + BATCH_SIZE);
+    const startPct = Math.round((i / total) * 100);
+    if (onProgress) onProgress(startPct);
+    const data = await postJSON('/api/lyrics/translate-lines', {
+      lines: chunk,
+      target_lang: targetLangName(),
+      song_title: String(state.songTitle || '').trim(),
+      artist: String(state.artistName || '').trim()
+    }, 180000);
+    if (data.status !== 'success' || !Array.isArray(data.lines)) {
+      throw new Error(data.detail || 'Translation service returned no lines');
+    }
+    allLines.push(...data.lines);
+    const endPct = Math.min(99, Math.round(((i + chunk.length) / total) * 100));
+    if (onProgress) onProgress(endPct);
+  }
+  if (onProgress) onProgress(100);
+  return allLines;
 }
 
 async function persistTranslation() {
@@ -393,10 +445,17 @@ function applySavedModeForSong(key) {
   if (sessionModeAppliedKey === key) return;
   sessionModeAppliedKey = key;
   const d = sessionForCurrentSong();
-  if (!d || !MODE_LABELS[d.displayMode]) return;
-  if (d.displayMode !== 'original_only' && translationCount() === 0) return;
-  state.translation.displayMode = d.displayMode;
-  state.translation.visible = typeof d.visible === 'boolean' ? d.visible : d.displayMode !== 'original_only';
+  if (d && MODE_LABELS[d.displayMode]) {
+    if (d.displayMode !== 'original_only' && translationCount() === 0) return;
+    state.translation.displayMode = d.displayMode;
+    state.translation.visible = typeof d.visible === 'boolean' ? d.visible : d.displayMode !== 'original_only';
+    return;
+  }
+  // If no saved mode exists but this is a foreign song with translation lines ready, default to bilingual
+  if (wantsAutoKhmer() && translationCount() > 0 && state.translation.displayMode === 'original_only') {
+    state.translation.displayMode = 'bilingual';
+    state.translation.visible = true;
+  }
 }
 
 export async function loadTranslationForSong() {
@@ -492,6 +551,42 @@ async function autoBuildKhmerTrack(key) {
   }
 }
 
+function createButtonProgress(btn, baseLabel = 'Translating') {
+  if (!btn) return { update: () => {}, finish: () => {}, reset: () => {} };
+  const origText = btn.textContent;
+  let pct = 8;
+  btn.disabled = true;
+  btn.textContent = `⏳ ${baseLabel} ${pct}%`;
+
+  const timer = setInterval(() => {
+    if (pct < 45) {
+      pct += Math.floor(Math.random() * 6) + 4;
+    } else if (pct < 75) {
+      pct += Math.floor(Math.random() * 4) + 2;
+    } else if (pct < 93) {
+      pct += 1;
+    }
+    btn.textContent = `⏳ ${baseLabel} ${pct}%`;
+  }, 220);
+
+  return {
+    update: (customPct) => {
+      pct = Math.max(pct, Math.min(99, Math.round(customPct)));
+      btn.textContent = `⏳ ${baseLabel} ${pct}%`;
+    },
+    finish: (finalLabel) => {
+      clearInterval(timer);
+      btn.disabled = false;
+      btn.textContent = finalLabel || origText;
+    },
+    reset: () => {
+      clearInterval(timer);
+      btn.disabled = false;
+      btn.textContent = origText;
+    }
+  };
+}
+
 // ============ Actions ============
 /** Translates the loaded lines into the current target language. Resolves true only on success. */
 async function translateAll(btn, opts = {}) {
@@ -502,12 +597,13 @@ async function translateAll(btn, opts = {}) {
   const langAtStart = state.translation.lang;
   const prevMode = state.translation.displayMode;
   const texts = (state.lyrics || []).map(l => (l.text || '').trim());
-  const label = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Translating…'; }
+  const targetBtn = btn || document.getElementById('btn-translate-all');
+  const prog = createButtonProgress(targetBtn, 'Translating');
   try {
-    const out = await translateViaAI(texts);
+    const out = await translateViaAI(texts, (p) => prog.update(p));
     // The user may have switched language while the AI ran — never write into another track
     if (state.translation.lang !== langAtStart) {
+      prog.reset();
       toast('⚠️ Superseded', `Translation finished after the target changed to ${targetLangName()} — press 🌐 Translate to build it.`, 'warning', 4000);
       return false;
     }
@@ -519,14 +615,14 @@ async function translateAll(btn, opts = {}) {
     const target = keep || ((prevMode === 'original_only' && !wantsAutoKhmer()) ? 'original_only' : 'bilingual');
     try { await persistTranslation(); } catch (e) { console.warn('[VIDA Translation] save failed:', e); }
     setDisplayMode(target, false);
+    prog.finish();
     toast('🌐 Translated', `${translationCount()} lines → ${targetLangName()} saved as a separate track. Original lyrics & timings untouched.`, 'success', 4500);
     return true;
   } catch (e) {
+    prog.reset();
     toast('❌ Translation Failed', e.message || String(e), 'error', 5000);
     syncUI();
     return false;
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = label; }
   }
 }
 
@@ -585,16 +681,16 @@ function ensureModal() {
   modalEl.querySelector('#te-translate-all').addEventListener('click', async (e) => {
     const btn = e.currentTarget;
     const texts = (state.lyrics || []).map(l => (l.text || '').trim());
-    btn.disabled = true; btn.textContent = '⏳ Translating…';
+    const prog = createButtonProgress(btn, 'Translating');
     try {
-      const out = await translateViaAI(texts);
+      const out = await translateViaAI(texts, (p) => prog.update(p));
       draftLines = buildLines(out);
       renderRows();
+      prog.finish('🌐 AI Translate All');
       toast('🌐 AI Pass Complete', `${translationCount()} lines refreshed in the editor — review then Apply & Save.`, 'success', 3500);
     } catch (err) {
+      prog.reset();
       toast('❌ Translation Failed', err.message || String(err), 'error', 5000);
-    } finally {
-      btn.disabled = false; btn.textContent = '🌐 AI Translate All';
     }
   });
   document.addEventListener('keydown', (e) => {
@@ -699,6 +795,24 @@ export function initTranslationTrack(showToastFn) {
   if (group) {
     group.querySelectorAll('.trans-mode-btn').forEach(btn => {
       btn.addEventListener('click', () => setDisplayMode(btn.dataset.mode));
+    });
+  }
+
+  // Stage chip → click directly cycles between bilingual, translation_only, and original_only.
+  const stageModeBtn = document.getElementById('btn-stage-lyric-mode');
+  if (stageModeBtn) {
+    stageModeBtn.addEventListener('click', () => {
+      const modes = ['bilingual', 'translation_only', 'original_only'];
+      const cur = state.translation.displayMode || 'original_only';
+      const idx = modes.indexOf(cur);
+      const next = modes[(idx + 1) % modes.length];
+      setDisplayMode(next, true);
+      const sec = document.getElementById('sec-lyrics-display');
+      if (sec && !sec.open) sec.open = true;
+      if (group) {
+        group.classList.add('is-flash');
+        setTimeout(() => group.classList.remove('is-flash'), 1400);
+      }
     });
   }
 
