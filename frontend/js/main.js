@@ -6,7 +6,16 @@ import { KHMER_TEMPLATES, KHMER_SINGERS_60S_70S } from './core/khmer_templates.j
 import { DIRECTOR_PRESETS } from './plugins/director_rules.js';
 import { triggerCameraShake, triggerShockwave, triggerBloomFlash } from './plugins/vfx_engine.js';
 import { initSRTEditor } from './core/srt_editor.js';
-import { initTranslationTrack, loadTranslationForSong, getTranslationRenderOptions } from './core/translation.js';
+import {
+  initTranslationTrack,
+  loadTranslationForSong,
+  getTranslationRenderOptions,
+  refineKhmerViaAI,
+  updateSingleTranslationLine,
+  persistTranslation,
+  setDisplayMode,
+  escapeHtml
+} from './core/translation.js';
 import { 
   initResizableLayout, 
   toggleLeftPanel, 
@@ -529,6 +538,162 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // ============ Google Gemini API Key Settings Modal ============
+  const geminiModal = document.getElementById('gemini-key-modal');
+  const btnCloseGeminiModal = document.getElementById('btn-close-gemini-modal');
+  const inputGeminiKey = document.getElementById('input-gemini-key');
+  const btnToggleGeminiVis = document.getElementById('btn-toggle-gemini-visibility');
+  const btnTestGeminiKey = document.getElementById('btn-test-gemini-key');
+  const btnSaveGeminiKey = document.getElementById('btn-save-gemini-key');
+  const geminiStatusDot = document.getElementById('gemini-status-dot');
+  const geminiStatusText = document.getElementById('gemini-status-text');
+  const geminiModelBadge = document.getElementById('gemini-model-badge');
+  const geminiErrorAlert = document.getElementById('gemini-error-alert');
+  const geminiErrorDesc = document.getElementById('gemini-error-desc');
+  const btnQuickGeminiKey = document.getElementById('btn-quick-gemini-key');
+
+  async function checkGeminiStatus(autoAlert = false) {
+    try {
+      const res = await fetch('/api/gemini/status');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (geminiModelBadge && data.active_model) {
+        geminiModelBadge.textContent = data.active_model;
+      }
+      if (data.valid) {
+        if (geminiStatusDot) geminiStatusDot.style.background = '#10b981';
+        if (geminiStatusText) geminiStatusText.textContent = `Active & Ready (${data.masked_key || 'Configured'})`;
+        if (geminiErrorAlert) geminiErrorAlert.style.display = 'none';
+        if (inputGeminiKey && !inputGeminiKey.value && data.masked_key) {
+          inputGeminiKey.placeholder = `Current Key: ${data.masked_key} (Paste new to update)`;
+        }
+      } else {
+        const errMsg = data.last_error || 'No active Gemini API key configured.';
+        if (geminiStatusDot) geminiStatusDot.style.background = '#ef4444';
+        if (geminiStatusText) geminiStatusText.textContent = 'API Key Expired or Invalid';
+        if (geminiErrorAlert) {
+          geminiErrorAlert.style.display = 'block';
+          if (geminiErrorDesc) geminiErrorDesc.textContent = errMsg;
+        }
+        if (autoAlert) {
+          showToast('⚠️ Gemini API Key Expired', 'Please enter a valid Gemini API key to use cloud AI.', 'error', 7000);
+          openGeminiKeyModal();
+        }
+      }
+    } catch (_) {}
+  }
+
+  function openGeminiKeyModal() {
+    if (!geminiModal) return;
+    geminiModal.style.display = 'flex';
+    checkGeminiStatus(false);
+  }
+
+  function closeGeminiKeyModal() {
+    if (geminiModal) geminiModal.style.display = 'none';
+  }
+
+  if (btnCloseGeminiModal) btnCloseGeminiModal.addEventListener('click', closeGeminiKeyModal);
+  if (geminiModal) {
+    geminiModal.addEventListener('click', (e) => {
+      if (e.target === geminiModal) closeGeminiKeyModal();
+    });
+  }
+  if (btnQuickGeminiKey) btnQuickGeminiKey.addEventListener('click', openGeminiKeyModal);
+
+  if (btnToggleGeminiVis && inputGeminiKey) {
+    btnToggleGeminiVis.addEventListener('click', () => {
+      const isPwd = inputGeminiKey.type === 'password';
+      inputGeminiKey.type = isPwd ? 'text' : 'password';
+      btnToggleGeminiVis.textContent = isPwd ? '🔒' : '👁️';
+    });
+  }
+
+  if (btnTestGeminiKey) {
+    btnTestGeminiKey.addEventListener('click', async () => {
+      const keyVal = inputGeminiKey ? inputGeminiKey.value.trim() : '';
+      setButtonLoading(btnTestGeminiKey, 'Testing...');
+      try {
+        const res = await fetch('/api/gemini/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: keyVal })
+        });
+        const data = await res.json();
+        clearButtonLoading(btnTestGeminiKey, 'Test Key');
+        if (data.valid) {
+          showToast('Gemini API OK', 'Gemini API key is active and responding (gemini-3.8-flash)! ⚡', 'success', 4000);
+          if (geminiStatusDot) geminiStatusDot.style.background = '#10b981';
+          if (geminiStatusText) geminiStatusText.textContent = 'Active & Responding ⚡';
+          if (geminiErrorAlert) geminiErrorAlert.style.display = 'none';
+        } else {
+          showToast('Gemini Key Error', data.error || 'Key invalid or expired', 'error', 6000);
+          if (geminiStatusDot) geminiStatusDot.style.background = '#ef4444';
+          if (geminiStatusText) geminiStatusText.textContent = 'Invalid / Expired Key';
+          if (geminiErrorAlert) {
+            geminiErrorAlert.style.display = 'block';
+            if (geminiErrorDesc) geminiErrorDesc.textContent = data.error;
+          }
+        }
+      } catch (err) {
+        clearButtonLoading(btnTestGeminiKey, 'Test Key');
+        showToast('Connection Error', err.message, 'error');
+      }
+    });
+  }
+
+  if (btnSaveGeminiKey) {
+    btnSaveGeminiKey.addEventListener('click', async () => {
+      const keyVal = inputGeminiKey ? inputGeminiKey.value.trim() : '';
+      if (!keyVal) {
+        showToast('Key Required', 'Please enter a Gemini API key before saving.', 'warning');
+        return;
+      }
+      setButtonLoading(btnSaveGeminiKey, 'Verifying...');
+      try {
+        const res = await fetch('/api/gemini/update-key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: keyVal })
+        });
+        const data = await res.json();
+        clearButtonLoading(btnSaveGeminiKey, 'Save & Verify Key');
+        if (res.ok && data.status === 'success') {
+          showToast('Key Saved', 'Gemini API key verified & saved to .env! ⚡', 'success', 5000);
+          if (geminiStatusDot) geminiStatusDot.style.background = '#10b981';
+          if (geminiStatusText) geminiStatusText.textContent = `Active & Verified (${data.masked_key})`;
+          if (geminiErrorAlert) geminiErrorAlert.style.display = 'none';
+          if (inputGeminiKey) {
+            inputGeminiKey.value = '';
+            inputGeminiKey.placeholder = `Current Key: ${data.masked_key}`;
+          }
+          setTimeout(closeGeminiKeyModal, 1500);
+        } else {
+          showToast('Verification Failed', data.detail || 'Could not verify Gemini key', 'error', 6000);
+          if (geminiErrorAlert) {
+            geminiErrorAlert.style.display = 'block';
+            if (geminiErrorDesc) geminiErrorDesc.textContent = data.detail || 'Key verification failed';
+          }
+        }
+      } catch (err) {
+        clearButtonLoading(btnSaveGeminiKey, 'Save & Verify Key');
+        showToast('Save Error', err.message, 'error');
+      }
+    });
+  }
+
+  // Initial check of Gemini key status
+  checkGeminiStatus(false);
+
+  const selectWhisperModelEl = document.getElementById('select-whisper-model');
+  if (selectWhisperModelEl) {
+    selectWhisperModelEl.addEventListener('change', (e) => {
+      if (e.target.value === 'gemini-fast') {
+        checkGeminiStatus(true);
+      }
+    });
+  }
+
   // ============ Top DAW Header Menu Items Wiring ============
   const menuBindings = [
     { id: 'menu-act-open-media', action: () => { const f = document.getElementById('audio-file-input'); if (f) f.click(); } },
@@ -539,12 +704,15 @@ document.addEventListener('DOMContentLoaded', () => {
     { id: 'menu-act-open-srt', action: () => { const b = document.getElementById('btn-open-srt-editor'); if (b) b.click(); } },
     { id: 'menu-act-ai-spelling', action: () => { const b = document.getElementById('btn-ai-auto-fix'); if (b) b.click(); } },
     { id: 'menu-act-fix-words', action: () => { const b = document.getElementById('btn-autofix-lyrics'); if (b) b.click(); } },
+    { id: 'menu-act-fix-khmer', action: () => { const b = document.getElementById('btn-fix-khmer-lyrics'); if (b) b.click(); } },
     { id: 'menu-act-verify', action: () => { const b = document.getElementById('btn-verify-lyrics'); if (b) b.click(); } },
     { id: 'menu-act-clear-lyrics', action: () => { const b = document.getElementById('btn-clear-lyrics'); if (b) b.click(); } },
+    { id: 'menu-act-gemini-key', action: () => openGeminiKeyModal() },
     { id: 'menu-act-ai-gemini', action: () => {
         const m = document.getElementById('select-whisper-model');
         if (m) m.value = 'gemini-fast';
         showToast('AI Model Selected', 'Gemini Cloud AI (Fast & Accurate)', 'info', 2500);
+        checkGeminiStatus(true);
       }
     },
     { id: 'menu-act-ai-whisper', action: () => {
@@ -1784,6 +1952,98 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Fix Khmer with AI (Natural Native Khmer Refinement)
+  const btnFixKhmerLyrics = document.getElementById('btn-fix-khmer-lyrics');
+  if (btnFixKhmerLyrics) {
+    btnFixKhmerLyrics.addEventListener('click', async () => {
+      if (!state.lyrics || state.lyrics.length === 0) {
+        showToast('No Lyrics', 'Please load audio or lyrics first to refine Khmer text', 'info', 2500);
+        return;
+      }
+
+      setButtonLoading(btnFixKhmerLyrics, 'Refining...');
+      setGlobalProgress(20, true, 'Refining Khmer Lyrics with Native AI...');
+
+      try {
+        const trLines = (state.translation && Array.isArray(state.translation.lines)) ? state.translation.lines : [];
+        const isSrcKhmer = (state.lyrics || []).some(l => /[\u1780-\u17FF]/.test(l.text || ''));
+
+        // If source lyrics are already Khmer and no separate translation track:
+        if (isSrcKhmer && (!trLines.length || !trLines.some(l => l && l.text))) {
+          const pairs = state.lyrics.map((l, i) => ({
+            id: i,
+            original: (l.text || '').trim(),
+            khmer: (l.text || '').trim()
+          }));
+          const refined = await refineKhmerViaAI(pairs, (pct) => setGlobalProgress(pct, true, 'Refining Khmer with Native AI...'));
+          refined.forEach((item, idx) => {
+            if (item && item.text && state.lyrics[idx]) {
+              state.lyrics[idx].text = item.text;
+            }
+          });
+          try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch (_) {}
+          renderLyricsTeleprompter(state.lyrics, true);
+          showToast(
+            'Khmer Lyrics Refined',
+            `Refined ${refined.length} lines into authentic native Khmer. Timestamps & structure preserved.`,
+            'success',
+            4000
+          );
+          return;
+        }
+
+        // If foreign lyrics (e.g. Vietnamese, English) with or without translation track:
+        const pairs = state.lyrics.map((l, i) => {
+          const trEntry = trLines[i];
+          const trText = ((trEntry && (typeof trEntry === 'string' ? trEntry : trEntry.text)) || '').trim();
+          return {
+            id: i,
+            original: (l.text || '').trim(),
+            khmer: trText
+          };
+        });
+
+        const refined = await refineKhmerViaAI(pairs, (pct) => setGlobalProgress(pct, true, 'Refining Khmer with Native AI...'));
+        
+        if (!state.translation) state.translation = {};
+        if (!Array.isArray(state.translation.lines)) state.translation.lines = [];
+        state.translation.lang = 'km';
+
+        refined.forEach((item, idx) => {
+          const l = state.lyrics[idx] || {};
+          state.translation.lines[idx] = {
+            index: idx,
+            text: (item && item.text) ? item.text : (pairs[idx].khmer || pairs[idx].original),
+            start: Number(l.start) || 0,
+            end: Number(l.end) || 0
+          };
+        });
+
+        state.translation.loaded = true;
+        try { await persistTranslation(); } catch (e) { console.warn('persist translation failed:', e); }
+
+        // Switch to bilingual mode so the refined Khmer translation is immediately visible on screen!
+        if (state.translation.displayMode === 'original_only') {
+          setDisplayMode('bilingual', false);
+        }
+
+        renderLyricsTeleprompter(state.lyrics, true);
+        showToast(
+          '✨ Native Khmer Refined',
+          `Polished ${refined.length} lines into natural, singable native Khmer. Original timestamps & lines intact.`,
+          'success',
+          4500
+        );
+      } catch (err) {
+        console.error('Fix Khmer error:', err);
+        showToast('Fix Khmer Error', err.message || String(err), 'error', 4000);
+      } finally {
+        clearButtonLoading(btnFixKhmerLyrics, 'Fix Khmer');
+        setTimeout(() => setGlobalProgress(100, false, ''), 1000);
+      }
+    });
+  }
+
   // Paste & Align Original Lyrics Modal
   const btnPasteAlignLyrics = document.getElementById('btn-paste-align-lyrics');
   const alignLyricsModal = document.getElementById('align-lyrics-modal');
@@ -1943,7 +2203,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const trIsKhmer = /[\u1780-\u17FF]/.test(trText);
       const trFont = trIsKhmer ? "'Kantumruy Pro', 'Battambang', 'Siemreap', sans-serif" : "'Outfit', 'Inter', sans-serif";
 
-      item.innerHTML = `<div class="tp-main"><span class="tp-time">[${formatTime(line.start)}]</span><span class="editable-lyric tp-text" contenteditable="true" spellcheck="false" style="font-family: ${font}">${line.text}</span></div>${showTr ? `<div class="tp-tr" style="font-family: ${trFont}">${trText}</div>` : ''}`;
+      item.innerHTML = `<div class="tp-main"><span class="tp-time">[${formatTime(line.start)}]</span><span class="editable-lyric tp-text" contenteditable="true" spellcheck="false" style="font-family: ${font}">${escapeHtml(line.text)}</span></div>${showTr ? `<div class="tp-tr" style="font-family: ${trFont}"><span class="editable-tr tp-tr-text" contenteditable="true" spellcheck="false" title="Click to edit Khmer translation">${escapeHtml(trText)}</span><button class="tp-fix-khmer-btn" title="Refine this line to natural native Khmer with AI" data-index="${index}">✨ Fix</button></div>` : ''}`;
       
       const textSpan = item.querySelector('.editable-lyric');
       textSpan.addEventListener('click', (e) => {
@@ -1956,6 +2216,47 @@ document.addEventListener('DOMContentLoaded', () => {
           showToast('Lyric Updated', 'Correction saved to memory.', 'success', 2000);
         }
       });
+
+      if (showTr) {
+        const trSpan = item.querySelector('.editable-tr');
+        if (trSpan) {
+          trSpan.addEventListener('click', (e) => {
+            e.stopPropagation(); // Prevent audio jump when editing translation
+          });
+          trSpan.addEventListener('blur', async (e) => {
+            const newTr = e.target.textContent.trim();
+            if (newTr !== trText) {
+              await updateSingleTranslationLine(index, newTr);
+              showToast('Khmer Line Updated', 'Translation updated and saved.', 'success', 2000);
+            }
+          });
+        }
+
+        const fixBtn = item.querySelector('.tp-fix-khmer-btn');
+        if (fixBtn) {
+          fixBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const curTr = (trSpan ? trSpan.textContent : trText).trim();
+            fixBtn.disabled = true;
+            fixBtn.textContent = '⏳';
+            try {
+              const res = await refineKhmerViaAI([{ id: index, original: line.text, khmer: curTr }]);
+              const refinedTxt = String((res[0] && res[0].text) || '').trim();
+              if (refinedTxt) {
+                if (trSpan) trSpan.textContent = refinedTxt;
+                await updateSingleTranslationLine(index, refinedTxt);
+                showToast('✨ Line Refined', 'Khmer line rewritten naturally.', 'success', 2500);
+              }
+            } catch (err) {
+              console.error('Line refinement failed:', err);
+              showToast('Fix Error', err.message || String(err), 'error', 3500);
+            } finally {
+              fixBtn.disabled = false;
+              fixBtn.textContent = '✨ Fix';
+            }
+          });
+        }
+      }
 
       item.addEventListener('click', () => {
         if (audioPlayer && hasValidAudioSource(audioPlayer)) {
@@ -3017,6 +3318,10 @@ document.addEventListener('DOMContentLoaded', () => {
         // Demucs vocal isolation running on CPU
         const demucsTicks = Math.min(21, Math.floor((elapsed - 10) * 0.18));
         currentPercent = Math.max(currentPercent, Math.min(41, 20 + demucsTicks));
+      } else if (currentPercent >= 25 && currentPercent < 92 && progressStatus && (progressStatus.textContent.includes('Aligning') || progressStatus.textContent.includes('Acoustic'))) {
+        // Acoustic & neural CTC alignment crawl so UI never appears frozen
+        const alignTicks = Math.min(65, Math.floor(elapsed * 0.7));
+        currentPercent = Math.max(currentPercent, Math.min(92, 25 + alignTicks));
       }
 
       const displayPct = Math.min(100, Math.floor(currentPercent));
@@ -3027,7 +3332,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 800);
 
     try {
+      // If user clicked AI Transcribe with forceAI, run fresh AI transcription with selected model (don't force-align old lyrics)
       const hasExistingLyrics = state.lyrics && Array.isArray(state.lyrics) && state.lyrics.length >= 2;
+      const sendExistingLyrics = !forceAI && hasExistingLyrics;
       const res = await fetch('/api/transcribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3039,7 +3346,7 @@ document.addEventListener('DOMContentLoaded', () => {
           force_ai: !!forceAI,
           song_title: state.songTitle || '',
           artist_name: state.artistName || '',
-          lyrics_data: hasExistingLyrics ? state.lyrics : null
+          lyrics_data: sendExistingLyrics ? state.lyrics : null
         })
       });
       const data = await res.json();
@@ -3090,6 +3397,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (btnTranscribe) clearButtonLoading(btnTranscribe, 'Auto-Sync Lyrics');
       setStudioPipelineProgress(3, 0, 'Transcription failed', 'AI Whisper Lyrics', false);
       showToast('Transcription Error', err.message, 'error');
+      if (err.message && (err.message.toLowerCase().includes('api key') || err.message.toLowerCase().includes('expired') || err.message.toLowerCase().includes('gemini'))) {
+        openGeminiKeyModal();
+      }
       setTimeout(() => {
         if (progressBox) progressBox.style.display = 'none';
       }, 4000);

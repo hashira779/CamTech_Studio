@@ -17,16 +17,23 @@ def call_gemini_api(prompt: str, json_mode: bool = False, timeout: int = 25) -> 
         if not api_key:
             return None
         import urllib.request
+        import urllib.error
         import json
+        try:
+            from backend.khmer_lyric_matcher import set_last_key_error
+        except ImportError:
+            try:
+                from khmer_lyric_matcher import set_last_key_error
+            except ImportError:
+                set_last_key_error = lambda x: None
+
         models = [
-            "gemini-flash-lite-latest",
-            "gemini-flash-latest",
-            "gemini-3.1-flash-lite",
-            "gemini-3.5-flash-lite",
-            "gemini-3-flash-preview",
+            "gemini-3.8-flash",
             "gemini-3.5-flash",
-            "gemini-3.7-flash",
-            "gemini-3.8-flash"
+            "gemini-3.1-flash",
+            "gemini-3-flash",
+            "gemini-2.0-flash",
+            "gemini-flash-latest"
         ]
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
         if json_mode:
@@ -41,7 +48,22 @@ def call_gemini_api(prompt: str, json_mode: bool = False, timeout: int = 25) -> 
                     data = json.loads(resp.read().decode("utf-8"))
                     text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
                     if text:
+                        set_last_key_error(None)
                         return text
+            except urllib.error.HTTPError as e:
+                err_body = e.read().decode("utf-8", errors="replace")
+                if e.code in (400, 401, 403):
+                    try:
+                        err_json = json.loads(err_body)
+                        msg = err_json.get("error", {}).get("message", "")
+                        if "API_KEY_INVALID" in msg or "API key not valid" in msg or "expired" in msg.lower():
+                            set_last_key_error(f"Gemini API Key is invalid or expired: {msg}")
+                            break
+                    except Exception:
+                        pass
+                    set_last_key_error(f"Gemini API authentication failed (HTTP {e.code})")
+                    break
+                continue
             except Exception:
                 continue
     except Exception:
@@ -911,6 +933,87 @@ class LocalLLMEngine:
         except Exception as e:
             print(f"[Lyric Translator] Translation failed: {e}")
             return lyrics_data
+
+    def refine_khmer_lyrics(
+        self,
+        pairs: List[Dict[str, Any]],
+        song_title: str = "",
+        artist: str = "",
+        source_lang: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        AI-Powered Native Khmer Refinement:
+        Rewrites translated Khmer lyrics into natural, singable, native Khmer like a song
+        originally composed in Khmer, fixing literal/machine translations, unnatural phrasing,
+        and preserving exact 1:1 line ordering and timestamps.
+        """
+        if not pairs:
+            return pairs
+
+        # Detect source language if not specified
+        if not source_lang:
+            originals = [str(p.get("original", "")).strip() for p in pairs if p.get("original")]
+            source_lang = self._detect_source_language(originals) if originals else "Vietnamese"
+
+        import json
+        simplified = [
+            {
+                "id": p.get("id", i),
+                "original": str(p.get("original", "")).strip(),
+                "khmer": str(p.get("khmer", "")).strip()
+            }
+            for i, p in enumerate(pairs)
+        ]
+        payload_str = json.dumps(simplified, ensure_ascii=False, indent=2)
+
+        prompt = (
+            "You are an expert Khmer song lyricist and cultural translator.\n"
+            "TASK: AI-Powered Native Khmer Refinement of translated song lyrics.\n"
+            "Rewrite each Khmer translation line so it sounds completely NATURAL, BEAUTIFUL, and NATIVE to Khmer speakers, "
+            "like a song originally composed in Khmer.\n"
+            f"The original song lyrics are in {source_lang}. Song title: {song_title or 'not provided'}. Artist: {artist or 'not provided'}.\n"
+            "Current Khmer translations are often too literal, stiff, or contain mistranslations from machine translation.\n\n"
+            "CRITICAL RULES:\n"
+            "1. Must sound like natural, native Khmer (ត្រូវតែស្ដាប់ជាខ្មែរធម្មជាតិ). Never translate word-by-word.\n"
+            "   - Fix unnatural metaphors, literal food names, or stiff grammar.\n"
+            "   - Example: ❌ 'ប្រណាំងទូកហើយញ៉ាំបាយជាមួយគ្នា អយស្ទ័រនិងទឹកអំពិល' -> ✅ 'ប្រណាំងទូកហើយញ៉ាំត្រីកែវជ្រលក់ទឹកត្រីអំពិល'\n"
+            "   - Example: ❌ 'ឋានសួគ៌គឺអង្គុយក្បែរមាត់ស្រះជាមួយមនុស្សជាទីស្រឡាញ់' -> ✅ 'ទោះនៅបាតអណ្ដូងក៏ជាឋានសួគ៌ឱ្យតែបាននៅក្បែរអូន'\n"
+            "2. Preserve original romantic emotion, rhythm, and singability.\n"
+            "   - Use authentic romantic pronouns (e.g. បង/អូន, ខ្ញុំ/អ្នក) matching the song mood.\n"
+            "3. Output Khmer script only (អក្សរខ្មែរ). No foreign letters or romanization.\n"
+            "4. STRICT 1:1 LINE INTEGRITY: Exactly 1 output line per input line, preserving original id and order.\n"
+            "5. Return ONLY a valid JSON array of objects with schema:\n"
+            '[{"id": 0, "text": "..."}]\n\n'
+            f"Lines to refine:\n{payload_str}"
+        )
+
+        try:
+            res_str = call_gemini_api(prompt, json_mode=True, timeout=35)
+            if res_str:
+                refined_list = json.loads(res_str)
+                refined_map = {str(item.get("id")): str(item.get("text", "")).strip() for item in refined_list if "id" in item and item.get("text")}
+                out = []
+                for i, p in enumerate(pairs):
+                    copied = dict(p)
+                    pid = str(p.get("id", i))
+                    if pid in refined_map and refined_map[pid]:
+                        copied["text"] = refined_map[pid]
+                    else:
+                        copied["text"] = p.get("khmer") or p.get("original") or ""
+                    out.append(copied)
+                return out
+        except Exception as e:
+            print(f"[Khmer Refinement] Gemini call notice: {e}")
+
+        # Offline fallback: apply orthography normalization
+        from backend.lyric_engine import normalize_khmer_orthography
+        out = []
+        for i, p in enumerate(pairs):
+            copied = dict(p)
+            khmer_txt = p.get("khmer") or p.get("original") or ""
+            copied["text"] = normalize_khmer_orthography(khmer_txt) if khmer_txt else ""
+            out.append(copied)
+        return out
 
 llm_engine = LocalLLMEngine()
 

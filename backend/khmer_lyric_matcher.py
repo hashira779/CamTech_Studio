@@ -153,6 +153,16 @@ def generate_lrc_content(aligned_lines: List[Dict[str, Any]]) -> str:
     return "\n".join(out)
 
 
+_LAST_GEMINI_KEY_ERROR = {"error": None, "timestamp": 0}
+
+def get_last_key_error() -> Optional[str]:
+    return _LAST_GEMINI_KEY_ERROR.get("error")
+
+def set_last_key_error(err: Optional[str]):
+    import time
+    _LAST_GEMINI_KEY_ERROR["error"] = err
+    _LAST_GEMINI_KEY_ERROR["timestamp"] = time.time() if err else 0
+
 def get_gemini_api_key() -> str:
     """Retrieves Gemini API key from environment or .env file."""
     api_key = os.environ.get("GEMINI_API_KEY", "")
@@ -168,6 +178,82 @@ def get_gemini_api_key() -> str:
             except Exception:
                 pass
     return api_key
+
+
+def set_gemini_api_key(new_key: str) -> bool:
+    """Updates the Gemini API key in memory and in the .env file."""
+    new_key = new_key.strip()
+    os.environ["GEMINI_API_KEY"] = new_key
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    try:
+        lines = []
+        key_found = False
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            new_lines = []
+            for line in lines:
+                if line.strip().startswith("GEMINI_API_KEY="):
+                    new_lines.append(f'GEMINI_API_KEY="{new_key}"\n')
+                    key_found = True
+                else:
+                    new_lines.append(line)
+            lines = new_lines
+        if not key_found:
+            lines.append(f'GEMINI_API_KEY="{new_key}"\n')
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+        set_last_key_error(None)
+        return True
+    except Exception as e:
+        log.error(f"Failed to update .env key: {e}")
+        return False
+
+
+def verify_gemini_api_key(api_key: Optional[str] = None) -> Tuple[bool, Optional[str]]:
+    """Tests if the Gemini API key is valid by sending a minimal ping to Google Gemini API."""
+    key = api_key or get_gemini_api_key()
+    if not key:
+        set_last_key_error("No Gemini API Key configured.")
+        return False, "No Gemini API Key configured."
+    import urllib.request
+    import urllib.error
+    import json
+
+    models = ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash", "gemini-flash-latest"]
+    last_err = None
+    for model in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+        payload = json.dumps({"contents": [{"parts": [{"text": "ping"}]}]}).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                if resp.status == 200:
+                    set_last_key_error(None)
+                    return True, None
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="replace")
+            last_err = f"HTTP {e.code}: {err_body}"
+            # 503 (High demand) or 429 (Quota/Rate limit) confirms the key is valid & accepted by Google
+            if e.code in (503, 429):
+                set_last_key_error(None)
+                return True, None
+            if e.code in (400, 401, 403):
+                try:
+                    err_json = json.loads(err_body)
+                    msg = err_json.get("error", {}).get("message", "")
+                    if "API_KEY_INVALID" in msg or "API key not valid" in msg or "expired" in msg.lower():
+                        set_last_key_error("Gemini API key is invalid or expired. Please update your API key.")
+                        return False, f"API key is invalid or expired: {msg}"
+                except Exception:
+                    pass
+                set_last_key_error(f"Gemini API authentication failed (HTTP {e.code})")
+                return False, f"Authentication error (HTTP {e.code}): {err_body[:100]}"
+            continue
+        except Exception as e:
+            last_err = str(e)
+            continue
+    return False, last_err or "Failed to connect to Gemini API"
 
 
 def gemini_clean_youtube_metadata(
@@ -186,8 +272,9 @@ def gemini_clean_youtube_metadata(
         return None
 
     import urllib.request
+    import urllib.error
     models_to_try = [
-        "gemini-flash-lite-latest", "gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3-flash-preview", "gemini-3.5-flash", "gemini-3.7-flash", "gemini-3.8-flash"
+        "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash", "gemini-3-flash", "gemini-flash-lite-latest", "gemini-flash-latest"
     ]
 
     prompt = f"""Given this YouTube music video:
@@ -375,14 +462,12 @@ Example:
     }
 
     models = [
-        "gemini-flash-lite-latest",
-        "gemini-flash-latest",
-        "gemini-3.1-flash-lite",
-        "gemini-3.5-flash-lite",
-        "gemini-3-flash-preview",
+        "gemini-3.8-flash",
         "gemini-3.5-flash",
-        "gemini-3.7-flash",
-        "gemini-3.8-flash"
+        "gemini-3.1-flash",
+        "gemini-3-flash",
+        "gemini-flash-lite-latest",
+        "gemini-flash-latest"
     ]
     for m in models:
         try:
@@ -661,7 +746,7 @@ def transcribe_audio_with_gemini(
     )
 
     models = [
-        "gemini-flash-lite-latest", "gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3-flash-preview", "gemini-3.5-flash", "gemini-3.7-flash", "gemini-3.8-flash"
+        "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash", "gemini-3-flash", "gemini-flash-lite-latest", "gemini-flash-latest"
     ]
 
     for model in models:
@@ -740,7 +825,7 @@ def fetch_lyrics_with_gemini(title: str, artist: str = "", description: str = ""
 
     import urllib.request
     models_to_try = [
-        "gemini-flash-lite-latest", "gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3-flash-preview", "gemini-3.5-flash", "gemini-3.7-flash", "gemini-3.8-flash"
+        "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash", "gemini-3-flash", "gemini-flash-lite-latest", "gemini-flash-latest"
     ]
 
     desc_hint = f" (Context: {description[:150]})" if description else ""

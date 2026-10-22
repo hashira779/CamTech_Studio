@@ -380,7 +380,46 @@ async function translateViaAI(texts, onProgress) {
   return allLines;
 }
 
-async function persistTranslation() {
+export async function refineKhmerViaAI(pairs, onProgress) {
+  const BATCH_SIZE = 20;
+  if (pairs.length <= BATCH_SIZE) {
+    if (onProgress) onProgress(25);
+    const data = await postJSON('/api/lyrics/refine-khmer', {
+      pairs: pairs,
+      song_title: String(state.songTitle || '').trim(),
+      artist: String(state.artistName || '').trim()
+    }, 180000);
+    if (data.status !== 'success' || !Array.isArray(data.lines)) {
+      throw new Error(data.detail || 'Khmer refinement returned invalid response');
+    }
+    if (onProgress) onProgress(100);
+    return data.lines;
+  }
+
+  // Multi-batch for large sets
+  const allLines = [];
+  const total = pairs.length;
+  for (let i = 0; i < total; i += BATCH_SIZE) {
+    const chunk = pairs.slice(i, i + BATCH_SIZE);
+    const startPct = Math.round((i / total) * 100);
+    if (onProgress) onProgress(startPct);
+    const data = await postJSON('/api/lyrics/refine-khmer', {
+      pairs: chunk,
+      song_title: String(state.songTitle || '').trim(),
+      artist: String(state.artistName || '').trim()
+    }, 180000);
+    if (data.status !== 'success' || !Array.isArray(data.lines)) {
+      throw new Error(data.detail || 'Khmer refinement returned invalid response');
+    }
+    allLines.push(...data.lines);
+    const endPct = Math.min(99, Math.round(((i + chunk.length) / total) * 100));
+    if (onProgress) onProgress(endPct);
+  }
+  if (onProgress) onProgress(100);
+  return allLines;
+}
+
+export async function persistTranslation() {
   const cues = getTranslationCues();
   if (!cues.length) return null;
   // Preserve 1:1 index mapping on disk: send the full line list in original order
@@ -391,6 +430,24 @@ async function persistTranslation() {
     lines,
     lyrics_data: (state.lyrics || []).map(l => ({ start: l.start, end: l.end, text: l.text }))
   }, 30000);
+}
+
+export async function updateSingleTranslationLine(index, newText) {
+  if (!state.translation.lines) state.translation.lines = [];
+  while (state.translation.lines.length <= index) {
+    const i = state.translation.lines.length;
+    const l = (state.lyrics && state.lyrics[i]) || {};
+    state.translation.lines.push({ index: i, text: '', start: Number(l.start) || 0, end: Number(l.end) || 0 });
+  }
+  state.translation.lines[index].text = String(newText || '').trim();
+  state.translation.loaded = translationCount() > 0;
+  setTrackOwner();
+  try {
+    await persistTranslation();
+  } catch (e) {
+    console.warn('[VIDA Translation] save single line failed:', e);
+  }
+  notifyTranslationChanged();
 }
 
 /** Reconciles stored SRT text back onto original indices by timestamp (gap-safe). */
@@ -667,6 +724,7 @@ function ensureModal() {
         </div>
         <div class="ui-row">
           <button id="te-translate-all" class="ui-btn ui-btn--ai ui-btn--sm">🌐 AI Translate All</button>
+          <button id="te-refine-khmer-all" class="ui-btn ui-btn--ai ui-btn--sm" title="Refine translated lines to natural native Khmer">✨ Fix Khmer with AI</button>
           <button id="te-save" class="ui-btn ui-btn--go ui-btn--sm">💾 Apply &amp; Save</button>
           <button id="te-close" class="ui-btn ui-btn--icon ui-modal-x" title="Close">✕</button>
         </div>
@@ -693,6 +751,29 @@ function ensureModal() {
       toast('❌ Translation Failed', err.message || String(err), 'error', 5000);
     }
   });
+  modalEl.querySelector('#te-refine-khmer-all').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    const lyrics = state.lyrics || [];
+    const pairs = lyrics.map((l, i) => ({
+      id: i,
+      original: (l.text || '').trim(),
+      khmer: (draftLines[i] ? draftLines[i].text : '').trim()
+    }));
+    const prog = createButtonProgress(btn, 'Refining');
+    try {
+      const out = await refineKhmerViaAI(pairs, (p) => prog.update(p));
+      out.forEach((item, idx) => {
+        if (!draftLines[idx]) draftLines[idx] = { index: idx, text: '', start: Number(lyrics[idx].start) || 0, end: Number(lyrics[idx].end) || 0 };
+        if (item && item.text) draftLines[idx].text = item.text;
+      });
+      renderRows();
+      prog.finish('✨ Fix Khmer with AI');
+      toast('✨ Native Khmer Complete', `${out.length} lines refined to native Khmer — review then Apply & Save.`, 'success', 4000);
+    } catch (err) {
+      prog.reset();
+      toast('❌ Refinement Failed', err.message || String(err), 'error', 5000);
+    }
+  });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && modalEl && modalEl.style.display !== 'none') closeModal();
   });
@@ -716,6 +797,7 @@ function renderRows() {
       <div class="te-idx">${i + 1}</div>
       <div class="te-orig">${escapeHtml((l.text || '').trim())}<span class="te-time">${fmtTime(l.start)} → ${fmtTime(l.end)}</span></div>
       <textarea class="te-input" rows="2" placeholder="Translated line ${i + 1}"></textarea>
+      <button class="te-fix-khmer" title="Refine to natural native Khmer with AI">✨ Fix Khmer</button>
       <button class="te-redo" title="Re-translate only this line">🔁</button>`;
     const ta = row.querySelector('.te-input');
     ta.value = entry.text || '';
@@ -723,6 +805,25 @@ function renderRows() {
       if (!draftLines[i]) draftLines[i] = { index: i, text: '', start: Number(l.start) || 0, end: Number(l.end) || 0 };
       draftLines[i].text = ta.value;
       updateSummary();
+    });
+    row.querySelector('.te-fix-khmer').addEventListener('click', async (e) => {
+      const b = e.currentTarget;
+      b.disabled = true; b.textContent = '⏳';
+      try {
+        const out = await refineKhmerViaAI([{ id: i, original: (l.text || '').trim(), khmer: ta.value.trim() }]);
+        const txt = String((out[0] && out[0].text) || '').trim();
+        if (txt) {
+          if (!draftLines[i]) draftLines[i] = { index: i, text: '', start: Number(l.start) || 0, end: Number(l.end) || 0 };
+          draftLines[i].text = txt;
+          ta.value = txt;
+          updateSummary();
+          toast('✨ Line Refined', 'Khmer line rewritten naturally.', 'success', 2500);
+        }
+      } catch (err) {
+        toast('❌ Line Refine Failed', err.message || String(err), 'error', 4000);
+      } finally {
+        b.disabled = false; b.textContent = '✨ Fix Khmer';
+      }
     });
     row.querySelector('.te-redo').addEventListener('click', async (e) => {
       const b = e.currentTarget;
@@ -752,7 +853,7 @@ function updateSummary() {
   s.textContent = `${(state.lyrics || []).length} original lines · ${filled} translated · ${targetLangName()}`;
 }
 
-function escapeHtml(str) {
+export function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 

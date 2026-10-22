@@ -367,6 +367,55 @@ class SubtitleAIFixRequest(BaseModel):
     audio_path: Optional[str] = None
     align_vocals: Optional[bool] = False
 
+class GeminiKeyUpdateRequest(BaseModel):
+    api_key: Optional[str] = ""
+
+@app.get("/api/gemini/status")
+def get_gemini_status():
+    from backend.khmer_lyric_matcher import get_gemini_api_key, get_last_key_error
+    key = get_gemini_api_key()
+    configured = bool(key)
+    masked = f"{key[:8]}...{key[-4:]}" if (key and len(key) > 12) else ("***" if key else "")
+    last_err = get_last_key_error()
+    return {
+        "status": "success",
+        "configured": configured,
+        "masked_key": masked,
+        "valid": last_err is None if configured else False,
+        "last_error": last_err,
+        "active_model": "gemini-3.8-flash"
+    }
+
+@app.post("/api/gemini/verify")
+def verify_gemini_key_api(req: Optional[GeminiKeyUpdateRequest] = None):
+    from backend.khmer_lyric_matcher import verify_gemini_api_key
+    target_key = req.api_key.strip() if req and req.api_key else None
+    valid, err_msg = verify_gemini_api_key(target_key)
+    return {
+        "status": "success" if valid else "error",
+        "valid": valid,
+        "error": err_msg
+    }
+
+@app.post("/api/gemini/update-key")
+def update_gemini_key_api(req: GeminiKeyUpdateRequest):
+    from backend.khmer_lyric_matcher import verify_gemini_api_key, set_gemini_api_key
+    new_key = (req.api_key or "").strip()
+    if not new_key:
+        raise HTTPException(status_code=400, detail="Gemini API key cannot be empty")
+    valid, err_msg = verify_gemini_api_key(new_key)
+    if not valid:
+        raise HTTPException(status_code=400, detail=f"API key verification failed: {err_msg}")
+    saved = set_gemini_api_key(new_key)
+    if not saved:
+        raise HTTPException(status_code=500, detail="Failed to save API key to .env file")
+    masked = f"{new_key[:8]}...{new_key[-4:]}" if len(new_key) > 12 else "***"
+    return {
+        "status": "success",
+        "message": "Gemini API Key successfully verified and saved!",
+        "masked_key": masked
+    }
+
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
     """Uploads audio, video, background image, or logo file to server with auto audio extraction."""
@@ -497,10 +546,10 @@ def transcribe_audio(req: TranscribeRequest):
     if is_khmer_target and not target_lang:
         target_lang = "km"
 
-    if req.lyrics_data:
+    if req.lyrics_data and not req.force_ai:
         update_transcribe_progress(25, "Aligning original lyrics to the selected singer audio")
         audio_p = _resolve_alignment_audio(req.audio_path)
-        verified, report, source = _align_selected_lyrics(req.lyrics_data, audio_p)
+        verified, report, source = _align_selected_lyrics(req.lyrics_data, audio_p, progress_callback=update_transcribe_progress)
         _save_aligned_subtitles(verified, audio_p)
         update_transcribe_progress(100, f"Aligned {len(verified)} original lyric lines")
         return {
@@ -926,6 +975,17 @@ class TranslateLinesRequest(BaseModel):
     song_title: str = ""
     artist: str = ""
 
+class RefineKhmerLinePair(BaseModel):
+    id: int
+    original: Optional[str] = ""
+    khmer: Optional[str] = ""
+
+class RefineKhmerLyricsRequest(BaseModel):
+    pairs: List[RefineKhmerLinePair]
+    song_title: Optional[str] = ""
+    artist: Optional[str] = ""
+    source_lang: Optional[str] = None
+
 class TranslationSaveRequest(BaseModel):
     audio_path: Optional[str] = None
     lang: str = "en"
@@ -1019,6 +1079,32 @@ def translate_lyrics_lines_api(req: TranslateLinesRequest):
         return {"status": "success", "lines": out, "target_lang": req.target_lang}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")
+
+@app.post("/api/lyrics/refine-khmer")
+def refine_khmer_lyrics_api(req: RefineKhmerLyricsRequest):
+    """
+    AI-Powered Native Khmer Refinement API:
+    Rewrites translated Khmer lyrics into natural, singable, native Khmer like a song
+    originally composed in Khmer, fixing literal/machine translations, unnatural phrasing,
+    and preserving exact 1:1 line ordering and timestamps.
+    """
+    if not req.pairs:
+        return {"status": "success", "lines": []}
+    try:
+        from backend.llm_engine import llm_engine
+        payload = [
+            {"id": p.id, "original": p.original or "", "khmer": p.khmer or ""}
+            for p in req.pairs
+        ]
+        refined = llm_engine.refine_khmer_lyrics(
+            pairs=payload,
+            song_title=req.song_title or "",
+            artist=req.artist or "",
+            source_lang=req.source_lang
+        )
+        return {"status": "success", "lines": refined}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Khmer refinement failed: {str(e)}")
 
 @app.post("/api/lyrics/translation/save")
 async def save_translation_api(req: TranslationSaveRequest):
@@ -1244,20 +1330,28 @@ def _resolve_alignment_audio(audio_path: Optional[str]) -> str:
     return os.path.abspath(audio_p)
 
 
-def _align_selected_lyrics(lyrics: List[Dict[str, Any]], audio_p: str):
+def _align_selected_lyrics(lyrics: List[Dict[str, Any]], audio_p: str, progress_callback=None):
     from backend.audio_analyzer import decode_audio_to_numpy
     import math
 
+    if progress_callback:
+        progress_callback(30, "Analyzing audio signal & frequency spectrum...")
     texts = [str(line.get("text", "")).strip() for line in lyrics]
     if not texts or not all(texts):
         raise HTTPException(status_code=400, detail="Every lyric line must contain text")
     _, _, duration = decode_audio_to_numpy(audio_p, target_sr=8000)
+    if progress_callback:
+        progress_callback(45, "Acoustic VAD: Detecting vocal phrases & onsets...")
     aligned = force_align_lyrics_to_audio(texts, audio_p, duration)
+    if progress_callback:
+        progress_callback(85, "Checking cadence & verifying syllable boundaries...")
     if not aligned or [line.get("text") for line in aligned] != texts:
         raise HTTPException(status_code=422, detail="Could not align every original lyric line to this audio; lyrics were not replaced")
     verified, report = double_check_lyrics(aligned, preserve_text=True)
     if [line["text"] for line in verified] != texts:
         raise HTTPException(status_code=422, detail="Alignment changed the original lines; lyrics were not replaced")
+    if progress_callback:
+        progress_callback(95, "Validating word timestamps & precision...")
     for original, line in zip(lyrics, verified):
         if not (math.isfinite(line["start"]) and math.isfinite(line["end"]) and 0 <= line["start"] < line["end"] <= duration):
             raise HTTPException(status_code=422, detail="Alignment falls outside the selected audio; lyrics were not replaced")

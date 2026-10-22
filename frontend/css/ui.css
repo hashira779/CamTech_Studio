@@ -540,6 +540,50 @@
   font-size: var(--ui-fs-sm);
   line-height: 1.35;
   color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.editable-tr {
+  outline: none;
+  border-bottom: 1px dashed transparent;
+  transition: border-color 0.2s ease, background 0.2s ease;
+  cursor: text;
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+.editable-tr:hover {
+  background: rgba(14, 165, 233, 0.1);
+  border-bottom-color: rgba(14, 165, 233, 0.4);
+}
+.editable-tr:focus {
+  border-bottom-color: var(--accent);
+  background: rgba(14, 165, 233, 0.18);
+}
+.tp-fix-khmer-btn {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, background 0.15s ease;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  border: 1px solid rgba(14, 165, 233, 0.45);
+  background: rgba(14, 165, 233, 0.16);
+  color: #38bdf8;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: var(--ui-font);
+}
+.teleprompter-line:hover .tp-fix-khmer-btn,
+.tp-tr:hover .tp-fix-khmer-btn,
+.tp-fix-khmer-btn:focus {
+  opacity: 1;
+  visibility: visible;
+}
+.tp-fix-khmer-btn:hover {
+  background: rgba(14, 165, 233, 0.35);
+  border-color: #38bdf8;
+  color: #ffffff;
 }
 
 /* Mode-aware teleprompter: the list mirrors what the stage paints. In "Translation only"

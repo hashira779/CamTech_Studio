@@ -24,6 +24,45 @@ except ImportError:
     khmer_word_tokenize = None
 
 
+def _ensure_nvidia_dll_paths():
+    """
+    Ensures NVIDIA CUDA DLL directories (cublas, cudnn, cuda_runtime) and PyTorch lib
+    are registered via os.add_dll_directory on Windows so ctranslate2/faster-whisper can load cublas64_12.dll.
+    """
+    if os.name != "nt":
+        return
+    try:
+        import nvidia
+        nvidia_base = nvidia.__path__[0]
+        for sub in os.listdir(nvidia_base):
+            bin_dir = os.path.join(nvidia_base, sub, "bin")
+            if os.path.isdir(bin_dir):
+                try:
+                    os.add_dll_directory(bin_dir)
+                except Exception:
+                    pass
+                if bin_dir not in os.environ.get("PATH", ""):
+                    os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
+    except Exception:
+        pass
+    try:
+        import torch
+        torch_lib = os.path.join(os.path.dirname(torch.__file__), "lib")
+        if os.path.isdir(torch_lib):
+            try:
+                os.add_dll_directory(torch_lib)
+            except Exception:
+                pass
+            if torch_lib not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = torch_lib + os.pathsep + os.environ.get("PATH", "")
+    except Exception:
+        pass
+
+
+_ensure_nvidia_dll_paths()
+
+
+
 def is_khmer_text(text: str) -> bool:
     """Checks if text contains Khmer Unicode characters."""
     return any('\u1780' <= c <= '\u17FF' for c in text)
@@ -1430,28 +1469,44 @@ class WhisperTranscriber:
         self.last_detected_language = None
         self.last_detected_probability = 1.0
 
-    def _load_model(self, progress_callback=None):
+    def _load_model(self, progress_callback=None, device_override: Optional[str] = None):
+        if device_override is not None:
+            self.model = None
+
         if self.model is not None:
             return
+
+        _ensure_nvidia_dll_paths()
 
         if progress_callback:
             progress_callback(5, f"Loading Whisper {self.model_size} AI model...")
 
         try:
             from faster_whisper import WhisperModel
-            dev = "cpu"
+            dev = device_override or "cpu"
             c_type = "int8"
 
-            try:
-                from backend.vocal_separator import cuda_available
-                if cuda_available():
-                    dev = "cuda"
-                    c_type = "float16"
-            except ImportError:
-                pass
+            if device_override is None:
+                try:
+                    from backend.vocal_separator import cuda_available
+                    if cuda_available():
+                        dev = "cuda"
+                        c_type = "float16"
+                except ImportError:
+                    pass
 
             cpu_threads = min(8, os.cpu_count() or 4)
-            self.model = WhisperModel(self.model_size, device=dev, compute_type=c_type, cpu_threads=cpu_threads)
+            try:
+                self.model = WhisperModel(self.model_size, device=dev, compute_type=c_type, cpu_threads=cpu_threads)
+            except Exception as cuda_err:
+                if dev == "cuda":
+                    print(f"[Whisper AI] Faster-whisper CUDA initialization failed: {cuda_err}. Falling back to CPU int8...")
+                    dev = "cpu"
+                    c_type = "int8"
+                    self.model = WhisperModel(self.model_size, device="cpu", compute_type="int8", cpu_threads=cpu_threads)
+                else:
+                    raise
+
             if progress_callback:
                 progress_callback(18, "AI model ready. Loading audio...")
         except Exception as e:
@@ -1514,6 +1569,8 @@ class WhisperTranscriber:
                 speech_pad_ms=600
             )
 
+        dur: float = 0.0
+        segments = []
         lyrics = []
         line_counter = 0
 
@@ -1541,7 +1598,6 @@ class WhisperTranscriber:
                 dur = getattr(info, "duration", 0) or 1.0
                 self.last_detected_language = getattr(info, "language", language or "en")
                 self.last_detected_probability = getattr(info, "language_probability", 1.0)
-                segments = []
                 for s in segments_gen:
                     segments.append(s)
                     if progress_callback and dur > 0:
@@ -1549,7 +1605,42 @@ class WhisperTranscriber:
                         progress_callback(pct, f"Transcribing vocals ({pct}%)")
             except Exception as e:
                 print(f"Faster-whisper VAD error: {e}")
-                segments = []
+                err_msg = str(e).lower()
+                # If CUDA runtime or DLL missing (e.g. cublas64_12.dll not found), fallback immediately to CPU
+                if "cublas" in err_msg or "cuda" in err_msg or "cudnn" in err_msg or "library" in err_msg or "dll" in err_msg:
+                    print(f"[Whisper AI] CUDA runtime issue detected ({e}). Falling back to CPU int8 mode...")
+                    if progress_callback:
+                        progress_callback(22, "GPU CUDA driver issue detected, switching to fast CPU mode...")
+                    try:
+                        self._load_model(device_override="cpu")
+                        segments_gen, info = self.model.transcribe(
+                            clean_audio,
+                            word_timestamps=True,
+                            language=language,
+                            beam_size=beam_size,
+                            best_of=1,
+                            temperature=0.0,
+                            condition_on_previous_text=False,
+                            initial_prompt=prompt,
+                            compression_ratio_threshold=2.4 if language == "km" else 2.2,
+                            no_speech_threshold=0.6 if language == "km" else 0.75,
+                            vad_filter=True,
+                            vad_parameters=vad_params
+                        )
+                        dur = getattr(info, "duration", 0) or 1.0
+                        self.last_detected_language = getattr(info, "language", language or "en")
+                        self.last_detected_probability = getattr(info, "language_probability", 1.0)
+                        segments = []
+                        for s in segments_gen:
+                            segments.append(s)
+                            if progress_callback and dur > 0:
+                                pct = min(88, int(20 + 68 * (s.end / dur)))
+                                progress_callback(pct, f"Transcribing vocals ({pct}%)")
+                    except Exception as cpu_err:
+                        print(f"[Whisper AI] CPU fallback transcription error: {cpu_err}")
+                        segments = []
+                else:
+                    segments = []
 
             # Pass 2: If VAD produced too few segments, retry WITHOUT VAD
             # This catches soft Khmer singing that VAD thinks is silence
@@ -1558,33 +1649,36 @@ class WhisperTranscriber:
                 print(f"[Whisper AI] VAD produced only {len(segments)} segments (expected ≥{min_expected}); retrying without VAD...")
                 if progress_callback:
                     progress_callback(25, "Deep scanning for soft vocals...")
-                segments_gen, info = self.model.transcribe(
-                    clean_audio,
-                    word_timestamps=True,
-                    language=language,
-                    beam_size=beam_size,
-                    best_of=1,
-                    temperature=0.0,
-                    condition_on_previous_text=False,
-                    initial_prompt=prompt,
-                    compression_ratio_threshold=2.6 if language == "km" else 2.4,
-                    no_speech_threshold=0.9,
-                    log_prob_threshold=None,
-                    vad_filter=False
-                )
-                dur = getattr(info, "duration", 0) or 1.0
-                self.last_detected_language = getattr(info, "language", language or "en")
-                self.last_detected_probability = getattr(info, "language_probability", 1.0)
-                pass2_segments = []
-                for s in segments_gen:
-                    pass2_segments.append(s)
-                    if progress_callback and dur > 0:
-                        pct = min(88, int(25 + 63 * (s.end / dur)))
-                        progress_callback(pct, f"Transcribing vocals ({pct}%)")
-                # Use whichever pass produced more segments
-                if len(pass2_segments) > len(segments):
-                    segments = pass2_segments
-                    print(f"[Whisper AI] Pass 2 captured {len(segments)} segments (better)")
+                try:
+                    segments_gen, info = self.model.transcribe(
+                        clean_audio,
+                        word_timestamps=True,
+                        language=language,
+                        beam_size=beam_size,
+                        best_of=1,
+                        temperature=0.0,
+                        condition_on_previous_text=False,
+                        initial_prompt=prompt,
+                        compression_ratio_threshold=2.6 if language == "km" else 2.4,
+                        no_speech_threshold=0.9,
+                        log_prob_threshold=None,
+                        vad_filter=False
+                    )
+                    dur = getattr(info, "duration", 0) or 1.0
+                    self.last_detected_language = getattr(info, "language", language or "en")
+                    self.last_detected_probability = getattr(info, "language_probability", 1.0)
+                    pass2_segments = []
+                    for s in segments_gen:
+                        pass2_segments.append(s)
+                        if progress_callback and dur > 0:
+                            pct = min(88, int(25 + 63 * (s.end / dur)))
+                            progress_callback(pct, f"Transcribing vocals ({pct}%)")
+                    # Use whichever pass produced more segments
+                    if len(pass2_segments) > len(segments):
+                        segments = pass2_segments
+                        print(f"[Whisper AI] Pass 2 captured {len(segments)} segments (better)")
+                except Exception as pass2_err:
+                    print(f"[Whisper AI] Pass 2 error: {pass2_err}")
 
             # Pass 3 (Khmer only): Temperature fallback for melodic/tonal singing
             # Khmer songs with many tunes can confuse greedy decoding

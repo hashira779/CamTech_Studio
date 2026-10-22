@@ -57,3 +57,4 @@ scratch.py
 
 # Local verification screenshots / scratch output
 .verify/
+.qoder/
