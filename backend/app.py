@@ -65,7 +65,15 @@ from backend.lyric_engine import (
     tokenize_line_words,
     compute_weighted_word_timestamps
 )
-from backend.vocal_align import force_align_lyrics_to_audio
+from backend.paths import (
+    BASE_DIR, UPLOAD_DIR, AUDIO_DIR, LYRICS_DIR, VIDEO_DIR, IMAGES_DIR, OUTPUT_DIR, FRONTEND_DIR,
+    find_audio_file, find_audio_file_or_latest,
+)
+from backend.logging_setup import setup_logging
+setup_logging()
+from backend.progress import update_transcribe_progress
+from backend.services.lyric_alignment import align_lyrics_to_audio, require_audio_file, save_aligned_subtitles
+from backend.routes.lyrics import router as lyrics_router
 from kmvm.youtube_downloader import download_youtube_audio, is_youtube_url, extract_youtube_url
 from backend.llm_engine import llm_engine
 
@@ -103,25 +111,6 @@ def _get_demo_audio():
         _demo_audio = _da
     return _demo_audio
 
-# Directories
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
-AUDIO_DIR = os.path.join(UPLOAD_DIR, "audio")
-LYRICS_DIR = os.path.join(UPLOAD_DIR, "lyrics")
-VIDEO_DIR = os.path.join(UPLOAD_DIR, "video")
-IMAGES_DIR = os.path.join(UPLOAD_DIR, "images")
-OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
-FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
-
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(AUDIO_DIR, exist_ok=True)
-os.makedirs(LYRICS_DIR, exist_ok=True)
-os.makedirs(VIDEO_DIR, exist_ok=True)
-os.makedirs(IMAGES_DIR, exist_ok=True)
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-os.makedirs(FRONTEND_DIR, exist_ok=True)
-
-
 def get_ffmpeg_binary() -> str:
     """Locate ffmpeg executable."""
     venv_ffmpeg = os.path.join(BASE_DIR, "venv", "Scripts", "ffmpeg.exe")
@@ -154,6 +143,7 @@ def extract_audio_from_video(video_path: str, audio_path: str) -> bool:
 
 
 app = FastAPI(title="VIDA Video Studio API", version="1.0.0")
+app.include_router(lyrics_router)
 
 @app.on_event("startup")
 async def _on_startup():
@@ -247,19 +237,6 @@ def desktop_shutdown():
 jobs: Dict[str, Dict[str, Any]] = {}
 transcriber_instance: Optional[WhisperTranscriber] = None
 
-transcription_progress: Dict[str, Any] = {
-    "status": "idle",
-    "percent": 0,
-    "stage": ""
-}
-
-def update_transcribe_progress(percent: int, stage: str):
-    global transcription_progress
-    transcription_progress = {
-        "status": "in_progress" if percent < 100 else "complete",
-        "percent": percent,
-        "stage": stage
-    }
 
 youtube_progress: Dict[str, Any] = {
     "status": "idle",
@@ -324,8 +301,6 @@ class GenerateLyricsRequest(BaseModel):
 class PolishLyricsRequest(BaseModel):
     lyrics_text: str
 
-class LrcParseRequest(BaseModel):
-    lrc_text: str
 
 class YouTubeRequest(BaseModel):
     url: str
@@ -347,14 +322,6 @@ class LLMAnalyzeRequest(BaseModel):
 class LLMTranslateRequest(BaseModel):
     text: str
 
-class LyricsVerifyRequest(BaseModel):
-    lyrics_data: List[Dict[str, Any]]
-    audio_path: Optional[str] = None
-
-class LyricsCorrectReferenceRequest(BaseModel):
-    lyrics_data: Optional[List[Dict[str, Any]]] = None
-    reference_text: str
-    audio_path: Optional[str] = None
 
 class SubtitleExportRequest(BaseModel):
     lyrics_data: List[Dict[str, Any]]
@@ -362,10 +329,6 @@ class SubtitleExportRequest(BaseModel):
     title: Optional[str] = "VIDA Studio Subtitles"
     artist: Optional[str] = ""
 
-class SubtitleAIFixRequest(BaseModel):
-    lyrics_data: List[Dict[str, Any]]
-    audio_path: Optional[str] = None
-    align_vocals: Optional[bool] = False
 
 class GeminiKeyUpdateRequest(BaseModel):
     api_key: Optional[str] = ""
@@ -519,10 +482,6 @@ def get_local_library():
         
     return {"status": "success", "files": files}
 
-@app.get("/api/transcribe/progress")
-def get_transcribe_progress():
-    """Returns real-time progress percentage and current stage of AI transcription."""
-    return transcription_progress
 
 @app.post("/api/transcribe")
 def transcribe_audio(req: TranscribeRequest):
@@ -548,9 +507,9 @@ def transcribe_audio(req: TranscribeRequest):
 
     if req.lyrics_data and not req.force_ai:
         update_transcribe_progress(25, "Aligning original lyrics to the selected singer audio")
-        audio_p = _resolve_alignment_audio(req.audio_path)
-        verified, report, source = _align_selected_lyrics(req.lyrics_data, audio_p, progress_callback=update_transcribe_progress)
-        _save_aligned_subtitles(verified, audio_p)
+        audio_p = require_audio_file(req.audio_path)
+        verified, report, source = align_lyrics_to_audio(req.lyrics_data, audio_p, progress_callback=update_transcribe_progress)
+        save_aligned_subtitles(verified, audio_p)
         update_transcribe_progress(100, f"Aligned {len(verified)} original lyric lines")
         return {
             "status": "success", "source": source,
@@ -629,8 +588,8 @@ def transcribe_audio(req: TranscribeRequest):
                 lyrics = parse_subtitle_file(lrc_path, audio_path=req.audio_path)
                 if lyrics:
                     try:
-                        audio_p = _resolve_alignment_audio(req.audio_path)
-                        verified, report, local_source = _align_selected_lyrics(lyrics, audio_p)
+                        audio_p = require_audio_file(req.audio_path)
+                        verified, report, local_source = align_lyrics_to_audio(lyrics, audio_p)
                         update_transcribe_progress(100, f"Aligned {len(verified)} Khmer lines to the singer audio")
                         return {
                             "status": "success",
@@ -794,8 +753,8 @@ def transcribe_audio(req: TranscribeRequest):
             # Retrieved sheets come with cloud timings; re-measure the words against the singer
             # audio so nothing guessed by the model is ever cached or drawn on stage.
             try:
-                audio_p = _resolve_alignment_audio(req.audio_path)
-                verified, _report, local_source = _align_selected_lyrics(lyrics, audio_p)
+                audio_p = require_audio_file(req.audio_path)
+                verified, _report, local_source = align_lyrics_to_audio(lyrics, audio_p)
                 lyrics, source_type = verified, local_source
             except HTTPException as align_notice:
                 print(f"[KMVM Local Align] {align_notice.detail} — keeping the retrieved sheet as-is")
@@ -827,226 +786,6 @@ def transcribe_audio(req: TranscribeRequest):
         update_transcribe_progress(0, f"Error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
-@app.post("/api/parse-lrc")
-async def parse_lrc(req: LrcParseRequest):
-    """Parses LRC, SRT, or VTT format lyrics with word-level interpolation and Khmer tokenization."""
-    try:
-        lyrics = parse_subtitle_content(req.lrc_text)
-        return {
-            "status": "success",
-            "lyrics": lyrics,
-            "count": len(lyrics)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"LRC parse failed: {str(e)}")
-
-@app.post("/api/lyrics/upload")
-async def upload_lyrics_file(file: UploadFile = File(...)):
-    """Uploads and parses an LRC, SRT, or VTT subtitle file."""
-    try:
-        content_bytes = await file.read()
-        content = content_bytes.decode("utf-8", errors="ignore")
-        lyrics = parse_subtitle_content(content)
-        return {
-            "status": "success",
-            "filename": file.filename,
-            "lyrics": lyrics,
-            "count": len(lyrics)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to parse uploaded subtitle file: {str(e)}")
-
-@app.post("/api/lyrics/verify")
-def verify_lyrics_api(req: LyricsVerifyRequest):
-    try:
-        lyrics = req.lyrics_data or []
-        if req.audio_path:
-            audio_p = _resolve_alignment_audio(req.audio_path)
-            verified, report, source = _align_selected_lyrics(lyrics, audio_p)
-            _save_aligned_subtitles(verified, audio_p)
-        else:
-            verified, report = double_check_lyrics(lyrics, preserve_text=True)
-            report.pop("confidence", None)
-            report["status"] = "Timestamp structure checked; no singer audio was checked"
-            source = "timestamp_validation"
-        return {
-            "status": "success",
-            "verified": True,
-            "source": source,
-            "lines_count": len(verified),
-            "words_count": report.get("total_words", 0),
-            "corrections_made": report.get("corrections_count", 0),
-            "report": report,
-            "lyrics": verified,
-            "srt_content": export_subtitles_to_srt(verified)
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Lyrics verification error: {str(e)}")
-
-@app.post("/api/lyrics/auto_fix")
-def auto_fix_lyrics_api(req: LyricsVerifyRequest):
-    """Passes the transcribed lyrics through the local LLM to fix phonetic/contextual errors."""
-    try:
-        from backend.llm_engine import llm_engine
-        # 1. Run LLM Auto-Correction Pipeline
-        llm_fixed = llm_engine.auto_correct_transcription(req.lyrics_data)
-        # 2. Run standard verification to re-interpolate missing/changed words
-        verified, report = double_check_lyrics(llm_fixed)
-        return {
-            "status": "success",
-            "verified": True,
-            "lyrics": verified,
-            "report": report
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"LLM Auto-Fix Error: {str(e)}")
-
-# Below this the acoustic model barely heard the words; the studio marks those lines for review.
-LOW_LINE_CONFIDENCE = 0.4
-
-@app.post("/api/lyrics/correct-with-reference")
-def correct_lyrics_with_reference_api(req: LyricsCorrectReferenceRequest):
-    t_start = time.time()
-    if not req.reference_text or not req.reference_text.strip():
-        raise HTTPException(status_code=400, detail="Please paste reference lyrics text")
-
-    audio_p = _resolve_alignment_audio(req.audio_path)
-    audio_label = os.path.basename(audio_p) if audio_p else "None"
-    print(f"\n[Lyrics Align] 🎵 Align Request Received: audio='{audio_label}'", flush=True)
-
-    speaker_tag_pat = r'^\s*[\(\[]\s*(?:ស្រី|ប្រុស|ស្រីនិងប្រុស|ប្រុសនិងស្រី|រួមគ្នា|ស្រី/ប្រុស|ប្រុស/ស្រី|F|M|Male|Female|Singer)\s*[\)\]]\s*'
-    raw_lines = [l.strip() for l in req.reference_text.splitlines() if l.strip()]
-    ref_lines = []
-    for l in raw_lines:
-        if re.match(r'^\[(?:ti|ar|al|by|offset|length|re|ve):.*?\]', l, re.IGNORECASE):
-            continue
-        cleaned = re.sub(r'^(?:#+|\*+|-+|\d+[\.\)]|[A-Za-z]+\s*\d+:)\s*', '', l).strip()
-        cleaned = re.sub(r'^\[\d{1,2}:\d{2}(?:\.\d+)?\]\s*', '', cleaned)
-        cleaned = re.sub(r'^\d{2}:\d{2}(?:\.\d+)?\s*-->\s*\d{2}:\d{2}(?:\.\d+)?\s*', '', cleaned)
-        cleaned = re.sub(speaker_tag_pat, '', cleaned, flags=re.IGNORECASE).strip()
-        if cleaned:
-            # Filter pure non-lyric noise/instrumental markers like ((((( ... ភ្លេង ... ))))), [Music], (Solo)
-            if re.match(r'^\s*[\(\[\{<~-]*\s*(?:\.{2,}|…|-+|\*+)?\s*(?:ភ្លេង|តន្ត្រី|music|solo|instrumental|guitar\s*solo|intro|outro|bridge)\s*(?:\.{2,}|…|-+|\*+)?\s*[\)\]\}>~-]*\s*$', cleaned, re.IGNORECASE):
-                continue
-            # Filter lines that only contain punctuation / parentheses / dots
-            if re.match(r'^[()\[\]{}<>\s.…·\-–—~:;!?។៕,]+$', cleaned):
-                continue
-            ref_lines.append(cleaned)
-
-    if not ref_lines:
-        print("[Lyrics Align] ❌ No readable lyric lines found in pasted text", flush=True)
-        raise HTTPException(status_code=400, detail="No readable lyric lines found in pasted text")
-
-    print(f"[Lyrics Align] 📝 Parsed {len(ref_lines)} lyric lines (from {len(raw_lines)} raw lines)", flush=True)
-    print(f"[Lyrics Align] 🎙️ Aligning lines to singing vocals & calculating word cadences...", flush=True)
-
-    update_transcribe_progress(10, f"Read {len(ref_lines)} lyric lines")
-    try:
-        aligned_lyrics, report, source_used = _align_selected_lyrics(
-            [{"text": text} for text in ref_lines], audio_p, progress_callback=update_transcribe_progress
-        )
-        _save_aligned_subtitles(aligned_lyrics, audio_p, force_replace_srt=True)
-        unsure = [i for i, line in enumerate(aligned_lyrics) if line.get("confidence", 1.0) < LOW_LINE_CONFIDENCE]
-        update_transcribe_progress(100, f"Aligned {len(aligned_lyrics)} lines")
-        elapsed = time.time() - t_start
-        print(f"[Lyrics Align] ✅ Successfully aligned {len(aligned_lyrics)} lines in {elapsed:.2f}s ({source_used})\n", flush=True)
-
-        return {
-            "status": "success",
-            "lines_count": len(aligned_lyrics),
-            "changes_count": len(aligned_lyrics),
-            "source": source_used,
-            "report": report,
-            "unsure_lines": unsure,
-            "lyrics": aligned_lyrics
-        }
-    except Exception as e:
-        update_transcribe_progress(0, f"Error: {getattr(e, 'detail', e)}")
-        elapsed = time.time() - t_start
-        print(f"[Lyrics Align] ❌ Alignment error after {elapsed:.2f}s: {e}\n", flush=True)
-        raise
-
-class SubtitleSaveRequest(BaseModel):
-    lyrics_data: List[Dict[str, Any]]
-    audio_path: Optional[str] = None
-
-@app.post("/api/subtitles/save")
-async def save_subtitles_api(req: SubtitleSaveRequest):
-    """Saves updated subtitle timing and cues to companion .lrc and .srt files."""
-    audio_p = req.audio_path
-    if audio_p:
-        clean_rel = audio_p.replace("\\", "/").lstrip("/")
-        candidates = [
-            audio_p,
-            os.path.abspath(audio_p),
-            os.path.join(AUDIO_DIR, os.path.basename(audio_p)),
-            os.path.join(UPLOAD_DIR, "audio", os.path.basename(audio_p)),
-            os.path.join(os.path.dirname(AUDIO_DIR), clean_rel)
-        ]
-        audio_p = next((c for c in candidates if c and os.path.exists(c)), None)
-    if not audio_p and os.path.exists(AUDIO_DIR):
-        all_audios = [
-            os.path.join(AUDIO_DIR, f) for f in os.listdir(AUDIO_DIR)
-            if f.lower().endswith(('.mp3', '.wav', '.flac', '.m4a', '.ogg'))
-        ]
-        if all_audios:
-            all_audios.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-            audio_p = all_audios[0]
-
-    if audio_p and req.lyrics_data:
-        try:
-            base_audio, _ = os.path.splitext(audio_p)
-            for ext in (".lrc", ".km.lrc"):
-                export_lyrics_to_lrc(req.lyrics_data, f"{base_audio}{ext}")
-            srt_str = export_subtitles_to_srt(req.lyrics_data)
-            for ext in (".srt", ".km.srt"):
-                with open(f"{base_audio}{ext}", "w", encoding="utf-8") as sf:
-                    sf.write(srt_str)
-            return {"status": "success", "file": base_audio, "count": len(req.lyrics_data)}
-        except Exception as e:
-            return {"status": "error", "detail": str(e)}
-    return {"status": "ok", "count": len(req.lyrics_data or [])}
-
-@app.get("/api/subtitles")
-def get_subtitles_api(audio_path: Optional[str] = None):
-    """Loads matching subtitles (.srt / .lrc) from disk for the given audio path."""
-    resolved_audio = None
-    if audio_path:
-        clean_rel = audio_path.replace("\\", "/").lstrip("/")
-        candidates = [
-            audio_path,
-            os.path.abspath(audio_path),
-            os.path.join(AUDIO_DIR, os.path.basename(audio_path)),
-            os.path.join(UPLOAD_DIR, "audio", os.path.basename(audio_path)),
-            os.path.join(os.path.dirname(AUDIO_DIR), clean_rel)
-        ]
-        resolved_audio = next((c for c in candidates if c and os.path.exists(c)), None)
-
-    if not resolved_audio and os.path.exists(AUDIO_DIR):
-        all_audios = [
-            os.path.join(AUDIO_DIR, f) for f in os.listdir(AUDIO_DIR)
-            if f.lower().endswith(('.mp3', '.wav', '.flac', '.m4a', '.ogg'))
-        ]
-        if all_audios:
-            all_audios.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-            resolved_audio = all_audios[0]
-
-    if not resolved_audio:
-        return {"status": "not_found", "lyrics": [], "count": 0}
-
-    sub_path = find_matching_subtitles(resolved_audio)
-    if not sub_path or not os.path.exists(sub_path):
-        return {"status": "not_found", "lyrics": [], "count": 0}
-
-    lyrics = parse_subtitle_file(sub_path)
-    return {
-        "status": "success",
-        "file": sub_path,
-        "count": len(lyrics),
-        "lyrics": lyrics
-    }
 
 class TranslateLinesRequest(BaseModel):
     lines: List[str]
@@ -1073,29 +812,6 @@ class TranslationSaveRequest(BaseModel):
     lang: str = "en"
     lines: List[str] = []
     lyrics_data: Optional[List[Dict[str, Any]]] = None  # timing source (original cues)
-
-def _resolve_audio_path(audio_p: Optional[str]) -> Optional[str]:
-    if audio_p:
-        clean_rel = audio_p.replace("\\", "/").lstrip("/")
-        candidates = [
-            audio_p,
-            os.path.abspath(audio_p),
-            os.path.join(AUDIO_DIR, os.path.basename(audio_p)),
-            os.path.join(UPLOAD_DIR, "audio", os.path.basename(audio_p)),
-            os.path.join(os.path.dirname(AUDIO_DIR), clean_rel),
-        ]
-        hit = next((c for c in candidates if c and os.path.exists(c)), None)
-        if hit:
-            return hit
-    if os.path.exists(AUDIO_DIR):
-        all_audios = [
-            os.path.join(AUDIO_DIR, f) for f in os.listdir(AUDIO_DIR)
-            if f.lower().endswith(('.mp3', '.wav', '.flac', '.m4a', '.ogg'))
-        ]
-        if all_audios:
-            all_audios.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-            return all_audios[0]
-    return None
 
 
 # Translated tracks NEVER live at "<song>.<lang>.srt": the studio treats those filenames as
@@ -1273,7 +989,7 @@ async def save_translation_api(req: TranslationSaveRequest):
     untouched, and the "-tr" tag keeps the translation out of original-subtitle discovery.
     """
     lang = re.sub(r'[^a-z0-9_\-]', '', (req.lang or 'en').lower()) or 'en'
-    audio_p = _resolve_audio_path(req.audio_path)
+    audio_p = find_audio_file_or_latest(req.audio_path)
     if not audio_p:
         raise HTTPException(status_code=400, detail="Audio file not found for translation save")
 
@@ -1318,7 +1034,7 @@ async def save_translation_api(req: TranslationSaveRequest):
 @app.get("/api/lyrics/translation")
 async def get_translation_api(audio_path: str = "", lang: str = "en"):
     """Loads a saved translated track (text lines in original cue order + their timings)."""
-    audio_p = _resolve_audio_path(audio_path or None)
+    audio_p = find_audio_file_or_latest(audio_path)
     if not audio_p:
         return {"status": "success", "lines": [], "cues": [], "langs": []}
     base_audio, _ = os.path.splitext(audio_p)
@@ -1341,7 +1057,7 @@ async def get_translation_api(audio_path: str = "", lang: str = "en"):
 @app.get("/api/lyrics/translation/list")
 async def list_translations_api(audio_path: str = ""):
     """Lists which translated tracks exist for the current song."""
-    audio_p = _resolve_audio_path(audio_path or None)
+    audio_p = find_audio_file_or_latest(audio_path)
     if not audio_p:
         return {"status": "success", "langs": []}
     base_audio, _ = os.path.splitext(audio_p)
@@ -1427,178 +1143,6 @@ async def export_subtitles_capcut_api(req: SubtitleExportRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"CapCut export failed: {str(e)}")
-
-@app.post("/api/subtitles/ai-fix")
-def ai_fix_subtitles_api(req: SubtitleAIFixRequest):
-    """
-    AI Core Subtitle Enhancer:
-    1. Repairs phonetic and Khmer orthography errors using Gemini AI / LLM engine.
-    2. Acoustically aligns timestamps to vocal singing activity if audio_path is provided.
-    3. Runs 100% double-check verification to guarantee strictly monotonic non-overlapping timings.
-    4. Generates instant verified SRT content.
-    """
-    try:
-        lyrics = req.lyrics_data or []
-        if not lyrics:
-            return {"status": "success", "verified": True, "lyrics": [], "report": {}, "count": 0}
-
-        # Step 1: AI Auto-Correction Pipeline
-        from backend.llm_engine import llm_engine
-        try:
-            llm_fixed = llm_engine.auto_correct_transcription(lyrics)
-        except Exception as e:
-            print(f"[AI Subtitle Fix] LLM step notice: {e}")
-            llm_fixed = lyrics
-
-        source = "timestamp_validation"
-        audio_p = None
-        if req.align_vocals:
-            audio_p = _resolve_alignment_audio(req.audio_path)
-            verified, report, source = _align_selected_lyrics(llm_fixed, audio_p)
-        else:
-            verified, report = double_check_lyrics(llm_fixed, preserve_text=True)
-            report.pop("confidence", None)
-            report["status"] = "Timestamp structure checked; no singer audio was checked"
-        srt_content = export_subtitles_to_srt(verified)
-        if audio_p:
-            _save_aligned_subtitles(verified, audio_p)
-
-        return {
-            "status": "success",
-            "verified": True,
-            "source": source,
-            "count": len(verified),
-            "corrections_made": report.get("corrections_count", 0),
-            "report": report,
-            "lyrics": verified,
-            "srt_content": srt_content
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI Subtitle Fix failed: {str(e)}")
-
-def _resolve_alignment_audio(audio_path: Optional[str]) -> str:
-    if not audio_path:
-        raise HTTPException(status_code=400, detail="Select an audio track before syncing lyrics")
-    decoded = urllib.parse.unquote(audio_path).replace("\\", "/")
-    candidates = [decoded, os.path.join(AUDIO_DIR, os.path.basename(decoded))]
-    audio_p = next((p for p in candidates if os.path.isfile(p)), None)
-    if not audio_p:
-        raise HTTPException(status_code=404, detail="Selected audio file not found")
-    return os.path.abspath(audio_p)
-
-
-def _align_selected_lyrics(lyrics: List[Dict[str, Any]], audio_p: str, progress_callback=None):
-    from backend.audio_analyzer import decode_audio_to_numpy
-    import math
-
-    if progress_callback:
-        progress_callback(30, "Analyzing audio signal & frequency spectrum...")
-    texts = [str(line.get("text", "")).strip() for line in lyrics]
-    if not texts or not all(texts):
-        raise HTTPException(status_code=400, detail="Every lyric line must contain text")
-    _, _, duration = decode_audio_to_numpy(audio_p, target_sr=8000)
-    if progress_callback:
-        from backend.vocal_align import get_cached_vocals_path
-        if get_cached_vocals_path(audio_p):
-            progress_callback(45, "Matching every word to the singer's voice...")
-        else:
-            progress_callback(35, "Separating the voice from the music (first time for this song)...")
-    aligned = force_align_lyrics_to_audio(texts, audio_p, duration)
-    if progress_callback:
-        progress_callback(85, "Checking cadence & verifying syllable boundaries...")
-    if not aligned or [line.get("text") for line in aligned] != texts:
-        raise HTTPException(status_code=422, detail="Could not align every original lyric line to this audio; lyrics were not replaced")
-    verified, report = double_check_lyrics(aligned, preserve_text=True)
-    if [line["text"] for line in verified] != texts:
-        raise HTTPException(status_code=422, detail="Alignment changed the original lines; lyrics were not replaced")
-    if progress_callback:
-        progress_callback(95, "Validating word timestamps & precision...")
-    for original, line in zip(lyrics, verified):
-        ls = float(line.get("start", 0.0))
-        le = float(line.get("end", ls + 2.0))
-        if not (math.isfinite(ls) and math.isfinite(le) and 0 <= ls < le <= duration):
-            ls = max(0.0, min(ls, max(0.0, duration - 0.4)))
-            le = max(ls + 0.35, min(le, duration if duration > 0 else ls + 2.0))
-            line["start"] = round(ls, 2)
-            line["end"] = round(le, 2)
-        else:
-            line["start"] = round(ls, 2)
-            line["end"] = round(le, 2)
-
-        words = line.get("words", [])
-        if words:
-            w_cur = line["start"]
-            for wi, w in enumerate(words):
-                ws = float(w.get("start", w_cur))
-                we = float(w.get("end", ws + 0.1))
-                if not (math.isfinite(ws) and math.isfinite(we)):
-                    ws, we = w_cur, w_cur + 0.1
-                ws = max(w_cur, min(ws, max(w_cur, line["end"] - 0.04)))
-                we = max(ws + 0.04, min(we, line["end"]))
-                w["start"] = round(ws, 2)
-                w["end"] = round(we, 2)
-                w_cur = w["end"]
-            if words[-1]["end"] > line["end"]:
-                line["end"] = words[-1]["end"]
-
-        line["line_id"] = original.get("line_id", line.get("line_id", 0))
-    for line, aligned_line in zip(verified, aligned):
-        if "confidence" in aligned_line:
-            line["confidence"] = aligned_line["confidence"]
-    source = "ctc_word_alignment" if all("confidence" in line for line in aligned) else "acoustic_estimate"
-    if source == "acoustic_estimate":
-        from backend.vocal_align import detect_vocal_segments
-        if len(detect_vocal_segments(audio_p)) < 2:
-            raise HTTPException(status_code=422, detail="No reliable singing phrases detected; lyrics were not replaced")
-    report.pop("confidence", None)
-    report["status"] = "Timestamp structure checked; singing accuracy requires playback review"
-    return verified, report, source
-
-
-def _save_aligned_subtitles(lyrics: List[Dict[str, Any]], audio_p: str, force_replace_srt: bool = False):
-    base_audio = os.path.splitext(audio_p)[0]
-    suffixes = ("", ".km") if detect_text_language(" ".join(line["text"] for line in lyrics)) == "km" else ("",)
-    srt_content = export_subtitles_to_srt(lyrics)
-    # Caption parsers drop bracket punctuation, so compare bare words only.
-    cue_words = lambda cues: [re.sub(r"[^\w\s]+", "", c["text"], flags=re.UNICODE).strip().lower() for c in cues]
-    new_texts = cue_words(lyrics)
-    for suffix in suffixes:
-        export_lyrics_to_lrc(lyrics, f"{base_audio}{suffix}.lrc")
-        srt_path = f"{base_audio}{suffix}.srt"
-        if not force_replace_srt and os.path.exists(srt_path):
-            # Only refresh an .srt that holds these same words unless forced.
-            try:
-                existing = cue_words(parse_subtitle_file(srt_path))
-            except Exception:
-                existing = None
-            if existing != new_texts:
-                continue
-        with open(srt_path, "w", encoding="utf-8") as f:
-            f.write(srt_content)
-
-
-@app.post("/api/subtitles/align-audio")
-def align_subtitles_to_audio_api(req: SubtitleAIFixRequest):
-    try:
-        if not req.lyrics_data:
-            raise HTTPException(status_code=400, detail="Load lyrics before syncing")
-        audio_p = _resolve_alignment_audio(req.audio_path)
-        verified, report, source = _align_selected_lyrics(req.lyrics_data, audio_p)
-        _save_aligned_subtitles(verified, audio_p)
-        return {
-            "status": "success",
-            "source": source,
-            "count": len(verified),
-            "lyrics": verified,
-            "report": report,
-            "srt_content": export_subtitles_to_srt(verified)
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Vocal subtitle alignment error: {str(e)}")
 
 
 def clean_youtube_title_and_artist(
@@ -2352,17 +1896,7 @@ async def export_mux_api(video: UploadFile = File(...), audio_path: str = Form("
         while chunk := await video.read(1024 * 1024):
             vf.write(chunk)
 
-    audio_p = audio_path or ""
-    if audio_p:
-        clean_rel = audio_p.replace("\\", "/").lstrip("/")
-        candidates = [
-            audio_p,
-            os.path.abspath(audio_p),
-            os.path.join(AUDIO_DIR, os.path.basename(audio_p)),
-            os.path.join(UPLOAD_DIR, "audio", os.path.basename(audio_p)),
-            os.path.join(os.path.dirname(AUDIO_DIR), clean_rel),
-        ]
-        audio_p = next((c for c in candidates if c and os.path.exists(c)), None)
+    audio_p = find_audio_file(audio_path)
 
     if not audio_p:
         return {
