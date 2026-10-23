@@ -158,7 +158,7 @@ def run():
               f"the real Khmer cue sheet is still found ({picked_km})")
 
         # --- A re-sync must never overwrite a caption sheet holding different words ------
-        from backend.app import _save_aligned_subtitles
+        from backend.services.lyric_alignment import save_aligned_subtitles
 
         vi_srt_path = os.path.join(tmp, "capitao.mp3")
         open(vi_srt_path, "wb").write(b"\x00" * 128)
@@ -169,7 +169,7 @@ def run():
         vi_lyrics = [{"line_id": i, "start": 10.0 + i, "end": 12.0 + i, "text": t, "words": []}
                      for i, t in enumerate(["Hỡi ơi người ơi", "Em không cần tìm kiếm đâu xa",
                                             "Vì em biết là anh thương em nhất mà"])]
-        _save_aligned_subtitles(vi_lyrics, vi_srt_path)
+        save_aligned_subtitles(vi_lyrics, vi_srt_path)
         check(open(human_srt, "rb").read() == human_bytes,
               "Vietnamese re-sync leaves the English caption .srt byte-identical")
         check(os.path.exists(os.path.join(tmp, "capitao.lrc")),
@@ -187,7 +187,7 @@ def run():
                           "There's no way it can escape anyone's view",
                           "Do you love me? (Bong sro-lanh uon tê?)",
                       ])]
-        _save_aligned_subtitles(same_words, os.path.join(tmp, "capitao.mp3"))
+        save_aligned_subtitles(same_words, os.path.join(tmp, "capitao.mp3"))
         refreshed = open(human_srt, encoding="utf-8").read()
         check("00:00:40,000" in refreshed and "00:00:10,760" not in refreshed,
               "an .srt carrying these same words is refreshed with the new timings")

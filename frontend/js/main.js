@@ -6,6 +6,8 @@ import { KHMER_TEMPLATES, KHMER_SINGERS_60S_70S } from './core/khmer_templates.j
 import { DIRECTOR_PRESETS } from './plugins/director_rules.js';
 import { triggerCameraShake, triggerShockwave, triggerBloomFlash } from './plugins/vfx_engine.js';
 import { initSRTEditor } from './core/srt_editor.js';
+import { showToast, setButtonLoading, clearButtonLoading } from './ui/feedback.js';
+import { initLyricsAlign } from './features/lyrics_align.js';
 import {
   initTranslationTrack,
   loadTranslationForSong,
@@ -23,31 +25,6 @@ import {
   toggleTheaterMode, 
   onLayoutResize 
 } from './ui/resizable_layout.js';
-
-// ============ Toast Notification System ============
-function showToast(title, body, type = 'info', duration = 4000) {
-  const container = document.getElementById('toast-container');
-  if (!container) return;
-  const toast = document.createElement('div');
-  toast.className = `toast ${type}`;
-  toast.innerHTML = `<div class="toast-title">${title}</div><div class="toast-body">${body}</div>`;
-  container.appendChild(toast);
-  setTimeout(() => {
-    toast.classList.add('removing');
-    setTimeout(() => toast.remove(), 300);
-  }, duration);
-}
-
-// ============ Button Loading Helpers ============
-function setButtonLoading(btn, text) {
-  btn._originalText = btn._originalText || btn.textContent;
-  btn.textContent = text;
-  btn.classList.add('btn-loading');
-}
-function clearButtonLoading(btn, text) {
-  btn.textContent = text || btn._originalText || 'Done';
-  btn.classList.remove('btn-loading');
-}
 
 // ============ Duration Formatter ============
 function formatTime(seconds) {
@@ -852,104 +829,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // ============ LLM Chat Box & Lyrics Aligner ============
+  // ============ LLM Chat Box ============
   const llmInput = document.getElementById('input-ai-prompt') || document.querySelector('.llm-input');
   const llmBtn = document.getElementById('btn-ask-gemini') || document.querySelector('.btn-ai-small');
-  const btnAiAlignLyrics = document.getElementById('btn-ai-align-lyrics');
-
-  async function runLyricsAlignmentWithReference(referenceText, triggerBtn = null) {
-    const cleanRef = (referenceText || '').trim();
-    if (!cleanRef) {
-      showToast('Empty Lyrics', 'Please paste your 100% correct lyrics text first', 'warning', 3000);
-      return false;
-    }
-
-    // A second click would queue behind the first on the backend's model lock and look frozen.
-    if (triggerBtn && triggerBtn.disabled) return false;
-    const prevBtnText = triggerBtn ? (triggerBtn._originalText || triggerBtn.textContent) : 'Align & Fix Teleprompter';
-    const numLines = cleanRef.split('\n').map(l => l.trim()).filter(Boolean).length;
-    if (triggerBtn) {
-      setButtonLoading(triggerBtn, `Aligning ${numLines} Lines...`);
-      triggerBtn.disabled = true;
-    }
-    setGlobalProgress(25, true, `Aligning ${numLines} Original Lyrics to Audio...`);
-
-    // Show the backend's real stage (vocal isolation, word matching...) plus elapsed time.
-    const t0 = Date.now();
-    let stage = `Aligning ${numLines} lyrics to the singer`;
-    let pct = 10;
-    const ticker = setInterval(async () => {
-      const secs = Math.round((Date.now() - t0) / 1000);
-      if (secs % 2 === 0) {
-        try {
-          const p = await (await fetch('/api/transcribe/progress')).json();
-          if (p && p.status === 'in_progress' && p.stage) {
-            stage = p.stage.replace(/\.+$/, '');
-            pct = Math.max(pct, p.percent || 0);
-          }
-        } catch (_) {}
-      }
-      if (triggerBtn) triggerBtn.textContent = `Aligning... ${secs}s`;
-      setGlobalProgress(Math.min(95, pct), true, `${stage}... ${secs}s`);
-    }, 1000);
-    const ALIGN_TIMEOUT_MS = 5 * 60 * 1000;
-    const controller = new AbortController();
-    const abortTimer = setTimeout(() => controller.abort(), ALIGN_TIMEOUT_MS);
-
-    const audioFilePath = state.audioServerPath || state.audioPath || window.__VIDA_SERVER_PATH || '';
-
-    try {
-      const res = await fetch('/api/lyrics/correct-with-reference', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          lyrics_data: state.lyrics || [],
-          reference_text: cleanRef,
-          audio_path: audioFilePath
-        })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Lyrics alignment failed');
-      setGlobalProgress(100, true, 'Lyrics Alignment Complete');
-
-      if (data.status === 'success' && data.lyrics && data.lyrics.length > 0) {
-        state.lyrics = data.lyrics;
-        try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(e) {}
-        renderLyricsTeleprompter(state.lyrics, true);
-        const wordAligned = data.source === 'ctc_word_alignment';
-        const unsure = Array.isArray(data.unsure_lines) ? data.unsure_lines : [];
-        const secs = Math.round((Date.now() - t0) / 1000);
-        let detail;
-        if (!wordAligned) detail = 'Timing estimated from when the voice starts and stops. Play it back to check.';
-        else if (unsure.length) detail = `Every word matched to the singer. ${unsure.length} line${unsure.length > 1 ? 's are' : ' is'} marked "Check" (lines ${unsure.map(i => i + 1).join(', ')}).`;
-        else detail = 'Every word matched to the singer with good confidence.';
-        showToast(
-          wordAligned ? `${data.lines_count} Lines Aligned in ${secs}s` : 'Estimated Vocal Timing',
-          detail,
-          wordAligned && !unsure.length ? 'success' : 'warning',
-          6000
-        );
-        return true;
-      } else {
-        showToast('Alignment Notice', data.detail || 'Could not complete lyrics alignment', 'info', 3000);
-        return false;
-      }
-    } catch (err) {
-      console.error('Lyrics alignment error:', err);
-      const msg = err.name === 'AbortError'
-        ? 'No answer after 5 minutes. Another AI job (transcribe / vocal isolation) may be running; check the backend console and try again.'
-        : err.message;
-      showToast('Alignment Error', msg, 'error', 6000);
-      return false;
-    } finally {
-      clearInterval(ticker);
-      clearTimeout(abortTimer);
-      if (triggerBtn) triggerBtn.disabled = false;
-      if (triggerBtn) clearButtonLoading(triggerBtn, prevBtnText || 'Align & Fix Teleprompter');
-      setTimeout(() => setGlobalProgress(100, false, ''), 1000);
-    }
-  }
 
   if (llmBtn && llmInput) {
     llmBtn.addEventListener('click', async () => {
@@ -981,16 +863,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  if (btnAiAlignLyrics && llmInput) {
-    btnAiAlignLyrics.addEventListener('click', async () => {
-      const text = llmInput.value.trim();
-      if (!text) {
-        showToast('Empty Lyrics', 'Please paste original lyrics into the box first to align', 'warning', 3000);
-        return;
-      }
-      await runLyricsAlignmentWithReference(text, btnAiAlignLyrics);
-    });
-  }
 
   // ============ AI Khmer Lyric Composer Controls ============
   const btnGenKhmerLyrics = document.getElementById('btn-generate-khmer-lyrics');
@@ -2133,66 +2005,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Paste & Align Original Lyrics Modal
-  const btnPasteAlignLyrics = document.getElementById('btn-paste-align-lyrics');
-  const alignLyricsModal = document.getElementById('align-lyrics-modal');
-  const btnCloseAlignModal = document.getElementById('btn-close-align-modal');
-  const btnCancelAlignModal = document.getElementById('btn-cancel-align-modal');
-  const btnSubmitAlignLyrics = document.getElementById('btn-submit-align-lyrics');
-  const inputAlignReference = document.getElementById('input-align-reference');
-  const alignModalLineCount = document.getElementById('align-modal-line-count');
-
-  function openAlignModal() {
-    if (!alignLyricsModal) return;
-    alignLyricsModal.style.display = 'flex';
-    const aiInputVal = (document.getElementById('input-ai-prompt') || document.querySelector('.llm-input'))?.value?.trim();
-    if (aiInputVal && inputAlignReference && (!inputAlignReference.value || !inputAlignReference.value.trim())) {
-      inputAlignReference.value = aiInputVal;
-    }
-    updateAlignLineCount();
-    setTimeout(() => inputAlignReference?.focus(), 100);
-  }
-
-  function closeAlignModal() {
-    if (alignLyricsModal) alignLyricsModal.style.display = 'none';
-  }
-
-  function updateAlignLineCount() {
-    if (!inputAlignReference || !alignModalLineCount) return;
-    const lines = inputAlignReference.value.split('\n').map(l => l.trim()).filter(Boolean);
-    alignModalLineCount.textContent = `${lines.length} Lines`;
-  }
-
-  if (inputAlignReference) {
-    inputAlignReference.addEventListener('input', updateAlignLineCount);
-  }
-
-  if (btnPasteAlignLyrics) {
-    btnPasteAlignLyrics.addEventListener('click', () => {
-      if ((!state.lyrics || state.lyrics.length === 0) && !state.audioPath && !state.audioUrl) {
-        showToast('No Audio or Lyrics', 'Please load an audio file first to align lyrics', 'info', 3500);
-        return;
-      }
-      openAlignModal();
-    });
-  }
-
-  if (btnCloseAlignModal) btnCloseAlignModal.addEventListener('click', closeAlignModal);
-  if (btnCancelAlignModal) btnCancelAlignModal.addEventListener('click', closeAlignModal);
-
-  if (btnSubmitAlignLyrics) {
-    btnSubmitAlignLyrics.addEventListener('click', async () => {
-      const text = inputAlignReference ? inputAlignReference.value.trim() : '';
-      if (!text) {
-        showToast('Empty Lyrics', 'Please paste your original lyrics text into the box', 'warning', 3000);
-        return;
-      }
-      const success = await runLyricsAlignmentWithReference(text, btnSubmitAlignLyrics);
-      if (success) {
-        closeAlignModal();
-      }
-    });
-  }
+  initLyricsAlign({ setGlobalProgress, renderLyrics: (lines) => renderLyricsTeleprompter(lines, true) });
 
   // Clear Lyrics Button
   const btnClearLyrics = document.getElementById('btn-clear-lyrics');
