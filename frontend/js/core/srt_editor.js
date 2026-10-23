@@ -209,6 +209,131 @@ export function getExportCuesWithTranslation(lyrics) {
   });
 }
 
+/** Resolves ONLY original lyric lines without translation */
+export function getOriginalCues(lyrics) {
+  const source = lyrics || state.lyrics || [];
+  if (!source || !source.length) return [];
+  return source.map((cue) => {
+    let text = (cue.text || '').trim();
+    if (text.includes('\n')) {
+      text = text.split('\n')[0].trim();
+    }
+    return {
+      ...cue,
+      text
+    };
+  }).filter(c => (c.text || '').trim().length > 0);
+}
+
+/** Resolves ONLY the second / translated lyric lines (matching original timestamps) */
+export function getSecondTrackCues(lyrics) {
+  const source = lyrics || state.lyrics || [];
+  if (!source || !source.length) return [];
+  const trCfg = state.translation || {};
+  const trLines = Array.isArray(trCfg.lines) ? trCfg.lines : [];
+
+  return source.map((cue, idx) => {
+    let trText = '';
+    if (trLines[idx]) {
+      const entry = trLines[idx];
+      trText = ((entry && (typeof entry === 'string' ? entry : entry.text)) || '').trim();
+    }
+    if (!trText && (cue.text || '').includes('\n')) {
+      trText = (cue.text || '').split('\n').slice(1).join('\n').trim();
+    }
+    return {
+      ...cue,
+      text: trText
+    };
+  }).filter(c => (c.text || '').trim().length > 0);
+}
+
+/** Resolves stacked bilingual cues (Original line 1, Translation line 2) */
+export function getBilingualCues(lyrics) {
+  const source = lyrics || state.lyrics || [];
+  if (!source || !source.length) return [];
+  const trCfg = state.translation || {};
+  const trLines = Array.isArray(trCfg.lines) ? trCfg.lines : [];
+
+  return source.map((cue, idx) => {
+    let origText = (cue.text || '').trim();
+    let trText = '';
+    if (trLines[idx]) {
+      const entry = trLines[idx];
+      trText = ((entry && (typeof entry === 'string' ? entry : entry.text)) || '').trim();
+    } else if (origText.includes('\n')) {
+      const p = origText.split('\n');
+      origText = p[0].trim();
+      trText = p.slice(1).join('\n').trim();
+    }
+    const text = trText ? `${origText}\n${trText}` : origText;
+    return {
+      ...cue,
+      text
+    };
+  }).filter(c => (c.text || '').trim().length > 0);
+}
+
+/**
+ * ⚡ 1-Click Dual SRT Exporter:
+ * Exports 2 separate, distinct SRT files:
+ *  1. Original language SRT (<Song>_Original.srt)
+ *  2. Second/Translated language SRT (<Song>_Second_<Lang>.srt)
+ */
+export async function exportTwoDifferentSRTs({ capcut = false, showToastFn, lyrics } = {}) {
+  const rawLyrics = lyrics || state.lyrics;
+  if (!rawLyrics || rawLyrics.length === 0) {
+    if (showToastFn) showToastFn('⚠️ No Lyrics', 'No lyrics loaded yet. Transcribe or import lyrics first.', 'warning', 2500);
+    return false;
+  }
+
+  const origCues = getOriginalCues(rawLyrics);
+  const secondCues = getSecondTrackCues(rawLyrics);
+  const baseName = getExportBaseName();
+  const langCode = (state.translation && state.translation.lang) || 'km';
+  const langNames = {
+    km: 'Khmer', en: 'English', th: 'Thai', vi: 'Vietnamese', zh: 'Chinese',
+    ja: 'Japanese', ko: 'Korean', fr: 'French', es: 'Spanish'
+  };
+  const langLabel = langNames[langCode] || langCode.toUpperCase();
+
+  const origSuffix = capcut ? '_Original_CapCut.srt' : '_Original.srt';
+  const secondSuffix = capcut ? `_Second_${langLabel}_CapCut.srt` : `_Second_${langLabel}.srt`;
+
+  // 1. Export Original SRT File
+  const origContent = capcut ? generateCapCutSRT(origCues) : generateSRT(origCues);
+  downloadFile(origContent, `${baseName}${origSuffix}`, 'text/plain');
+
+  // 2. Export Second (Translated) SRT File
+  if (secondCues.length > 0) {
+    setTimeout(() => {
+      const secondContent = capcut ? generateCapCutSRT(secondCues) : generateSRT(secondCues);
+      downloadFile(secondContent, `${baseName}${secondSuffix}`, 'text/plain');
+    }, 250);
+
+    if (showToastFn) {
+      const capTag = capcut ? ' (CapCut Synced)' : '';
+      showToastFn(
+        '🎬 2 SRT Files Exported!',
+        `✅ 1. ${baseName}${origSuffix} (${origCues.length} cues)\n✅ 2. ${baseName}${secondSuffix} (${secondCues.length} cues)${capTag}`,
+        'success',
+        4500
+      );
+    }
+    return true;
+  } else {
+    if (showToastFn) {
+      showToastFn(
+        '⚠️ Original Exported · No Second Track',
+        `Original SRT exported (${origCues.length} cues). To get the 2nd SRT, select a target language and click "Translate" in Lyrics Display & Translation.`,
+        'info',
+        5000
+      );
+    }
+    return true;
+  }
+}
+
 /** Generates CapCut-optimized SRT with non-overlapping timings and safe-zone line splits */
 export function generateCapCutSRT(lyrics) {
   if (!lyrics || lyrics.length === 0) return '';
@@ -302,6 +427,48 @@ export async function exportSubtitles(format, lyrics, showToastFn) {
 
   if (format === 'capcut' || format === 'capcut_srt') {
     return exportSubtitlesForCapCut(rawLyrics, showToastFn);
+  }
+
+  if (format === 'both_srts') {
+    return exportTwoDifferentSRTs({ capcut: false, showToastFn, lyrics: rawLyrics });
+  }
+
+  if (format === 'both_capcut') {
+    return exportTwoDifferentSRTs({ capcut: true, showToastFn, lyrics: rawLyrics });
+  }
+
+  if (format === 'orig_srt') {
+    const origCues = getOriginalCues(rawLyrics);
+    const content = generateSRT(origCues);
+    const fn = `${getExportBaseName()}_Original.srt`;
+    downloadFile(content, fn, 'text/plain');
+    if (showToastFn) showToastFn('📤 Original SRT Exported', `✅ ${origCues.length} original cues saved as SubRip (.srt).`, 'success', 3000);
+    return true;
+  }
+
+  if (format === 'second_srt') {
+    const secondCues = getSecondTrackCues(rawLyrics);
+    if (!secondCues.length) {
+      if (showToastFn) showToastFn('⚠️ No Second Track', 'No translated lines available yet. Click Translate in the lyrics panel first.', 'warning', 3500);
+      return false;
+    }
+    const langCode = (state.translation && state.translation.lang) || 'km';
+    const langNames = { km: 'Khmer', en: 'English', th: 'Thai', vi: 'Vietnamese', zh: 'Chinese', ja: 'Japanese', ko: 'Korean', fr: 'French', es: 'Spanish' };
+    const langLabel = langNames[langCode] || langCode.toUpperCase();
+    const content = generateSRT(secondCues);
+    const fn = `${getExportBaseName()}_Second_${langLabel}.srt`;
+    downloadFile(content, fn, 'text/plain');
+    if (showToastFn) showToastFn('📤 Second SRT Exported', `✅ ${secondCues.length} cues saved as Second (${langLabel}) SRT.`, 'success', 3000);
+    return true;
+  }
+
+  if (format === 'bilingual') {
+    const bilingCues = getBilingualCues(rawLyrics);
+    const content = generateSRT(bilingCues);
+    const fn = `${getExportBaseName()}_Bilingual.srt`;
+    downloadFile(content, fn, 'text/plain');
+    if (showToastFn) showToastFn('📤 Bilingual SRT Exported', `✅ ${bilingCues.length} dual-line cues saved as SubRip (.srt).`, 'success', 3000);
+    return true;
   }
 
   const activeLyrics = getExportCuesWithTranslation(rawLyrics);
@@ -1052,6 +1219,15 @@ export function initSRTEditor(showToastFn, renderTeleprompterFn) {
       if (aiStatusText) aiStatusText.textContent = 'Aligning subtitle and word timings to the selected audio...';
 
       try {
+        if (editorCues.length < 25) {
+          try {
+            const subCheckRes = await fetch(`/api/subtitles?audio_path=${encodeURIComponent(audioPath)}`);
+            const subCheckData = await subCheckRes.json();
+            if (subCheckData && subCheckData.status === 'success' && Array.isArray(subCheckData.lyrics) && subCheckData.lyrics.length > editorCues.length) {
+              editorCues = subCheckData.lyrics.map(cloneCue);
+            }
+          } catch (_) {}
+        }
         const requestCues = editorCues.map(cloneCue);
         const res = await fetch('/api/subtitles/align-audio', {
           method: 'POST',
@@ -1081,6 +1257,38 @@ export function initSRTEditor(showToastFn, renderTeleprompterFn) {
         btnVocalAlign.disabled = false;
         btnVocalAlign.style.opacity = '1';
         if (aiBanner) aiBanner.style.display = 'none';
+      }
+    });
+  }
+
+  // ── Reload Full Authentic Cues from Server File ──
+  const btnReloadFile = document.getElementById('srt-btn-reload-file');
+  if (btnReloadFile) {
+    btnReloadFile.addEventListener('click', async () => {
+      const audioPath = (state.audioServerPath || state.audioPath || window.__VIDA_SERVER_PATH || '').trim();
+      if (!audioPath) {
+        if (showToastFn) showToastFn('Audio Required', 'Select an audio track in studio first.', 'warning', 2500);
+        return;
+      }
+      btnReloadFile.disabled = true;
+      try {
+        const res = await fetch(`/api/subtitles?audio_path=${encodeURIComponent(audioPath)}`);
+        const data = await res.json();
+        if (data && data.status === 'success' && Array.isArray(data.lyrics) && data.lyrics.length > 0) {
+          editorCues = data.lyrics.map(cloneCue);
+          selectedCueIndices.clear();
+          renderVisualEditor();
+          syncToRawEditor();
+          applyCuesToState(showToastFn);
+          if (renderTeleprompterFn) renderTeleprompterFn(state.lyrics, true);
+          if (showToastFn) showToastFn('Subtitles Reloaded', `Loaded ${editorCues.length} cues directly from ${data.file || 'server file'}!`, 'success', 3000);
+        } else {
+          if (showToastFn) showToastFn('No File Found', 'Could not find companion subtitle file on server.', 'warning', 3000);
+        }
+      } catch (err) {
+        if (showToastFn) showToastFn('Reload Failed', err.message, 'error', 3000);
+      } finally {
+        btnReloadFile.disabled = false;
       }
     });
   }
@@ -1153,7 +1361,8 @@ export function initSRTEditor(showToastFn, renderTeleprompterFn) {
           return;
         }
         const success = exportSubtitles(format, editorCues, showToastFn);
-        if (success && showToastFn && format !== 'capcut') {
+        const standardFormats = ['srt', 'vtt', 'lrc', 'ass', 'txt'];
+        if (success && showToastFn && standardFormats.includes(format)) {
           const formatNames = { srt: 'SRT', vtt: 'WebVTT', lrc: 'LRC', ass: 'ASS', txt: 'Plain Text' };
           showToastFn('📤 Exported', `${editorCues.length} cues exported as ${formatNames[format] || format}.`, 'success', 2500);
         }
@@ -1183,6 +1392,14 @@ export function initSRTEditor(showToastFn, renderTeleprompterFn) {
         return;
       }
       exportSubtitlesForCapCut(state.lyrics, showToastFn);
+    });
+  }
+
+  // ── ⚡ Export 2 SRTs Button (Original & Second) ──
+  const btnExportTwoSrts = document.getElementById('btn-export-two-srts');
+  if (btnExportTwoSrts) {
+    btnExportTwoSrts.addEventListener('click', () => {
+      exportTwoDifferentSRTs({ capcut: false, showToastFn });
     });
   }
 

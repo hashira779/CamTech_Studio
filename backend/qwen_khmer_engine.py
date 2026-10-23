@@ -161,7 +161,24 @@ class QwenKhmerTranscriber:
             progress_callback(42, f"Loading Qwen3-ASR-0.6B Khmer AI...")
 
         try:
+            import gc
+            gc.collect()
+
+            # If C: drive is nearly full (< 2 GB), redirect Hugging Face cache to D: drive
+            import shutil
+            try:
+                c_free_gb = shutil.disk_usage("C:").free / (1024 ** 3)
+                if c_free_gb < 2.0 and not os.environ.get("HF_HOME"):
+                    d_cache = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".cache", "huggingface")
+                    os.makedirs(d_cache, exist_ok=True)
+                    os.environ["HF_HOME"] = d_cache
+            except Exception:
+                pass
+
             import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
             from qwen_asr import Qwen3ASRModel
 
             dev = "cuda:0" if (torch.cuda.is_available() and self.device != "cpu") else "cpu"

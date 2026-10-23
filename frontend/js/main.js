@@ -185,20 +185,23 @@ document.addEventListener('DOMContentLoaded', () => {
     state.lyrics = [];
   }
 
-  // Auto-refresh authentic synced lyrics from server companion .lrc if available
-  if (cachedServerPath) {
-    fetch('/api/transcribe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ audio_path: cachedServerPath, force_ai: false })
-    }).then(r => r.json()).then(data => {
-      if (data && data.status === 'success' && data.lyrics && data.lyrics.length > 0 && data.source === 'subtitle') {
-        state.lyrics = data.lyrics;
-        try { localStorage.setItem('vida_lyrics', JSON.stringify(data.lyrics)); } catch(_) {}
-        renderLyricsTeleprompter(state.lyrics, true);
-        setStudioPipelineProgress(3, 100, `${state.lyrics.length} authentic lines loaded (100%)`, 'Lyrics Synced');
-      }
-    }).catch(() => {});
+  // Auto-refresh authentic synced lyrics from server companion .srt / .lrc if available
+  const audioTargetInit = cachedServerPath || state.audioServerPath || state.audioPath || window.__VIDA_SERVER_PATH || '';
+  if (audioTargetInit) {
+    fetch(`/api/subtitles?audio_path=${encodeURIComponent(audioTargetInit)}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data && data.status === 'success' && Array.isArray(data.lyrics) && data.lyrics.length > 0) {
+          // If server file has more lines or different line count, upgrade to server's authentic file
+          if (!state.lyrics || state.lyrics.length < data.lyrics.length || data.lyrics.length >= 30) {
+            state.lyrics = data.lyrics;
+            try { localStorage.setItem('vida_lyrics', JSON.stringify(data.lyrics)); } catch(_) {}
+            renderLyricsTeleprompter(state.lyrics, true);
+            setStudioPipelineProgress(3, 100, `${state.lyrics.length} authentic lines loaded (100%)`, 'Lyrics Synced');
+          }
+        }
+      })
+      .catch(() => {});
   }
 
   // ============ Default VibeTunes Logo Initialization ============
@@ -861,10 +864,37 @@ document.addEventListener('DOMContentLoaded', () => {
       return false;
     }
 
+    // A second click would queue behind the first on the backend's model lock and look frozen.
+    if (triggerBtn && triggerBtn.disabled) return false;
     const prevBtnText = triggerBtn ? (triggerBtn._originalText || triggerBtn.textContent) : 'Align & Fix Teleprompter';
     const numLines = cleanRef.split('\n').map(l => l.trim()).filter(Boolean).length;
-    if (triggerBtn) setButtonLoading(triggerBtn, `Aligning ${numLines} Lines...`);
+    if (triggerBtn) {
+      setButtonLoading(triggerBtn, `Aligning ${numLines} Lines...`);
+      triggerBtn.disabled = true;
+    }
     setGlobalProgress(25, true, `Aligning ${numLines} Original Lyrics to Audio...`);
+
+    // Show the backend's real stage (vocal isolation, word matching...) plus elapsed time.
+    const t0 = Date.now();
+    let stage = `Aligning ${numLines} lyrics to the singer`;
+    let pct = 10;
+    const ticker = setInterval(async () => {
+      const secs = Math.round((Date.now() - t0) / 1000);
+      if (secs % 2 === 0) {
+        try {
+          const p = await (await fetch('/api/transcribe/progress')).json();
+          if (p && p.status === 'in_progress' && p.stage) {
+            stage = p.stage.replace(/\.+$/, '');
+            pct = Math.max(pct, p.percent || 0);
+          }
+        } catch (_) {}
+      }
+      if (triggerBtn) triggerBtn.textContent = `Aligning... ${secs}s`;
+      setGlobalProgress(Math.min(95, pct), true, `${stage}... ${secs}s`);
+    }, 1000);
+    const ALIGN_TIMEOUT_MS = 5 * 60 * 1000;
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), ALIGN_TIMEOUT_MS);
 
     const audioFilePath = state.audioServerPath || state.audioPath || window.__VIDA_SERVER_PATH || '';
 
@@ -872,6 +902,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await fetch('/api/lyrics/correct-with-reference', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           lyrics_data: state.lyrics || [],
           reference_text: cleanRef,
@@ -887,11 +918,17 @@ document.addEventListener('DOMContentLoaded', () => {
         try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(e) {}
         renderLyricsTeleprompter(state.lyrics, true);
         const wordAligned = data.source === 'ctc_word_alignment';
+        const unsure = Array.isArray(data.unsure_lines) ? data.unsure_lines : [];
+        const secs = Math.round((Date.now() - t0) / 1000);
+        let detail;
+        if (!wordAligned) detail = 'Timing estimated from when the voice starts and stops. Play it back to check.';
+        else if (unsure.length) detail = `Every word matched to the singer. ${unsure.length} line${unsure.length > 1 ? 's are' : ' is'} marked "Check" (lines ${unsure.map(i => i + 1).join(', ')}).`;
+        else detail = 'Every word matched to the singer with good confidence.';
         showToast(
-          wordAligned ? 'Original Lyrics Aligned' : 'Estimated Vocal Timing',
-          `Preserved ${data.lines_count} original lines. ${wordAligned ? 'Word timings aligned to singer audio.' : 'Acoustic estimates need playback review.'}`,
-          wordAligned ? 'success' : 'warning',
-          4500
+          wordAligned ? `${data.lines_count} Lines Aligned in ${secs}s` : 'Estimated Vocal Timing',
+          detail,
+          wordAligned && !unsure.length ? 'success' : 'warning',
+          6000
         );
         return true;
       } else {
@@ -900,9 +937,15 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } catch (err) {
       console.error('Lyrics alignment error:', err);
-      showToast('Alignment Error', err.message, 'error', 3500);
+      const msg = err.name === 'AbortError'
+        ? 'No answer after 5 minutes. Another AI job (transcribe / vocal isolation) may be running; check the backend console and try again.'
+        : err.message;
+      showToast('Alignment Error', msg, 'error', 6000);
       return false;
     } finally {
+      clearInterval(ticker);
+      clearTimeout(abortTimer);
+      if (triggerBtn) triggerBtn.disabled = false;
       if (triggerBtn) clearButtonLoading(triggerBtn, prevBtnText || 'Align & Fix Teleprompter');
       setTimeout(() => setGlobalProgress(100, false, ''), 1000);
     }
@@ -1770,17 +1813,62 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Reload full authentic subtitles from server disk file (.srt / .lrc)
+  const btnReloadSubtitles = document.getElementById('btn-reload-subtitles');
+  if (btnReloadSubtitles) {
+    btnReloadSubtitles.addEventListener('click', async () => {
+      const audioFilePath = state.audioServerPath || state.audioPath || window.__VIDA_SERVER_PATH || '';
+      if (!audioFilePath) {
+        showToast('No Audio Selected', 'Please load an audio file first', 'warning', 2500);
+        return;
+      }
+      setButtonLoading(btnReloadSubtitles, 'Loading...');
+      try {
+        const res = await fetch(`/api/subtitles?audio_path=${encodeURIComponent(audioFilePath)}`);
+        const data = await res.json();
+        if (data && data.status === 'success' && Array.isArray(data.lyrics) && data.lyrics.length > 0) {
+          state.lyrics = data.lyrics;
+          try { localStorage.setItem('vida_lyrics', JSON.stringify(data.lyrics)); } catch(_) {}
+          renderLyricsTeleprompter(state.lyrics, true);
+          setStudioPipelineProgress(3, 100, `${state.lyrics.length} authentic lines loaded (100%)`, 'Lyrics Synced');
+          showToast('Subtitles Reloaded', `Loaded all ${data.lyrics.length} complete lines from ${data.file || 'server disk'}!`, 'success', 3500);
+        } else {
+          showToast('No Subtitles Found', 'Could not find companion subtitle file on server', 'warning', 3000);
+        }
+      } catch (err) {
+        console.error('Error reloading subtitles:', err);
+        showToast('Reload Error', err.message, 'error', 3000);
+      } finally {
+        clearButtonLoading(btnReloadSubtitles, 'Reload from File');
+      }
+    });
+  }
+
   // Re-Sync Lyrics to Music & Singing Tempo (Fast & Slow vocal tracking)
   const btnSyncVocalTiming = document.getElementById('btn-sync-vocal-timing');
   if (btnSyncVocalTiming) {
     btnSyncVocalTiming.addEventListener('click', async () => {
-      if (!state.lyrics || state.lyrics.length === 0) {
-        showToast('No Lyrics', 'Please load, transcribe, or import lyrics first to sync timing', 'info', 2500);
-        return;
-      }
       const audioFilePath = state.audioServerPath || state.audioPath || window.__VIDA_SERVER_PATH || '';
       if (!audioFilePath) {
         showToast('No Audio Track', 'Please load an audio file first to align with real singing', 'warning', 3000);
+        return;
+      }
+
+      // If lyrics are empty or truncated/partial, check if server has full file first
+      if (audioFilePath && (!state.lyrics || state.lyrics.length < 25)) {
+        try {
+          const subRes = await fetch(`/api/subtitles?audio_path=${encodeURIComponent(audioFilePath)}`);
+          const subData = await subRes.json();
+          if (subData && subData.status === 'success' && Array.isArray(subData.lyrics) && subData.lyrics.length > (state.lyrics ? state.lyrics.length : 0)) {
+            state.lyrics = subData.lyrics;
+            try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(_) {}
+            renderLyricsTeleprompter(state.lyrics, true);
+          }
+        } catch(_) {}
+      }
+
+      if (!state.lyrics || state.lyrics.length === 0) {
+        showToast('No Lyrics', 'Please load, transcribe, or import lyrics first to sync timing', 'info', 2500);
         return;
       }
 
@@ -2204,17 +2292,49 @@ document.addEventListener('DOMContentLoaded', () => {
       const trIsKhmer = /[\u1780-\u17FF]/.test(trText);
       const trFont = trIsKhmer ? "'Kantumruy Pro', 'Battambang', 'Siemreap', sans-serif" : "'Outfit', 'Inter', sans-serif";
 
-      item.innerHTML = `<div class="tp-main"><span class="tp-time">[${formatTime(line.start)}]</span><span class="editable-lyric tp-text" contenteditable="true" spellcheck="false" style="font-family: ${font}">${escapeHtml(line.text)}</span></div>${showTr ? `<div class="tp-tr" style="font-family: ${trFont}"><span class="editable-tr tp-tr-text" contenteditable="true" spellcheck="false" title="Click to edit Khmer translation">${escapeHtml(trText)}</span><button class="tp-fix-khmer-btn" title="Refine this line to natural native Khmer with AI" data-index="${index}">✨ Fix</button></div>` : ''}`;
+      // Matches LOW_LINE_CONFIDENCE in backend/app.py
+      const unsure = Number.isFinite(line.confidence) && line.confidence < 0.4;
+      if (unsure) item.classList.add('tp-unsure');
+      const unsureChip = unsure
+        ? `<span class="tp-check" title="The aligner could barely hear these words (confidence ${Math.round(line.confidence * 100)}%). Click the line to play it and check the timing.">Check</span>`
+        : '';
+
+      item.innerHTML = `<div class="tp-main"><span class="tp-time">[${formatTime(line.start)}]</span>${unsureChip}<span class="editable-lyric tp-text" contenteditable="true" spellcheck="false" style="font-family: ${font}">${escapeHtml(line.text)}</span><button class="tp-del-cue-btn" title="Void / Remove this line" data-index="${index}">✕</button></div>${showTr ? `<div class="tp-tr" style="font-family: ${trFont}"><span class="editable-tr tp-tr-text" contenteditable="true" spellcheck="false" title="Click to edit Khmer translation">${escapeHtml(trText)}</span><button class="tp-fix-khmer-btn" title="Refine this line to natural native Khmer with AI" data-index="${index}">✨ Fix</button></div>` : ''}`;
       
+      const delBtn = item.querySelector('.tp-del-cue-btn');
+      if (delBtn) {
+        delBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const idx = parseInt(delBtn.dataset.index, 10);
+          if (isNaN(idx) || idx < 0 || idx >= state.lyrics.length) return;
+          const removed = state.lyrics.splice(idx, 1)[0];
+          if (state.translation && Array.isArray(state.translation.lines)) {
+            state.translation.lines.splice(idx, 1);
+          }
+          renderLyricsTeleprompter(state.lyrics, true);
+          if (typeof persistSubtitleChanges === 'function') {
+            await persistSubtitleChanges();
+          }
+          if (typeof persistTranslation === 'function') {
+            try { await persistTranslation(); } catch(_) {}
+          }
+          showToast('Line Voided', `Removed: "${(removed.text || '').slice(0, 25)}"`, 'info', 2200);
+        });
+      }
+
       const textSpan = item.querySelector('.editable-lyric');
       textSpan.addEventListener('click', (e) => {
         e.stopPropagation(); // Prevent audio jump when clicking to edit text
       });
-      textSpan.addEventListener('blur', (e) => {
+      textSpan.addEventListener('blur', async (e) => {
         const newText = e.target.textContent.trim();
         if (newText !== line.text) {
           state.lyrics[index].text = newText;
-          showToast('Lyric Updated', 'Correction saved to memory.', 'success', 2000);
+          try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(_) {}
+          if (typeof persistSubtitleChanges === 'function') {
+            await persistSubtitleChanges();
+          }
+          showToast('Lyric Updated', 'Correction saved to memory & file.', 'success', 2000);
         }
       });
 

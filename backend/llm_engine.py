@@ -69,12 +69,13 @@ def call_gemini_api(prompt: str, json_mode: bool = False, timeout: int = 25,
             except ImportError:
                 set_last_key_error = lambda x: None
 
-        # Simplified to 3 models: latest (auto-routes to newest), a pinned stable
-        # version, and a lite fallback in a separate rate bucket.
+        # Prioritize gemini-flash-lite-latest: responds in ~1.5s with zero 503/timeout issues,
+        # then fall back to standard flash and pro.
         models = [
+            "gemini-flash-lite-latest",
             "gemini-flash-latest",
             "gemini-3.8-flash",
-            "gemini-flash-lite-latest"
+            "gemini-pro-latest"
         ]
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
         # System instruction gives the model a persistent persona identity,

@@ -472,6 +472,41 @@ def preprocess_vocal_audio(audio_path: str) -> str:
     return audio_path
 
 
+def is_watermark_or_promo_cue(text: str) -> bool:
+    """
+    Detects uploader watermarks, social media handles (@username),
+    channel links, and credit lines inserted into subtitles during music breaks.
+    Returns True if the line should be voided / ignored as a non-lyric watermark.
+    """
+    if not text:
+        return False
+    t = text.strip()
+
+    # 1. Pure social handles: @username, @channel_name, etc.
+    if re.match(r'^@[a-zA-Z0-9_\.\-]+(?:\s+@[a-zA-Z0-9_\.\-]+)*$', t):
+        return True
+    if re.search(r'@[a-zA-Z0-9_\.\-]{3,}', t) and len(t.split()) <= 4:
+        return True
+
+    # 2. URLs and social platform handles
+    if re.search(r'https?://|www\.|fb\.com|facebook\.com|tiktok\.com|t\.me/|youtube\.com|youtu\.be|instagram\.com', t, re.IGNORECASE):
+        return True
+
+    # 3. Credits & promo markers in English & Khmer
+    promo_pattern = (
+        r'\b(?:subscribe|sub to|like & subscribe|like and subscribe|follow me|follow us|'
+        r'lyrics? by|karaoke by|subs? by|subbed by|subtitles? by|edited by|edit by|editor:|'
+        r'uploader:|credits?:|copyright:|uploaded by|cover by)\b|'
+        r'កែសម្រួលដោយ|បញ្ចូលអក្សរដោយ|ដាក់អក្សរដោយ|អក្សរដោយ|ទំនុកអក្សរដោយ|ម្ចាស់ដើម|'
+        r'រក្សាសិទ្ធិ|ឆានែល|តេឡេក្រាម|ហ្វេសប៊ុក|ទីកតុក|យូធូប|សូមជួយ Subscribe|សូមចុច Subscribe|'
+        r'សូមចុច Like|ចុច Subscribe'
+    )
+    if re.search(promo_pattern, t, re.IGNORECASE):
+        return True
+
+    return False
+
+
 def clean_subtitle_text(text: str) -> str:
     """
     Cleans subtitle cues from HTML tags, non-lyric sound effects, and music symbols.
@@ -480,6 +515,11 @@ def clean_subtitle_text(text: str) -> str:
     if not text:
         return ""
     text = html.unescape(text)
+
+    # Void promotional watermarks, handles (@username), and social links immediately
+    if is_watermark_or_promo_cue(text):
+        return ""
+
     # Strip musical notation characters
     text = re.sub(r'[♪♫♬♩\u266a\u266b]', '', text)
 
@@ -941,6 +981,17 @@ def parse_subtitle_content(content: str) -> List[Dict[str, Any]]:
         if not raw_lines:
             continue
 
+        # If cue contains an uploader watermark or social handle (@username, etc.), void it
+        if any(is_watermark_or_promo_cue(l) for l in raw_lines):
+            # Also drop immediately preceding cue if it was an isolated author credit name (< 2.2s, <= 4 words)
+            if raw_results:
+                prev = raw_results[-1]
+                prev_dur = prev["end"] - prev["start"]
+                prev_words = prev["text"].split()
+                if prev_dur <= 2.2 and len(prev_words) <= 4:
+                    raw_results.pop()
+            continue
+
         words_data = None
         target_text = ""
 
@@ -966,7 +1017,14 @@ def parse_subtitle_content(content: str) -> List[Dict[str, Any]]:
 
             target_text = " ".join(cleaned_lines).strip()
 
-        if not target_text:
+        if not target_text or is_watermark_or_promo_cue(target_text) or any(is_watermark_or_promo_cue(l) for l in raw_lines):
+            # If this is a watermark cue, check if the immediately preceding cue was a brief author credit name
+            if (is_watermark_or_promo_cue(target_text) or any(is_watermark_or_promo_cue(l) for l in raw_lines)) and raw_results:
+                prev = raw_results[-1]
+                prev_dur = prev["end"] - prev["start"]
+                prev_words = prev["text"].split()
+                if prev_dur <= 2.0 and len(prev_words) <= 4:
+                    raw_results.pop()
             continue
 
         # Merge immediate duplicate micro-slices (only for overlapping rolling WebVTT lines within 0.25s of start)
@@ -1416,6 +1474,10 @@ def find_matching_subtitles(audio_path: str, target_lang: Optional[str] = None) 
                         priority += 25
                     elif title_lang != "km" and file_lang == title_lang:
                         priority += 25
+
+                # Reward fuller, more complete subtitle files with more cues
+                cue_matches = re.findall(r'(?:-->|\[\d{1,2}:\d{2}(?:\.\d{2,3})?\])', content_sample)
+                priority += min(20, len(cue_matches))
 
                 if f_lower.endswith(".lrc"):
                     priority += 5

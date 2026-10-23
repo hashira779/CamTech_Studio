@@ -406,7 +406,10 @@ def _repair_collapsed_lines(
 
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_WORKER_TIMEOUT_S = 900.0
+# A 3-minute song aligns in ~25 s on the GPU; anything near these limits is a hung worker
+# or a busy model budget, and the studio is better off keeping its acoustic sync.
+_WORKER_TIMEOUT_S = 300.0
+_LOCK_WAIT_S = 120.0
 
 
 def ctc_align_lyrics(
@@ -475,7 +478,7 @@ def ctc_align_lyrics(
             return None
 
         try:
-            aligned = run_locked(_aligned_lines)
+            aligned = run_locked(_aligned_lines, timeout=_LOCK_WAIT_S)
         except TimeoutError as busy:
             log.warning(f"[CTC Align] {busy}; keeping acoustic sync")
             return None

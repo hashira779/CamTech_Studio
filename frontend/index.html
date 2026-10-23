@@ -839,6 +839,7 @@
                   <button id="btn-autofix-lyrics" class="ui-btn ui-btn--warn" title="Auto-fix phonetic and spelling mistakes in words in place without changing any line structure or timing">Fix Words</button>
                   <button id="btn-fix-khmer-lyrics" class="ui-btn ui-btn--ai" title="AI-powered native Khmer refinement — rewrites translated Khmer lyrics into natural, singable, native Khmer while preserving timestamps">Fix Khmer</button>
                   <button id="btn-paste-align-lyrics" class="ui-btn ui-btn--ai" title="Paste authentic original lyrics to fix Whisper misheard words while preserving timestamps">Paste &amp; Align</button>
+                  <button id="btn-reload-subtitles" class="ui-btn ui-btn--primary" title="Reload full authentic subtitles from server disk file (.srt / .lrc)">Reload from File</button>
                   <button id="btn-sync-vocal-timing" class="ui-btn ui-btn--go" title="Measure every line and word start against the selected singer audio and rewrite the timestamps. The lyric text you loaded stays exactly as it is.">Re-Sync to Music</button>
                   <button id="btn-verify-lyrics" class="ui-btn ui-btn--go" title="Re-check the timestamps against the singer audio. If the check cannot be done honestly, it refuses instead of guessing.">Double-Check</button>
                 </div>
@@ -864,6 +865,14 @@
                   <div id="export-sub-dropdown-wrapper" class="ui-ddw">
                     <button id="btn-export-subtitles" class="ui-btn" title="Export subtitles as SRT, VTT, LRC, or plain text">Export ▾</button>
                     <div id="export-sub-dropdown" class="ui-dd" style="display: none;">
+                      <div class="ui-dd-hdr">Dual Tracks (2 SRTs)</div>
+                      <button class="export-sub-option ui-dd-item ui-dd-item--feature" data-format="both_srts" title="Download 2 separate SRT files (Original + Second) at once">⚡ Export 2 SRTs (Original &amp; Second)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="both_capcut" title="Download 2 CapCut-optimized SRT files (Original + Second)">🎬 CapCut 2 SRTs (Original &amp; Second)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="orig_srt" title="Export Original language SRT only">1️⃣ Original SRT only (.srt)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="second_srt" title="Export Second / Translated language SRT only">2️⃣ Second (Translated) SRT only (.srt)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="bilingual" title="Export stacked bilingual SRT (both lines in single cue)">🔤 Bilingual Dual-Line (.srt)</button>
+                      <div class="ui-dd-sep"></div>
+                      <div class="ui-dd-hdr">Standard Formats</div>
                       <button class="export-sub-option ui-dd-item ui-dd-item--feature" data-format="capcut" title="Export 100% voice-synced SRT optimized specifically for CapCut video editor">CapCut Perfect (.srt)</button>
                       <button class="export-sub-option ui-dd-item" data-format="srt" title="SubRip Subtitle (.srt) — universal format for YouTube, VLC, Premiere">SubRip (.srt)</button>
                       <button class="export-sub-option ui-dd-item" data-format="vtt" title="WebVTT (.vtt) — HTML5 video, web players, modern browsers">WebVTT (.vtt)</button>
@@ -873,6 +882,11 @@
                       <button class="export-sub-option ui-dd-item" data-format="ass" title="Advanced SubStation Alpha (.ass) — styled subtitles for video editors">SSA/ASS (.ass)</button>
                     </div>
                   </div>
+                </div>
+                <div class="ui-row" style="margin-top: 6px;">
+                  <button id="btn-export-two-srts" class="ui-btn ui-btn--ai ui-btn--block" title="⚡ 1-Click Dual Export: Download 2 separate SRT files (1 Original SRT + 1 Second/Translated SRT) for CapCut / Premiere">
+                    <span>⚡ Export 2 SRTs (Original &amp; Second)</span>
+                  </button>
                 </div>
               </div>
 
@@ -1190,6 +1204,7 @@
           <button id="srt-btn-ai-fix" class="srt-toolbar-btn ui-btn ui-btn--ai" title="Run AI Core to fix phonetic typos, Khmer spelling, and millisecond sync">AI Auto-Fix</button>
           <button id="srt-btn-vocal-align" class="srt-toolbar-btn ui-btn" title="Snap cue timings to actual singing vocals">Vocal Sync</button>
           <button id="srt-btn-capcut-direct" class="srt-toolbar-btn ui-btn ui-btn--primary" title="Export strictly formatted SRT for CapCut (Zero overlap, Safe Zone split, 100% Millisecond voice sync)">CapCut SRT</button>
+          <button id="srt-btn-reload-file" class="srt-toolbar-btn ui-btn ui-btn--go" title="Reload original full cues directly from server disk file (.srt / .lrc)">Reload from File</button>
           <label class="srt-toolbar-btn ui-btn" title="Import existing subtitle file (.srt, .vtt, .lrc)">
             Import
             <input type="file" id="srt-file-import-input" accept=".srt,.vtt,.lrc,.txt" style="display: none;">
@@ -1249,9 +1264,17 @@ Second subtitle line
           <div class="ui-ddw" id="srt-export-menu-wrapper">
             <button id="srt-btn-export-dropdown" class="ui-btn ui-btn--go">Export Subtitles ▾</button>
             <div style="display: none; " class="ui-dd ui-dd--up" id="srt-export-dropdown-menu">
+              <div class="ui-dd-hdr">Dual Tracks (2 SRTs)</div>
+              <button class="srt-export-choice ui-dd-item ui-dd-item--feature" data-format="both_srts" title="Export 2 separate SRT files: Original + Second">⚡ Export 2 SRTs (Original &amp; Second)</button>
+              <button class="srt-export-choice ui-dd-item" data-format="both_capcut" title="Export 2 CapCut SRT files: Original + Second">🎬 CapCut 2 SRTs (Original &amp; Second)</button>
+              <button class="srt-export-choice ui-dd-item" data-format="orig_srt" title="Export Original SRT only">1️⃣ Original SRT only</button>
+              <button class="srt-export-choice ui-dd-item" data-format="second_srt" title="Export Second / Translated SRT only">2️⃣ Second (Translated) SRT only</button>
+              <button class="srt-export-choice ui-dd-item" data-format="bilingual" title="Export stacked bilingual SRT">🔤 Bilingual Dual-Line (.srt)</button>
+              <div class="ui-dd-sep"></div>
+              <div class="ui-dd-hdr">Standard Formats</div>
               <button class="srt-export-choice ui-dd-item ui-dd-item--feature" data-format="capcut" title="Export 100% voice-synced SRT optimized specifically for CapCut">CapCut Perfect (.srt)</button>
               <button class="srt-export-choice ui-dd-item" data-format="srt" title="SubRip Subtitle (.srt) — Universal">SubRip (.srt)</button>
-              <button class="srt-export-choice ui-dd-item" data-format="vtt" title="WebVTT (.vtt) — Web & HTML5">WebVTT (.vtt)</button>
+              <button class="srt-export-choice ui-dd-item" data-format="vtt" title="WebVTT (.vtt) — Web &amp; HTML5">WebVTT (.vtt)</button>
               <button class="srt-export-choice ui-dd-item" data-format="lrc" title="LRC Karaoke Lyrics (.lrc)">LRC Lyrics (.lrc)</button>
               <button class="srt-export-choice ui-dd-item" data-format="ass" title="Advanced SubStation Alpha (.ass) — Styled">SSA/ASS (.ass)</button>
               <div class="ui-dd-sep"></div>

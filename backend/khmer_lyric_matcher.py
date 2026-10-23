@@ -8,6 +8,7 @@ Solves the 1M songs problem:
 """
 
 import os
+import time
 import re
 import json
 import logging
@@ -55,8 +56,8 @@ def extract_lyrics_from_description(description: str) -> Optional[List[str]]:
     header_pattern = re.compile(r'(' + '|'.join(lyric_headers) + r')\s*[:៖\-]', re.IGNORECASE)
     
     for line in lines:
-        # Filter out links, channel promos, credits
-        if re.search(r'https?://|www\.|facebook|telegram|subscribe|copyright|រក្សាសិទ្ធិ|ផលិតកម្ម', line, re.IGNORECASE):
+        # Filter out links, channel promos, handles, credits
+        if re.search(r'https?://|www\.|facebook|telegram|tiktok|youtube|subscribe|copyright|credit|editor|រក្សាសិទ្ធិ|ផលិតកម្ម|កែសម្រួល|បញ្ចូលអក្សរ|@\w+', line, re.IGNORECASE):
             continue
         
         # Check if line indicates lyric start
@@ -220,7 +221,7 @@ def verify_gemini_api_key(api_key: Optional[str] = None) -> Tuple[bool, Optional
     import urllib.error
     import json
 
-    models = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-flash-lite-latest"]
+    models = ["gemini-flash-lite-latest", "gemini-flash-latest", "gemini-pro-latest"]
     last_err = None
     for model in models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
@@ -274,7 +275,7 @@ def gemini_clean_youtube_metadata(
     import urllib.request
     import urllib.error
     models_to_try = [
-        "gemini-3.8-flash", "gemini-flash-latest", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-flash-lite-latest"
+        "gemini-flash-lite-latest", "gemini-flash-latest", "gemini-pro-latest"
     ]
 
     prompt = f"""Given this YouTube music video:
@@ -462,13 +463,10 @@ Example:
     }
 
     models = [
-        "gemini-3.8-flash",
+        "gemini-flash-lite-latest",
         "gemini-flash-latest",
-        "gemini-3.7-flash",
-        "gemini-3.5-flash",
-        "gemini-flash-lite-latest"
+        "gemini-pro-latest"
     ]
-    import time
     start_time = time.monotonic()
     max_total_wait = 35.0  # Cap total cloud alignment wait so UI is never frozen
     consecutive_429 = 0
@@ -767,11 +765,18 @@ def transcribe_audio_with_gemini(
     )
 
     models = [
-        "gemini-3.8-flash", "gemini-flash-latest", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-flash-lite-latest"
+        "gemini-flash-lite-latest", "gemini-flash-latest", "gemini-pro-latest"
     ]
     consecutive_429 = 0
+    start_time = time.monotonic()
+    max_total_wait = 25.0
 
     for model in models:
+        left = max_total_wait - (time.monotonic() - start_time)
+        if left <= 1.0:
+            log.warning(f"[Gemini Audio ASR] Transcribe wait budget reached; fast-failing to next pipeline step")
+            break
+        attempt_timeout = min(12.0, left)
         try:
             if progress_callback:
                 progress_callback(45, f"🎧 Gemini AI ({model}) transcribing lyrics...")
@@ -856,7 +861,7 @@ def fetch_lyrics_with_gemini(title: str, artist: str = "", description: str = ""
 
     import urllib.request
     models_to_try = [
-        "gemini-3.8-flash", "gemini-flash-latest", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-flash-lite-latest"
+        "gemini-flash-lite-latest", "gemini-flash-latest", "gemini-pro-latest"
     ]
 
     desc_hint = f" (Context: {description[:150]})" if description else ""
@@ -873,15 +878,23 @@ def fetch_lyrics_with_gemini(title: str, artist: str = "", description: str = ""
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     data_bytes = json.dumps(payload).encode("utf-8")
     consecutive_429 = 0
+    start_time = time.monotonic()
+    max_total_wait = 10.0  # Cap total wait to 10s max so UI never gets stuck
 
     for model in models_to_try:
+        left = max_total_wait - (time.monotonic() - start_time)
+        if left <= 1.0:
+            log.warning(f"[Gemini Lyrics] Search wait budget exceeded; fast-failing to local ASR")
+            break
+        attempt_timeout = min(5.0, left)
+
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         headers = {
             "Content-Type": "application/json"
         }
         try:
             req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=20) as response:
+            with urllib.request.urlopen(req, timeout=attempt_timeout) as response:
                 result = json.loads(response.read().decode("utf-8"))
                 text = result["candidates"][0]["content"]["parts"][0]["text"]
                 lines = [

@@ -383,7 +383,7 @@ def get_gemini_status():
         "masked_key": masked,
         "valid": last_err is None if configured else False,
         "last_error": last_err,
-        "active_model": "gemini-3.8-flash"
+        "active_model": "gemini-flash-lite-latest"
     }
 
 @app.post("/api/gemini/verify")
@@ -728,18 +728,28 @@ def transcribe_audio(req: TranscribeRequest):
             except Exception as e:
                 print(f"[KMVM Transcribe] Magic Khmer Fallback failed: {e}. Proceeding to ASR...")
 
+        lyrics = None
+        source_type = "whisper"
+        detected_lang = req.language if (req.language and req.language not in ("auto", "None")) else "km"
+
         if req.model_size == "qwen3-khmer":
             update_transcribe_progress(40, "Preparing Qwen3-ASR 0.6B Khmer AI...")
             try:
-                from backend.qwen_khmer_engine import QwenKhmerTranscriber
-            except ImportError:
-                from qwen_khmer_engine import QwenKhmerTranscriber
-            qwen_instance = QwenKhmerTranscriber()
-            lyrics = qwen_instance.transcribe(transcribe_path, progress_callback=update_transcribe_progress)
-            detected_lang = "km"
-            source_type = "qwen3-asr"
-        else:
-            # On CPU, use fast 'base' model (~5-10s) instead of 1.5GB large-v3-turbo (5 mins)!
+                try:
+                    from backend.qwen_khmer_engine import QwenKhmerTranscriber
+                except ImportError:
+                    from qwen_khmer_engine import QwenKhmerTranscriber
+                qwen_instance = QwenKhmerTranscriber()
+                lyrics = qwen_instance.transcribe(transcribe_path, progress_callback=update_transcribe_progress)
+                detected_lang = "km"
+                source_type = "qwen3-asr"
+            except Exception as qwen_err:
+                print(f"[KMVM Transcribe] ⚠️ Qwen3-ASR unavailable ({qwen_err}). Gracefully falling back to Whisper base...")
+                update_transcribe_progress(45, "Memory full for Qwen3-ASR: using Whisper...")
+                lyrics = None
+
+        if lyrics is None:
+            # On CPU or as resilient fallback, use fast 'base' model (~5-10s)
             whisper_model = "base"
             if req.model_size and req.model_size not in ("gemini-fast", "qwen3-khmer", "auto", "default"):
                 whisper_model = req.model_size
@@ -893,6 +903,9 @@ def auto_fix_lyrics_api(req: LyricsVerifyRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM Auto-Fix Error: {str(e)}")
 
+# Below this the acoustic model barely heard the words; the studio marks those lines for review.
+LOW_LINE_CONFIDENCE = 0.4
+
 @app.post("/api/lyrics/correct-with-reference")
 def correct_lyrics_with_reference_api(req: LyricsCorrectReferenceRequest):
     t_start = time.time()
@@ -929,11 +942,14 @@ def correct_lyrics_with_reference_api(req: LyricsCorrectReferenceRequest):
     print(f"[Lyrics Align] 📝 Parsed {len(ref_lines)} lyric lines (from {len(raw_lines)} raw lines)", flush=True)
     print(f"[Lyrics Align] 🎙️ Aligning lines to singing vocals & calculating word cadences...", flush=True)
 
+    update_transcribe_progress(10, f"Read {len(ref_lines)} lyric lines")
     try:
         aligned_lyrics, report, source_used = _align_selected_lyrics(
-            [{"text": text} for text in ref_lines], audio_p
+            [{"text": text} for text in ref_lines], audio_p, progress_callback=update_transcribe_progress
         )
         _save_aligned_subtitles(aligned_lyrics, audio_p, force_replace_srt=True)
+        unsure = [i for i, line in enumerate(aligned_lyrics) if line.get("confidence", 1.0) < LOW_LINE_CONFIDENCE]
+        update_transcribe_progress(100, f"Aligned {len(aligned_lyrics)} lines")
         elapsed = time.time() - t_start
         print(f"[Lyrics Align] ✅ Successfully aligned {len(aligned_lyrics)} lines in {elapsed:.2f}s ({source_used})\n", flush=True)
 
@@ -943,9 +959,11 @@ def correct_lyrics_with_reference_api(req: LyricsCorrectReferenceRequest):
             "changes_count": len(aligned_lyrics),
             "source": source_used,
             "report": report,
+            "unsure_lines": unsure,
             "lyrics": aligned_lyrics
         }
     except Exception as e:
+        update_transcribe_progress(0, f"Error: {getattr(e, 'detail', e)}")
         elapsed = time.time() - t_start
         print(f"[Lyrics Align] ❌ Alignment error after {elapsed:.2f}s: {e}\n", flush=True)
         raise
@@ -990,6 +1008,45 @@ async def save_subtitles_api(req: SubtitleSaveRequest):
         except Exception as e:
             return {"status": "error", "detail": str(e)}
     return {"status": "ok", "count": len(req.lyrics_data or [])}
+
+@app.get("/api/subtitles")
+def get_subtitles_api(audio_path: Optional[str] = None):
+    """Loads matching subtitles (.srt / .lrc) from disk for the given audio path."""
+    resolved_audio = None
+    if audio_path:
+        clean_rel = audio_path.replace("\\", "/").lstrip("/")
+        candidates = [
+            audio_path,
+            os.path.abspath(audio_path),
+            os.path.join(AUDIO_DIR, os.path.basename(audio_path)),
+            os.path.join(UPLOAD_DIR, "audio", os.path.basename(audio_path)),
+            os.path.join(os.path.dirname(AUDIO_DIR), clean_rel)
+        ]
+        resolved_audio = next((c for c in candidates if c and os.path.exists(c)), None)
+
+    if not resolved_audio and os.path.exists(AUDIO_DIR):
+        all_audios = [
+            os.path.join(AUDIO_DIR, f) for f in os.listdir(AUDIO_DIR)
+            if f.lower().endswith(('.mp3', '.wav', '.flac', '.m4a', '.ogg'))
+        ]
+        if all_audios:
+            all_audios.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+            resolved_audio = all_audios[0]
+
+    if not resolved_audio:
+        return {"status": "not_found", "lyrics": [], "count": 0}
+
+    sub_path = find_matching_subtitles(resolved_audio)
+    if not sub_path or not os.path.exists(sub_path):
+        return {"status": "not_found", "lyrics": [], "count": 0}
+
+    lyrics = parse_subtitle_file(sub_path)
+    return {
+        "status": "success",
+        "file": sub_path,
+        "count": len(lyrics),
+        "lyrics": lyrics
+    }
 
 class TranslateLinesRequest(BaseModel):
     lines: List[str]
@@ -1443,7 +1500,11 @@ def _align_selected_lyrics(lyrics: List[Dict[str, Any]], audio_p: str, progress_
         raise HTTPException(status_code=400, detail="Every lyric line must contain text")
     _, _, duration = decode_audio_to_numpy(audio_p, target_sr=8000)
     if progress_callback:
-        progress_callback(45, "Acoustic VAD: Detecting vocal phrases & onsets...")
+        from backend.vocal_align import get_cached_vocals_path
+        if get_cached_vocals_path(audio_p):
+            progress_callback(45, "Matching every word to the singer's voice...")
+        else:
+            progress_callback(35, "Separating the voice from the music (first time for this song)...")
     aligned = force_align_lyrics_to_audio(texts, audio_p, duration)
     if progress_callback:
         progress_callback(85, "Checking cadence & verifying syllable boundaries...")
