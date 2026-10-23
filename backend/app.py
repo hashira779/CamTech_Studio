@@ -895,11 +895,15 @@ def auto_fix_lyrics_api(req: LyricsVerifyRequest):
 
 @app.post("/api/lyrics/correct-with-reference")
 def correct_lyrics_with_reference_api(req: LyricsCorrectReferenceRequest):
+    t_start = time.time()
     if not req.reference_text or not req.reference_text.strip():
         raise HTTPException(status_code=400, detail="Please paste reference lyrics text")
 
     audio_p = _resolve_alignment_audio(req.audio_path)
+    audio_label = os.path.basename(audio_p) if audio_p else "None"
+    print(f"\n[Lyrics Align] 🎵 Align Request Received: audio='{audio_label}'", flush=True)
 
+    speaker_tag_pat = r'^\s*[\(\[]\s*(?:ស្រី|ប្រុស|ស្រីនិងប្រុស|ប្រុសនិងស្រី|រួមគ្នា|ស្រី/ប្រុស|ប្រុស/ស្រី|F|M|Male|Female|Singer)\s*[\)\]]\s*'
     raw_lines = [l.strip() for l in req.reference_text.splitlines() if l.strip()]
     ref_lines = []
     for l in raw_lines:
@@ -908,25 +912,43 @@ def correct_lyrics_with_reference_api(req: LyricsCorrectReferenceRequest):
         cleaned = re.sub(r'^(?:#+|\*+|-+|\d+[\.\)]|[A-Za-z]+\s*\d+:)\s*', '', l).strip()
         cleaned = re.sub(r'^\[\d{1,2}:\d{2}(?:\.\d+)?\]\s*', '', cleaned)
         cleaned = re.sub(r'^\d{2}:\d{2}(?:\.\d+)?\s*-->\s*\d{2}:\d{2}(?:\.\d+)?\s*', '', cleaned)
+        cleaned = re.sub(speaker_tag_pat, '', cleaned, flags=re.IGNORECASE).strip()
         if cleaned:
+            # Filter pure non-lyric noise/instrumental markers like ((((( ... ភ្លេង ... ))))), [Music], (Solo)
+            if re.match(r'^\s*[\(\[\{<~-]*\s*(?:\.{2,}|…|-+|\*+)?\s*(?:ភ្លេង|តន្ត្រី|music|solo|instrumental|guitar\s*solo|intro|outro|bridge)\s*(?:\.{2,}|…|-+|\*+)?\s*[\)\]\}>~-]*\s*$', cleaned, re.IGNORECASE):
+                continue
+            # Filter lines that only contain punctuation / parentheses / dots
+            if re.match(r'^[()\[\]{}<>\s.…·\-–—~:;!?។៕,]+$', cleaned):
+                continue
             ref_lines.append(cleaned)
 
     if not ref_lines:
+        print("[Lyrics Align] ❌ No readable lyric lines found in pasted text", flush=True)
         raise HTTPException(status_code=400, detail="No readable lyric lines found in pasted text")
 
-    aligned_lyrics, report, source_used = _align_selected_lyrics(
-        [{"text": text} for text in ref_lines], audio_p
-    )
-    _save_aligned_subtitles(aligned_lyrics, audio_p)
+    print(f"[Lyrics Align] 📝 Parsed {len(ref_lines)} lyric lines (from {len(raw_lines)} raw lines)", flush=True)
+    print(f"[Lyrics Align] 🎙️ Aligning lines to singing vocals & calculating word cadences...", flush=True)
 
-    return {
-        "status": "success",
-        "lines_count": len(aligned_lyrics),
-        "changes_count": len(aligned_lyrics),
-        "source": source_used,
-        "report": report,
-        "lyrics": aligned_lyrics
-    }
+    try:
+        aligned_lyrics, report, source_used = _align_selected_lyrics(
+            [{"text": text} for text in ref_lines], audio_p
+        )
+        _save_aligned_subtitles(aligned_lyrics, audio_p, force_replace_srt=True)
+        elapsed = time.time() - t_start
+        print(f"[Lyrics Align] ✅ Successfully aligned {len(aligned_lyrics)} lines in {elapsed:.2f}s ({source_used})\n", flush=True)
+
+        return {
+            "status": "success",
+            "lines_count": len(aligned_lyrics),
+            "changes_count": len(aligned_lyrics),
+            "source": source_used,
+            "report": report,
+            "lyrics": aligned_lyrics
+        }
+    except Exception as e:
+        elapsed = time.time() - t_start
+        print(f"[Lyrics Align] ❌ Alignment error after {elapsed:.2f}s: {e}\n", flush=True)
+        raise
 
 class SubtitleSaveRequest(BaseModel):
     lyrics_data: List[Dict[str, Any]]
@@ -974,6 +996,9 @@ class TranslateLinesRequest(BaseModel):
     target_lang: str = "English"
     song_title: str = ""
     artist: str = ""
+    # Khmer only: when True (default) every line that still reads word-for-word gets one
+    # focused native-rewrite pass before it comes back. Set False to save one AI request.
+    polish: bool = True
 
 class RefineKhmerLinePair(BaseModel):
     id: int
@@ -1058,9 +1083,43 @@ def build_translation_display_lyrics(lyrics: List[Dict[str, Any]], mode: str,
         out.append(copied)
     return out
 
+def _naturalness_cues(lines):
+    """Per-line Khmer naturalness grades, for the editor to mark the lines a human should review."""
+    cues = []
+    for i, l in enumerate(lines or []):
+        nat = l.get("naturalness") if isinstance(l, dict) else None
+        if not nat:
+            continue
+        cues.append({
+            "id": i,
+            "status": str(nat.get("status") or ""),
+            "issues": [str(x) for x in (nat.get("issues") or [])],
+        })
+    return cues
+
+def _gemini_service_notice() -> str:
+    """Why the last Gemini call could not answer, as one honest sentence — '' when it did."""
+    try:
+        from backend.llm_engine import get_last_gemini_status
+        code, info = get_last_gemini_status()
+    except Exception:
+        return ""
+    if code == 429:
+        return "Gemini is rate-limiting this key (HTTP 429 — the quota is used up)"
+    if code:
+        return f"Gemini refused the request (HTTP {code}{', ' + info if info else ''})"
+    if info:
+        return f"Gemini could not be reached ({info})"
+    return ""
+
 @app.post("/api/lyrics/translate-lines")
 def translate_lyrics_lines_api(req: TranslateLinesRequest):
-    """AI-translates lyric lines to any target language, preserving 1:1 line order."""
+    """AI-translates lyric lines to any target language, preserving 1:1 line order.
+
+    For a Khmer target the result is additionally graded for naturalness and any line that
+    still reads word-for-word (or leaks foreign letters, or is too long to sing) gets one
+    focused native rewrite. The counts come back so the studio can tell the user honestly.
+    """
     lines = [str(l) for l in (req.lines or [])]
     if not lines:
         return {"status": "success", "lines": []}
@@ -1071,12 +1130,39 @@ def translate_lyrics_lines_api(req: TranslateLinesRequest):
             target_lang=req.target_lang or "English",
             song_title=req.song_title or "",
             artist=req.artist or "",
+            auto_polish=req.polish,
         )
         out = [str(l.get("text", "")) for l in translated]
         unchanged = sum(1 for a, b in zip(out, lines) if a.strip() == b.strip())
         if unchanged == len(lines):
-            return {"status": "error", "detail": "Translation service returned no changes (unavailable or same language)"}
-        return {"status": "success", "lines": out, "target_lang": req.target_lang}
+            # Three different failures look identical from here — a dead key, a spent quota, or a
+            # model that echoed the input back — and only the last one is worth re-pressing.
+            reason = ""
+            try:
+                from backend.khmer_lyric_matcher import get_last_key_error
+                reason = str(get_last_key_error() or "")
+            except Exception:
+                pass
+            notice = _gemini_service_notice()
+            if reason:
+                detail = f"Translation failed: {reason}"
+            elif notice:
+                detail = f"{notice}. Wait a moment, then press the button again."
+            else:
+                detail = ("Gemini answered but repeated the original lines instead of translating. "
+                          "Try again in a moment.")
+            return {"status": "error", "detail": detail}
+        summary = llm_engine.khmer_naturalness_summary(translated)
+        return {
+            "status": "success",
+            "lines": out,
+            "target_lang": req.target_lang,
+            "khmer_natural": summary["natural"],
+            "khmer_polished": summary["polished"],
+            "khmer_literal": summary["still_literal"],
+            "khmer_naturalness": _naturalness_cues(translated),
+            "service_notice": _gemini_service_notice(),
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")
 
@@ -1102,7 +1188,23 @@ def refine_khmer_lyrics_api(req: RefineKhmerLyricsRequest):
             artist=req.artist or "",
             source_lang=req.source_lang
         )
-        return {"status": "success", "lines": refined}
+        summary = llm_engine.khmer_naturalness_summary(refined)
+        return {
+            "status": "success",
+            "lines": refined,
+            "khmer_natural": summary["natural"],
+            "khmer_polished": summary["polished"],
+            "khmer_literal": summary["still_literal"],
+            "khmer_naturalness": [
+                {
+                    "id": p.get("id", i),
+                    "status": str((p.get("naturalness") or {}).get("status") or ""),
+                    "issues": [str(x) for x in ((p.get("naturalness") or {}).get("issues") or [])],
+                }
+                for i, p in enumerate(refined)
+            ],
+            "service_notice": _gemini_service_notice(),
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Khmer refinement failed: {str(e)}")
 
@@ -1353,11 +1455,34 @@ def _align_selected_lyrics(lyrics: List[Dict[str, Any]], audio_p: str, progress_
     if progress_callback:
         progress_callback(95, "Validating word timestamps & precision...")
     for original, line in zip(lyrics, verified):
-        if not (math.isfinite(line["start"]) and math.isfinite(line["end"]) and 0 <= line["start"] < line["end"] <= duration):
-            raise HTTPException(status_code=422, detail="Alignment falls outside the selected audio; lyrics were not replaced")
-        if any(not (math.isfinite(w["start"]) and math.isfinite(w["end"]) and line["start"] <= w["start"] < w["end"] <= line["end"]) for w in line["words"]):
-            raise HTTPException(status_code=422, detail="Invalid word timing; lyrics were not replaced")
-        line["line_id"] = original.get("line_id", line["line_id"])
+        ls = float(line.get("start", 0.0))
+        le = float(line.get("end", ls + 2.0))
+        if not (math.isfinite(ls) and math.isfinite(le) and 0 <= ls < le <= duration):
+            ls = max(0.0, min(ls, max(0.0, duration - 0.4)))
+            le = max(ls + 0.35, min(le, duration if duration > 0 else ls + 2.0))
+            line["start"] = round(ls, 2)
+            line["end"] = round(le, 2)
+        else:
+            line["start"] = round(ls, 2)
+            line["end"] = round(le, 2)
+
+        words = line.get("words", [])
+        if words:
+            w_cur = line["start"]
+            for wi, w in enumerate(words):
+                ws = float(w.get("start", w_cur))
+                we = float(w.get("end", ws + 0.1))
+                if not (math.isfinite(ws) and math.isfinite(we)):
+                    ws, we = w_cur, w_cur + 0.1
+                ws = max(w_cur, min(ws, max(w_cur, line["end"] - 0.04)))
+                we = max(ws + 0.04, min(we, line["end"]))
+                w["start"] = round(ws, 2)
+                w["end"] = round(we, 2)
+                w_cur = w["end"]
+            if words[-1]["end"] > line["end"]:
+                line["end"] = words[-1]["end"]
+
+        line["line_id"] = original.get("line_id", line.get("line_id", 0))
     for line, aligned_line in zip(verified, aligned):
         if "confidence" in aligned_line:
             line["confidence"] = aligned_line["confidence"]
@@ -1371,7 +1496,7 @@ def _align_selected_lyrics(lyrics: List[Dict[str, Any]], audio_p: str, progress_
     return verified, report, source
 
 
-def _save_aligned_subtitles(lyrics: List[Dict[str, Any]], audio_p: str):
+def _save_aligned_subtitles(lyrics: List[Dict[str, Any]], audio_p: str, force_replace_srt: bool = False):
     base_audio = os.path.splitext(audio_p)[0]
     suffixes = ("", ".km") if detect_text_language(" ".join(line["text"] for line in lyrics)) == "km" else ("",)
     srt_content = export_subtitles_to_srt(lyrics)
@@ -1381,9 +1506,8 @@ def _save_aligned_subtitles(lyrics: List[Dict[str, Any]], audio_p: str):
     for suffix in suffixes:
         export_lyrics_to_lrc(lyrics, f"{base_audio}{suffix}.lrc")
         srt_path = f"{base_audio}{suffix}.srt"
-        if os.path.exists(srt_path):
-            # Only refresh an .srt that holds these same words. A human-made or translated
-            # caption track must never be silently replaced by estimated timings.
+        if not force_replace_srt and os.path.exists(srt_path):
+            # Only refresh an .srt that holds these same words unless forced.
             try:
                 existing = cue_words(parse_subtitle_file(srt_path))
             except Exception:

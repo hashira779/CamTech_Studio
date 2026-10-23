@@ -1180,6 +1180,14 @@ body.is-resizing button {
 .trans-editor-row .te-input:focus {
   border-color: var(--accent);
 }
+/* The Khmer naturalness grader still thinks this line reads like machine translation. */
+.trans-editor-row .te-input--literal {
+  border-color: rgba(251, 191, 36, 0.55);
+  background: rgba(251, 191, 36, 0.06);
+}
+.trans-editor-row .te-input--literal:focus {
+  border-color: var(--ui-warn);
+}
 .trans-editor-row .te-redo {
   background: rgba(168, 85, 247, 0.18);
   border: 1px solid rgba(168, 85, 247, 0.45);

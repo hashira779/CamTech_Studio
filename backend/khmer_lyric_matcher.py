@@ -220,7 +220,7 @@ def verify_gemini_api_key(api_key: Optional[str] = None) -> Tuple[bool, Optional
     import urllib.error
     import json
 
-    models = ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash", "gemini-flash-latest"]
+    models = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-flash-lite-latest"]
     last_err = None
     for model in models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
@@ -274,7 +274,7 @@ def gemini_clean_youtube_metadata(
     import urllib.request
     import urllib.error
     models_to_try = [
-        "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash", "gemini-3-flash", "gemini-flash-lite-latest", "gemini-flash-latest"
+        "gemini-3.8-flash", "gemini-flash-latest", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-flash-lite-latest"
     ]
 
     prompt = f"""Given this YouTube music video:
@@ -463,13 +463,20 @@ Example:
 
     models = [
         "gemini-3.8-flash",
+        "gemini-flash-latest",
+        "gemini-3.7-flash",
         "gemini-3.5-flash",
-        "gemini-3.1-flash",
-        "gemini-3-flash",
-        "gemini-flash-lite-latest",
-        "gemini-flash-latest"
+        "gemini-flash-lite-latest"
     ]
+    import time
+    start_time = time.monotonic()
+    max_total_wait = 35.0  # Cap total cloud alignment wait so UI is never frozen
+    consecutive_429 = 0
+
     for m in models:
+        if time.monotonic() - start_time > max_total_wait:
+            log.warning(f"[Gemini Audio Alignment] Total cloud alignment time reached {max_total_wait}s; switching to local engine")
+            break
         try:
             if progress_callback:
                 progress_callback(55, f"🎧 Gemini AI ({m}) aligning {len(cue_items)} lines...")
@@ -480,7 +487,7 @@ Example:
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=90) as resp:
+            with urllib.request.urlopen(req, timeout=22) as resp:
                 res = json.loads(resp.read().decode("utf-8"))
                 text = res["candidates"][0]["content"]["parts"][0]["text"].strip()
                 if text.startswith("```"):
@@ -547,20 +554,34 @@ Example:
                     karaoke_adjusted = apply_lead_in_and_flush_end(ordered_aligned, lead_in=0.50)
                     verified, report = double_check_lyrics(karaoke_adjusted, preserve_text=True)
                     return verified
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                consecutive_429 += 1
+                log.warning(f"[Gemini Audio Alignment] Model {m} notice: HTTP Error 429 (Rate limit / Quota exceeded)")
+                if consecutive_429 >= 2:
+                    log.warning("[Gemini Audio Alignment] Gemini API rate limit reached (HTTP 429). Fast-failing over to local acoustic alignment.")
+                    break
+            else:
+                log.warning(f"[Gemini Audio Alignment] Model {m} notice: HTTP {e.code} -> Dynamically trying next model...")
+            time.sleep(0.5)
+            continue
         except Exception as e:
             log.warning(f"[Gemini Audio Alignment] Model {m} notice: {e} -> Dynamically trying next model...")
-            import time
-            time.sleep(1.2)
+            time.sleep(0.5)
             continue
 
-    # Dynamic failover to local acoustic alignment if cloud AI is unavailable or 503
+    # Dynamic failover to local acoustic alignment if cloud AI is unavailable, rate-limited (429), or 503
     try:
+        if progress_callback:
+            progress_callback(60, f"⚡ Cloud AI busy — aligning {len(cue_items)} lines via fast local acoustic engine...")
         from backend.vocal_align import force_align_lyrics_to_audio
         log.info(f"[Gemini Audio Alignment] Dynamic failover: aligning {len(cue_items)} lyrics via local acoustic engine...")
         raw_cues = [c["text"] for c in cue_items]
         aligned_local = force_align_lyrics_to_audio(raw_cues, audio_path, total_duration)
         if aligned_local and len(aligned_local) >= 2:
             log.info(f"[Gemini Audio Alignment] Dynamic failover succeeded: {len(aligned_local)} lines aligned locally.")
+            if progress_callback:
+                progress_callback(90, f"🎯 Local alignment completed ({len(aligned_local)} lines)")
             return aligned_local
     except Exception as local_err:
         log.warning(f"[Gemini Audio Alignment] Dynamic local failover notice: {local_err}")
@@ -746,8 +767,9 @@ def transcribe_audio_with_gemini(
     )
 
     models = [
-        "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash", "gemini-3-flash", "gemini-flash-lite-latest", "gemini-flash-latest"
+        "gemini-3.8-flash", "gemini-flash-latest", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-flash-lite-latest"
     ]
+    consecutive_429 = 0
 
     for model in models:
         try:
@@ -781,7 +803,7 @@ def transcribe_audio_with_gemini(
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
             req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
             
-            with urllib.request.urlopen(req, timeout=90) as resp:
+            with urllib.request.urlopen(req, timeout=25) as resp:
                 res = json.loads(resp.read().decode("utf-8"))
                 text = res["candidates"][0]["content"]["parts"][0]["text"]
                 
@@ -807,10 +829,19 @@ def transcribe_audio_with_gemini(
                         save_to_local_lyrics_db(title, artist, khmer_lines)
                     return khmer_lines, None
 
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                consecutive_429 += 1
+                log.warning(f"[Gemini Audio ASR] {model} notice: HTTP 429 Quota Exceeded")
+                if consecutive_429 >= 2:
+                    log.warning("[Gemini Audio ASR] API rate limit reached. Fast-failing to next pipeline step.")
+                    break
+            else:
+                log.warning(f"[Gemini Audio ASR] {model} notice: HTTP {e.code}")
+            time.sleep(0.5)
         except Exception as e:
             log.warning(f"[Gemini Audio ASR] {model} notice: {e}")
-            import time
-            time.sleep(1)
+            time.sleep(0.5)
 
     return None
 
@@ -825,7 +856,7 @@ def fetch_lyrics_with_gemini(title: str, artist: str = "", description: str = ""
 
     import urllib.request
     models_to_try = [
-        "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash", "gemini-3-flash", "gemini-flash-lite-latest", "gemini-flash-latest"
+        "gemini-3.8-flash", "gemini-flash-latest", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-flash-lite-latest"
     ]
 
     desc_hint = f" (Context: {description[:150]})" if description else ""
@@ -841,6 +872,7 @@ def fetch_lyrics_with_gemini(title: str, artist: str = "", description: str = ""
 
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     data_bytes = json.dumps(payload).encode("utf-8")
+    consecutive_429 = 0
 
     for model in models_to_try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
@@ -849,7 +881,7 @@ def fetch_lyrics_with_gemini(title: str, artist: str = "", description: str = ""
         }
         try:
             req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urllib.request.urlopen(req, timeout=20) as response:
                 result = json.loads(response.read().decode("utf-8"))
                 text = result["candidates"][0]["content"]["parts"][0]["text"]
                 lines = [
@@ -861,6 +893,15 @@ def fetch_lyrics_with_gemini(title: str, artist: str = "", description: str = ""
                 if len(khmer_lines) >= 6:
                     log.info(f"[Gemini Lyrics] Retrieved {len(khmer_lines)} lines for '{title}' via {model}")
                     return khmer_lines
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                consecutive_429 += 1
+                log.warning(f"[Gemini Lyrics] {model} notice: HTTP 429 Quota Exceeded")
+                if consecutive_429 >= 2:
+                    break
+            else:
+                log.warning(f"[Gemini Lyrics] {model} notice: HTTP {e.code}")
+            continue
         except Exception as e:
             log.warning(f"[Gemini Lyrics] {model} attempt failed: {e}")
             continue

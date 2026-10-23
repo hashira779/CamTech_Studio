@@ -19,6 +19,7 @@ Provides:
 
 import re
 import math
+import functools
 from typing import List, Dict, Any, Optional, Tuple
 
 # Khmer Unicode constants
@@ -112,18 +113,8 @@ def _segment_unit_to_syllables(unit: str) -> List[str]:
         return sylls
     return [unit] if unit else []
 
-def segment_khmer_syllables(text: str) -> List[str]:
-    """
-    Breaks Khmer text into linguistically correct orthographic syllables.
-    Uses Node Intl.Segmenter when available to find word boundaries, then decomposes
-    compound words into orthographic syllables with subscript consonant ligature safety.
-    """
-    if not text:
-        return []
-    clean = text.strip()
-    if not clean:
-        return []
-
+@functools.lru_cache(maxsize=4096)
+def _segment_khmer_syllables_cached(clean: str) -> Tuple[str, ...]:
     # 1. Fast Node Intl.Segmenter (gold-standard Unicode Annex #29)
     words = None
     try:
@@ -165,7 +156,23 @@ def segment_khmer_syllables(text: str) -> List[str]:
         sylls = _segment_unit_to_syllables(w)
         results.extend(sylls)
 
-    return [r for r in results if r]
+    res_list = [r for r in results if r]
+    return tuple(res_list if res_list else ([clean] if clean else []))
+
+
+def segment_khmer_syllables(text: str) -> List[str]:
+    """
+    Breaks Khmer text into linguistically correct orthographic syllables.
+    Uses Node Intl.Segmenter when available to find word boundaries, then decomposes
+    compound words into orthographic syllables with subscript consonant ligature safety.
+    Fast LRU cache ensures instant (0ms) repeat calls.
+    """
+    if not text:
+        return []
+    clean = text.strip()
+    if not clean:
+        return []
+    return list(_segment_khmer_syllables_cached(clean))
 
 def insert_khmer_word_breaks(text: str) -> str:
     """Inserts Zero-Width Space (\\u200B) between syllables for clean UI wrapping."""

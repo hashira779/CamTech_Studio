@@ -50,6 +50,12 @@ def _get_model():
                 torch.cuda.empty_cache()
             bundle = torchaudio.pipelines.MMS_FA
             model = bundle.get_model(with_star=False, dl_kwargs={"weights_only": True, "map_location": "cpu"})
+            if torch.cuda.is_available():
+                try:
+                    if torch.cuda.mem_get_info()[0] > 1.0 * (1024**3):
+                        model = model.to("cuda")
+                except Exception:
+                    pass
             model.eval()
             torch.set_grad_enabled(False)
             _DICT = bundle.get_dict(star=None)
@@ -132,6 +138,11 @@ def compute_emission(audio_path: str):
         return _EMISSION_CACHE[key]
 
     model, _ = _get_model()
+    try:
+        device = next(model.parameters()).device
+    except Exception:
+        device = torch.device("cpu")
+
     data = _load_audio(target)
     n = len(data)
     chunk = int(_CHUNK_S * SAMPLE_RATE) // _HOP * _HOP
@@ -143,11 +154,11 @@ def compute_emission(audio_path: str):
             if core <= 0:
                 break
             a, b = max(0, s - ctx), min(n, s + chunk + ctx)
-            seg = torch.from_numpy(data[a:b]).unsqueeze(0)
+            seg = torch.from_numpy(data[a:b]).unsqueeze(0).to(device)
             if seg.shape[1] < 2 * _HOP:
                 seg = torch.nn.functional.pad(seg, (0, 2 * _HOP - seg.shape[1]))
             em, _ = model(seg)
-            em = em[0, (s - a) // _HOP:(s - a) // _HOP + core]
+            em = em[0, (s - a) // _HOP:(s - a) // _HOP + core].cpu()
             if em.shape[0] < core:
                 em = torch.cat([em, em[-1:].expand(core - em.shape[0], -1)])
             pieces.append(em)
@@ -452,7 +463,7 @@ def ctc_align_lyrics(
                 proc = subprocess.run(
                     [sys.executable, "-m", "backend.ctc_worker", job_path, out_path],
                     cwd=_REPO_ROOT, env=env, timeout=_WORKER_TIMEOUT_S,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace",
+                    stdout=None, stderr=subprocess.PIPE, text=True, errors="replace",
                 )
                 if proc.returncode == 0 and os.path.exists(out_path):
                     with open(out_path, encoding="utf-8") as handle:

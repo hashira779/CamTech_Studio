@@ -29,6 +29,9 @@ const AUTO_BUILT_KEY = 'vida_auto_khmer_built';
 let toast = () => {};
 let modalEl = null;
 let draftLines = [];
+// Rows the Khmer grader still thinks read like machine translation, so the editor can mark
+// them instead of pretending the whole track came out native.
+let literalRows = new Set();
 let autoBuildInFlight = false;
 let sessionModeAppliedKey = '';
 
@@ -338,8 +341,66 @@ async function postJSON(url, body, timeoutMs = 120000) {
   }
 }
 
+// Set by the last Khmer AI pass so the UI can report honestly how many lines still read
+// like machine translation instead of pretending everything came out natural.
+let lastKhmerReport = { natural: 0, polished: 0, literal: 0, graded: false, serviceNotice: '' };
+export function getKhmerNaturalnessReport() { return { ...lastKhmerReport }; }
+
+// The backend grades every Khmer line it returns, so the editor can mark the stiff ones the
+// moment a translation lands instead of waiting for a ✨ Fix Khmer press.
+let lastKhmerLiteralRows = [];
+export function getKhmerLiteralRows() { return lastKhmerLiteralRows.slice(); }
+
+function collectKhmerLiteralRows(data, offset) {
+  const cues = Array.isArray(data.khmer_naturalness) ? data.khmer_naturalness : [];
+  const rows = [];
+  cues.forEach(c => {
+    const id = Number(c && c.id);
+    if (c && c.status === 'still_literal' && Number.isFinite(id)) rows.push(offset + id);
+  });
+  return rows;
+}
+
+function recordKhmerReport(data) {
+  const notice = String(data.service_notice || '');
+  const graded = Number.isFinite(data.khmer_natural) || Number.isFinite(data.khmer_polished) || Number.isFinite(data.khmer_literal);
+  if (!graded) {
+    lastKhmerReport = { natural: 0, polished: 0, literal: 0, graded: false, serviceNotice: notice };
+    return lastKhmerReport;
+  }
+  lastKhmerReport = {
+    natural: Number(data.khmer_natural) || 0,
+    polished: Number(data.khmer_polished) || 0,
+    literal: Number(data.khmer_literal) || 0,
+    graded: true,
+    serviceNotice: notice
+  };
+  return lastKhmerReport;
+}
+
+/** Toast copy for the last Khmer pass; returns null when nothing needs the user's attention. */
+export function khmerNaturalnessNote() {
+  const r = lastKhmerReport;
+  if (!r.graded) return null;
+  // A rewrite pass that Gemini never answered leaves the stiff lines exactly as they were, and
+  // "3 lines still sound translated" alone would look like a model opinion rather than an outage.
+  if (r.serviceNotice && r.polished === 0) {
+    return `${r.serviceNotice} — no line could be rewritten, so the Khmer is still the raw draft.`;
+  }
+  if (r.literal > 0) {
+    return `${r.natural + r.polished} lines read naturally, ${r.literal} still sound translated — open ✨ Fix Khmer with AI or tap ✏️ Edit to smooth them.`;
+  }
+  if (r.polished > 0) return `${r.polished} stiff lines were rewritten into native Khmer before saving.`;
+  return null;
+}
+
 async function translateViaAI(texts, onProgress) {
-  const BATCH_SIZE = 25;
+  // Measured against the real API: a 12-line Khmer batch with the full adaptation brief takes
+  // ~44s, and Khmer may then run a second rewrite pass — so Khmer gets smaller batches and a
+  // budget that survives both calls instead of aborting a translation that is still going well.
+  const isKhmer = /khmer|ខ្មែរ|km/i.test(String(targetLangName() || ''));
+  const BATCH_SIZE = isKhmer ? 12 : 25;
+  const TIMEOUT_MS = isKhmer ? 600000 : 180000;
   if (texts.length <= BATCH_SIZE) {
     if (onProgress) onProgress(25);
     const data = await postJSON('/api/lyrics/translate-lines', {
@@ -347,11 +408,16 @@ async function translateViaAI(texts, onProgress) {
       target_lang: targetLangName(),
       // Title + artist steer pronoun choice (បង/អូន) and register in the Khmer prompt.
       song_title: String(state.songTitle || '').trim(),
-      artist: String(state.artistName || '').trim()
-    }, 180000);
+      artist: String(state.artistName || '').trim(),
+      // Khmer only: the backend grades every line and rewrites the word-for-word ones.
+      polish: true
+    }, TIMEOUT_MS);
     if (data.status !== 'success' || !Array.isArray(data.lines)) {
       throw new Error(data.detail || 'Translation service returned no lines');
     }
+    const report = recordKhmerReport(data);
+    lastKhmerLiteralRows = collectKhmerLiteralRows(data, 0);
+    if (report.polished && onProgress) onProgress(92, 'Polishing Khmer');
     if (onProgress) onProgress(100);
     return data.lines;
   }
@@ -359,6 +425,8 @@ async function translateViaAI(texts, onProgress) {
   // Multi-batch for large lyric sets
   const allLines = [];
   const total = texts.length;
+  const rolled = { natural: 0, polished: 0, literal: 0, graded: false, serviceNotice: '' };
+  lastKhmerLiteralRows = [];
   for (let i = 0; i < total; i += BATCH_SIZE) {
     const chunk = texts.slice(i, i + BATCH_SIZE);
     const startPct = Math.round((i / total) * 100);
@@ -367,15 +435,24 @@ async function translateViaAI(texts, onProgress) {
       lines: chunk,
       target_lang: targetLangName(),
       song_title: String(state.songTitle || '').trim(),
-      artist: String(state.artistName || '').trim()
-    }, 180000);
+      artist: String(state.artistName || '').trim(),
+      polish: true
+    }, TIMEOUT_MS);
     if (data.status !== 'success' || !Array.isArray(data.lines)) {
       throw new Error(data.detail || 'Translation service returned no lines');
     }
+    const report = recordKhmerReport(data);
+    lastKhmerLiteralRows.push(...collectKhmerLiteralRows(data, i));
+    rolled.natural += report.natural;
+    rolled.polished += report.polished;
+    rolled.literal += report.literal;
+    rolled.graded = rolled.graded || report.graded;
+    rolled.serviceNotice = rolled.serviceNotice || report.serviceNotice;
     allLines.push(...data.lines);
     const endPct = Math.min(99, Math.round(((i + chunk.length) / total) * 100));
     if (onProgress) onProgress(endPct);
   }
+  lastKhmerReport = rolled;
   if (onProgress) onProgress(100);
   return allLines;
 }
@@ -388,10 +465,11 @@ export async function refineKhmerViaAI(pairs, onProgress) {
       pairs: pairs,
       song_title: String(state.songTitle || '').trim(),
       artist: String(state.artistName || '').trim()
-    }, 180000);
+    }, 360000);
     if (data.status !== 'success' || !Array.isArray(data.lines)) {
       throw new Error(data.detail || 'Khmer refinement returned invalid response');
     }
+    recordKhmerReport(data);
     if (onProgress) onProgress(100);
     return data.lines;
   }
@@ -399,6 +477,7 @@ export async function refineKhmerViaAI(pairs, onProgress) {
   // Multi-batch for large sets
   const allLines = [];
   const total = pairs.length;
+  const rolled = { natural: 0, polished: 0, literal: 0, graded: false, serviceNotice: '' };
   for (let i = 0; i < total; i += BATCH_SIZE) {
     const chunk = pairs.slice(i, i + BATCH_SIZE);
     const startPct = Math.round((i / total) * 100);
@@ -407,14 +486,21 @@ export async function refineKhmerViaAI(pairs, onProgress) {
       pairs: chunk,
       song_title: String(state.songTitle || '').trim(),
       artist: String(state.artistName || '').trim()
-    }, 180000);
+    }, 360000);
     if (data.status !== 'success' || !Array.isArray(data.lines)) {
       throw new Error(data.detail || 'Khmer refinement returned invalid response');
     }
+    const report = recordKhmerReport(data);
+    rolled.natural += report.natural;
+    rolled.polished += report.polished;
+    rolled.literal += report.literal;
+    rolled.graded = rolled.graded || report.graded;
+    rolled.serviceNotice = rolled.serviceNotice || report.serviceNotice;
     allLines.push(...data.lines);
     const endPct = Math.min(99, Math.round(((i + chunk.length) / total) * 100));
     if (onProgress) onProgress(endPct);
   }
+  lastKhmerReport = rolled;
   if (onProgress) onProgress(100);
   return allLines;
 }
@@ -612,6 +698,7 @@ function createButtonProgress(btn, baseLabel = 'Translating') {
   if (!btn) return { update: () => {}, finish: () => {}, reset: () => {} };
   const origText = btn.textContent;
   let pct = 8;
+  let note = '';
   btn.disabled = true;
   btn.textContent = `⏳ ${baseLabel} ${pct}%`;
 
@@ -623,13 +710,13 @@ function createButtonProgress(btn, baseLabel = 'Translating') {
     } else if (pct < 93) {
       pct += 1;
     }
-    btn.textContent = `⏳ ${baseLabel} ${pct}%`;
+    btn.textContent = `⏳ ${note || baseLabel} ${pct}%`;
   }, 220);
 
   return {
-    update: (customPct) => {
+    update: (customPct, note) => {
       pct = Math.max(pct, Math.min(99, Math.round(customPct)));
-      btn.textContent = `⏳ ${baseLabel} ${pct}%`;
+      btn.textContent = `⏳ ${note || baseLabel} ${pct}%`;
     },
     finish: (finalLabel) => {
       clearInterval(timer);
@@ -674,6 +761,8 @@ async function translateAll(btn, opts = {}) {
     setDisplayMode(target, false);
     prog.finish();
     toast('🌐 Translated', `${translationCount()} lines → ${targetLangName()} saved as a separate track. Original lyrics & timings untouched.`, 'success', 4500);
+    const note = khmerNaturalnessNote();
+    if (note) toast('🎧 Khmer naturalness check', note, 'warning', 7000);
     return true;
   } catch (e) {
     prog.reset();
@@ -743,9 +832,14 @@ function ensureModal() {
     try {
       const out = await translateViaAI(texts, (p) => prog.update(p));
       draftLines = buildLines(out);
+      // The backend graded this pass line by line, so the editor opens with exactly the stiff
+      // lines marked ⚠️; a fresh ✨ Fix Khmer press re-grades them anyway.
+      literalRows = new Set(getKhmerLiteralRows().filter(i => i >= 0 && i < draftLines.length));
       renderRows();
       prog.finish('🌐 AI Translate All');
       toast('🌐 AI Pass Complete', `${translationCount()} lines refreshed in the editor — review then Apply & Save.`, 'success', 3500);
+      const note = khmerNaturalnessNote();
+      if (note) toast('🎧 Khmer naturalness check', note, 'warning', 7000);
     } catch (err) {
       prog.reset();
       toast('❌ Translation Failed', err.message || String(err), 'error', 5000);
@@ -765,10 +859,19 @@ function ensureModal() {
       out.forEach((item, idx) => {
         if (!draftLines[idx]) draftLines[idx] = { index: idx, text: '', start: Number(lyrics[idx].start) || 0, end: Number(lyrics[idx].end) || 0 };
         if (item && item.text) draftLines[idx].text = item.text;
+        const rowId = Number.isFinite(Number(item && item.id)) ? Number(item.id) : idx;
+        if (item && item.naturalness && item.naturalness.status === 'still_literal') literalRows.add(rowId);
+        else literalRows.delete(rowId);
       });
       renderRows();
       prog.finish('✨ Fix Khmer with AI');
-      toast('✨ Native Khmer Complete', `${out.length} lines refined to native Khmer — review then Apply & Save.`, 'success', 4000);
+      const rep = getKhmerNaturalnessReport();
+      toast('✨ Native Khmer Complete',
+        rep.graded
+          ? `${rep.natural + rep.polished} of ${out.length} lines now read as native Khmer` +
+            (rep.literal ? ` — ${rep.literal} still marked ⚠️ in the list.` : ' — none left flagged.')
+          : `${out.length} lines refined to native Khmer — review then Apply & Save.`,
+        rep.literal ? 'warning' : 'success', 4500);
     } catch (err) {
       prog.reset();
       toast('❌ Refinement Failed', err.message || String(err), 'error', 5000);
@@ -801,9 +904,21 @@ function renderRows() {
       <button class="te-redo" title="Re-translate only this line">🔁</button>`;
     const ta = row.querySelector('.te-input');
     ta.value = entry.text || '';
+    if (literalRows.has(i)) {
+      ta.classList.add('te-input--literal');
+      ta.title = 'Still reads like a word-for-word translation — ✨ Fix Khmer rewrites this line';
+      const fixBtn = row.querySelector('.te-fix-khmer');
+      if (fixBtn) fixBtn.textContent = '⚠️ Fix Khmer';
+    }
     ta.addEventListener('input', () => {
       if (!draftLines[i]) draftLines[i] = { index: i, text: '', start: Number(l.start) || 0, end: Number(l.end) || 0 };
       draftLines[i].text = ta.value;
+      // A hand-edited line is the user's own judgement — stop marking it as literal.
+      if (literalRows.delete(i)) {
+        ta.classList.remove('te-input--literal');
+        const fixBtn = row.querySelector('.te-fix-khmer');
+        if (fixBtn) fixBtn.textContent = '✨ Fix Khmer';
+      }
       updateSummary();
     });
     row.querySelector('.te-fix-khmer').addEventListener('click', async (e) => {
@@ -816,8 +931,12 @@ function renderRows() {
           if (!draftLines[i]) draftLines[i] = { index: i, text: '', start: Number(l.start) || 0, end: Number(l.end) || 0 };
           draftLines[i].text = txt;
           ta.value = txt;
+          const still = out[0] && out[0].naturalness && out[0].naturalness.status === 'still_literal';
+          if (still) literalRows.add(i); else literalRows.delete(i);
           updateSummary();
-          toast('✨ Line Refined', 'Khmer line rewritten naturally.', 'success', 2500);
+          renderRows();
+          if (still) toast('⚠️ Still Sounds Translated', 'The rewrite did not pass the naturalness check — edit this line by hand or try again.', 'warning', 4000);
+          else toast('✨ Line Refined', 'Khmer line rewritten naturally.', 'success', 2500);
         }
       } catch (err) {
         toast('❌ Line Refine Failed', err.message || String(err), 'error', 4000);

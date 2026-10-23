@@ -861,9 +861,10 @@ document.addEventListener('DOMContentLoaded', () => {
       return false;
     }
 
-    const prevBtnText = triggerBtn ? triggerBtn.textContent : '';
-    if (triggerBtn) setButtonLoading(triggerBtn, 'Aligning...');
-    setGlobalProgress(25, true, 'Aligning with Original Lyrics & Audio...');
+    const prevBtnText = triggerBtn ? (triggerBtn._originalText || triggerBtn.textContent) : 'Align & Fix Teleprompter';
+    const numLines = cleanRef.split('\n').map(l => l.trim()).filter(Boolean).length;
+    if (triggerBtn) setButtonLoading(triggerBtn, `Aligning ${numLines} Lines...`);
+    setGlobalProgress(25, true, `Aligning ${numLines} Original Lyrics to Audio...`);
 
     const audioFilePath = state.audioServerPath || state.audioPath || window.__VIDA_SERVER_PATH || '';
 

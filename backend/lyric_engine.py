@@ -9,6 +9,7 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 import re
 import html
 import math
+import functools
 from typing import List, Dict, Any, Optional, Tuple
 
 # Import linguistic Khmer word and syllable segmentation engine
@@ -171,18 +172,11 @@ def tokenize_khmer_line(clean: str) -> List[str]:
 
 
 
-def tokenize_line_words(text: str) -> List[str]:
-    """
-    Universal multi-language word & syllable tokenizer.
-    Supports Khmer (syllable clustering & linguistic unit segmentation),
-    Chinese & Japanese (character/kana units), Thai/Lao/Myanmar, and spaced languages.
-    Never collapses multi-word unspaced sentences into a single lump.
-    """
-    if not text:
-        return []
+@functools.lru_cache(maxsize=4096)
+def _tokenize_line_words_cached(text: str) -> Tuple[str, ...]:
     clean = clean_subtitle_text(text)
     if not clean:
-        return []
+        return ()
 
     # 1. Khmer script
     if is_khmer_text(clean):
@@ -192,30 +186,43 @@ def tokenize_line_words(text: str) -> List[str]:
                 if isinstance(tokens, list) and len(tokens) > 1:
                     res = [t.strip() for t in tokens if t.strip()]
                     if res:
-                        return res
+                        return tuple(res)
             except Exception:
                 pass
         km_tokens = tokenize_khmer_line(clean)
         if km_tokens:
-            return km_tokens
+            return tuple(km_tokens)
 
     # 2. Chinese & Japanese (CJK Ideographs + Kana)
     if is_cjk_text(clean):
         cjk_tokens = re.findall(r'[a-zA-Z0-9_\'-]+|[\u4e00-\u9fff]|[\u3040-\u309f]+|[\u30a0-\u30ff]+|[^\s]', clean)
         cjk_tokens = [t.strip() for t in cjk_tokens if t.strip()]
         if cjk_tokens:
-            return cjk_tokens
+            return tuple(cjk_tokens)
 
     # 3. Thai script
     if is_thai_text(clean):
         thai_tokens = re.findall(r'[a-zA-Z0-9_\'-]+|[\u0E01-\u0E2E][\u0E30-\u0E3A\u0E47-\u0E4E]*|[\u0E2F-\u0E5B]|[^\s]', clean)
         thai_tokens = [t.strip() for t in thai_tokens if t.strip()]
         if thai_tokens:
-            return thai_tokens
+            return tuple(thai_tokens)
 
     # 4. Standard whitespace tokenization for spaced languages
     words = clean.split()
-    return words if words else [clean]
+    return tuple(words if words else [clean])
+
+
+def tokenize_line_words(text: str) -> List[str]:
+    """
+    Universal multi-language word & syllable tokenizer.
+    Supports Khmer (syllable clustering & linguistic unit segmentation),
+    Chinese & Japanese (character/kana units), Thai/Lao/Myanmar, and spaced languages.
+    Never collapses multi-word unspaced sentences into a single lump.
+    Fast LRU cache ensures instant (0ms) repeat calls.
+    """
+    if not text:
+        return []
+    return list(_tokenize_line_words_cached(text))
 
 
 # Khmer Lyric Priming Prompts for Whisper AI (Budgeted strictly under 130 tokens to prevent position encoding overflow)
@@ -483,8 +490,8 @@ def clean_subtitle_text(text: str) -> str:
         r'តន្ត្រី|ភ្លេង|សើច|សំណើច|ទះដៃ|ការ\u200b?ទះដៃ|សំឡេង\u200b?ហ៊ោកញ្ជ្រៀវ|ច្រៀង|ស្រែក|សម្រែក|ដកដង្ហើមធំ|'
         r'âm nhạc|tiếng cười|tiếng vỗ tay|tiếng hát'
     )
-    text = re.sub(r'\[\s*(?:' + sfx_keywords + r').*?\]', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\(\s*(?:' + sfx_keywords + r').*?\)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[+[\s\.\-–—*~]*(?:' + sfx_keywords + r').*?\]+', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\(+[\s\.\-–—*~]*(?:' + sfx_keywords + r').*?\)+', '', text, flags=re.IGNORECASE)
 
     # Strip leading speaker cues in brackets or parentheses (e.g. (ស្រី), (ប្រុស), (រួមគ្នា))
     speaker_tag_pat = r'^\s*[\(\[]\s*(?:ស្រី|ប្រុស|ស្រីនិងប្រុស|ប្រុសនិងស្រី|រួមគ្នា|ស្រី/ប្រុស|ប្រុស/ស្រី|F|M|Male|Female|Singer)\s*[\)\]]\s*'
@@ -678,8 +685,14 @@ def double_check_lyrics(lyrics: List[Dict[str, Any]], preserve_text: bool = Fals
             last_start = verified_lines[-1]["start"]
             if start < last_end:
                 if start >= last_start + 0.4:
-                    verified_lines[-1]["end"] = round(start - 0.04, 2)
-                    prev_line_end = verified_lines[-1]["end"]
+                    new_le = round(start - 0.04, 2)
+                    verified_lines[-1]["end"] = new_le
+                    prev_line_end = new_le
+                    for pw in verified_lines[-1].get("words", []):
+                        if pw["end"] > new_le:
+                            pw["end"] = new_le
+                        if pw["start"] >= pw["end"]:
+                            pw["start"] = max(last_start, round(pw["end"] - 0.04, 2))
                 else:
                     start = round(last_end + 0.04, 2)
                     corrections.append(f"Line {idx+1}: Adjusted start time to prevent collision")
@@ -753,6 +766,22 @@ def double_check_lyrics(lyrics: List[Dict[str, Any]], preserve_text: bool = Fals
             })
             cur_w_start = w_end
             total_words += 1
+
+        # Final guarantee: all words strictly ordered with positive duration inside [start, end]
+        if fixed_words and any(fw["start"] >= fw["end"] or fw["end"] > end + 0.01 for fw in fixed_words):
+            w_tot_chars = sum(max(1, len(fw.get("word", ""))) for fw in fixed_words)
+            w_dur_budget = max(0.4, end - start)
+            c_cur = start
+            for fw in fixed_words:
+                ratio = max(1, len(fw.get("word", ""))) / w_tot_chars
+                wd = max(0.04, w_dur_budget * ratio)
+                fw["start"] = round(c_cur, 2)
+                fw["end"] = round(min(end, c_cur + wd), 2)
+                if fw["end"] <= fw["start"]:
+                    fw["end"] = round(fw["start"] + 0.04, 2)
+                c_cur = fw["end"]
+            if fixed_words[-1]["end"] > end:
+                end = fixed_words[-1]["end"]
 
         # Preserve full lyric phrase unless it is an extreme runaway line (> 14s duration and > 25 tokens)
         if len(fixed_words) <= 25 or (end - start) < 14.0:

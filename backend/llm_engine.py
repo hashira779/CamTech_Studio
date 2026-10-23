@@ -1,13 +1,55 @@
 import os
 import re
 import difflib
+import time
 import unicodedata
 import json
+import logging
 from typing import Dict, Any, Optional, List, Tuple
 
+log = logging.getLogger(__name__)
 
-def call_gemini_api(prompt: str, json_mode: bool = False, timeout: int = 25) -> Optional[str]:
-    """Helper to query Gemini Cloud AI with auto-fallback across fast models."""
+# ── VIDA System Instruction ──────────────────────────────────────────────────
+# Sent once per Gemini request via the dedicated system_instruction field.
+# This gives the model a persistent persona identity, producing more consistent
+# and higher-quality responses than embedding the persona in every user prompt.
+VIDA_SYSTEM_INSTRUCTION = (
+    "You are VIDA Studio's AI assistant — an expert in Khmer music, lyrics, "
+    "poetry, and cultural adaptation. You speak Khmer (ភាសាខ្មែរ) and English "
+    "fluently. When composing or translating Khmer lyrics, you write like a "
+    "native Khmer songwriter: natural word order, everyday vocabulary, poetic "
+    "but singable. You never translate word-for-word. You respect Khmer Unicode "
+    "orthography including subscript consonants (ជើង \u17D2). When asked to "
+    "return JSON, you return ONLY valid JSON with no markdown fences or prose."
+)
+
+
+LAST_GEMINI_STATUS: Optional[int] = None
+LAST_GEMINI_STATUS_INFO: str = ""
+
+
+def get_last_gemini_status() -> Tuple[Optional[int], str]:
+    """Status of the most recent Gemini call: (None, '') on success, else (HTTP code, reason).
+
+    The studio needs this because three failures look identical to the user — no key, quota spent,
+    or a model that repeated the input — and only the last one is worth simply retrying.
+    """
+    return LAST_GEMINI_STATUS, LAST_GEMINI_STATUS_INFO
+
+
+def call_gemini_api(prompt: str, json_mode: bool = False, timeout: int = 25,
+                    total_timeout: Optional[float] = None,
+                    system_instruction: Optional[str] = VIDA_SYSTEM_INSTRUCTION) -> Optional[str]:
+    """Helper to query Gemini Cloud AI with auto-fallback across fast models.
+
+    `timeout` is the budget for one model attempt. `total_timeout` is the budget for the whole
+    call: without it a busy 12-line lyric request can silently consume six sequential attempts
+    (the Khmer prompt alone measures ~44s per attempt) and leave the studio waiting on a request
+    its own browser has already given up on.
+    """
+    global LAST_GEMINI_STATUS, LAST_GEMINI_STATUS_INFO
+    LAST_GEMINI_STATUS = None
+    LAST_GEMINI_STATUS_INFO = ""
     try:
         try:
             from backend.khmer_lyric_matcher import get_gemini_api_key
@@ -27,28 +69,43 @@ def call_gemini_api(prompt: str, json_mode: bool = False, timeout: int = 25) -> 
             except ImportError:
                 set_last_key_error = lambda x: None
 
+        # Simplified to 3 models: latest (auto-routes to newest), a pinned stable
+        # version, and a lite fallback in a separate rate bucket.
         models = [
+            "gemini-flash-latest",
             "gemini-3.8-flash",
-            "gemini-3.5-flash",
-            "gemini-3.1-flash",
-            "gemini-3-flash",
-            "gemini-2.0-flash",
-            "gemini-flash-latest"
+            "gemini-flash-lite-latest"
         ]
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        # System instruction gives the model a persistent persona identity,
+        # producing more consistent and higher-quality responses.
+        if system_instruction:
+            payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
         if json_mode:
             payload["generationConfig"] = {"response_mime_type": "application/json"}
         data_bytes = json.dumps(payload).encode("utf-8")
+        started = time.monotonic()
+        consecutive_429 = 0
         for model in models:
+            attempt_timeout = timeout
+            if total_timeout is not None:
+                left = total_timeout - (time.monotonic() - started)
+                if left <= 1:
+                    break
+                attempt_timeout = max(1, min(timeout, left))
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
             headers = {"Content-Type": "application/json", "X-goog-api-key": api_key}
             try:
                 req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
-                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                with urllib.request.urlopen(req, timeout=attempt_timeout) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
                     if text:
                         set_last_key_error(None)
+                        # A model that 429s and then hands the job to the next one still answered,
+                        # so the rate-limit note must not survive into a successful response.
+                        LAST_GEMINI_STATUS = None
+                        LAST_GEMINI_STATUS_INFO = ""
                         return text
             except urllib.error.HTTPError as e:
                 err_body = e.read().decode("utf-8", errors="replace")
@@ -63,46 +120,134 @@ def call_gemini_api(prompt: str, json_mode: bool = False, timeout: int = 25) -> 
                         pass
                     set_last_key_error(f"Gemini API authentication failed (HTTP {e.code})")
                     break
+                # Keep only the error enum, never the body: quota messages can name the project.
+                status_name = ""
+                try:
+                    status_name = str(json.loads(err_body).get("error", {}).get("status", ""))
+                except Exception:
+                    pass
+                if LAST_GEMINI_STATUS is None or e.code == 429:
+                    LAST_GEMINI_STATUS = e.code
+                    LAST_GEMINI_STATUS_INFO = status_name
+                if e.code == 429:
+                    consecutive_429 += 1
+                    if consecutive_429 >= 2:
+                        print(f"[Gemini] {model} rate limit (HTTP 429). Project quota exhausted; stopping model failover.")
+                        break
+                print(f"[Gemini] {model} refused the request (HTTP {e.code}), trying the next model")
                 continue
-            except Exception:
+            except Exception as e:
+                if LAST_GEMINI_STATUS is None:
+                    LAST_GEMINI_STATUS_INFO = type(e).__name__
+                print(f"[Gemini] {model} attempt failed: {type(e).__name__}: {e}")
                 continue
     except Exception:
         pass
+    print("[Gemini] no model answered this request")
     return None
+
+
+# ── Schema Validation ────────────────────────────────────────────────────────
+# Validates Gemini JSON responses structurally before accepting them, so
+# malformed AI output is caught early instead of silently falling through
+# to static templates.
+
+def _validate_lyric_sections(data: Any) -> bool:
+    """Validates that Gemini-returned lyrics JSON has the expected structure."""
+    if not isinstance(data, dict):
+        return False
+    sections = data.get("sections")
+    if not isinstance(sections, list) or len(sections) == 0:
+        return False
+    for sec in sections:
+        if not isinstance(sec, dict):
+            return False
+        if not isinstance(sec.get("section"), str) or not sec["section"].strip():
+            return False
+        lines = sec.get("lines")
+        if not isinstance(lines, list) or len(lines) == 0:
+            return False
+        if not all(isinstance(l, str) and l.strip() for l in lines):
+            return False
+    return True
 
 
 class LocalLLMEngine:
     """
     LocalLLMEngine integrates with llama.cpp to run highly optimized GGUF 
     local models (like SeaLLMs) on CPU RAM at blazing fast speeds.
+
+    Includes conversation memory for iterative refinement (e.g. "make the
+    chorus sadder") and weighted semantic scoring for offline mood analysis.
     """
+    # Maximum number of conversation turns to keep in memory
+    MAX_HISTORY_TURNS = 10
+
     def __init__(self):
         self.llm = None
         self.is_loaded = False
         self.has_warned = False
-        
+        # Conversation memory: allows iterative refinement across requests
+        self.conversation_history: List[Dict[str, str]] = []
+
+    def _remember(self, role: str, content: str) -> None:
+        """Appends a turn to conversation memory, trimming old turns."""
+        self.conversation_history.append({"role": role, "content": content})
+        if len(self.conversation_history) > self.MAX_HISTORY_TURNS * 2:
+            self.conversation_history = self.conversation_history[-(self.MAX_HISTORY_TURNS * 2):]
+
+    def _build_context_prefix(self) -> str:
+        """Builds a conversation context string from recent history for Gemini."""
+        if not self.conversation_history:
+            return ""
+        lines = []
+        for turn in self.conversation_history[-6:]:  # Last 3 exchanges
+            prefix = "User" if turn["role"] == "user" else "VIDA"
+            # Truncate long assistant responses to save tokens
+            text = turn["content"]
+            if turn["role"] == "assistant" and len(text) > 300:
+                text = text[:300] + "..."
+            lines.append(f"{prefix}: {text}")
+        return "## Previous conversation:\n" + "\n".join(lines) + "\n\n"
+
+    def clear_history(self) -> None:
+        """Clears conversation memory."""
+        self.conversation_history.clear()
+
     def load_model(self):
         if self.is_loaded:
             return
         try:
             from llama_cpp import Llama
             
-            # The downloaded model path
-            model_path = os.path.join(os.path.dirname(__file__), "..", "models", "SeaLLMs-v3-1.5B-Chat.Q4_K_M.gguf")
-            model_path = os.path.abspath(model_path)
-            
-            if not os.path.exists(model_path):
+            # Try multiple model paths: prefer larger, more capable models
+            models_dir = os.path.join(os.path.dirname(__file__), "..", "models")
+            models_dir = os.path.abspath(models_dir)
+            candidate_models = [
+                "Qwen2.5-7B-Instruct.Q4_K_M.gguf",
+                "Gemma-3-4B-IT.Q6_K.gguf",
+                "SeaLLMs-v3-7B-Chat.Q4_K_M.gguf",
+                "SeaLLMs-v3-1.5B-Chat.Q4_K_M.gguf",  # Original fallback
+            ]
+            model_path = None
+            for candidate in candidate_models:
+                p = os.path.join(models_dir, candidate)
+                if os.path.exists(p):
+                    model_path = p
+                    break
+
+            if not model_path:
                 if not self.has_warned:
-                    print(f"[LLM Engine] Model file not found at {model_path}. Using smart offline semantic analyzer.")
+                    print(f"[LLM Engine] No GGUF model found in {models_dir}. Using smart offline semantic analyzer.")
                     self.has_warned = True
                 self.is_loaded = True
                 return
                 
-            print(f"[LLM Engine] Loading 4-bit Quantized GGUF model into CPU RAM...")
+            print(f"[LLM Engine] Loading 4-bit Quantized GGUF model: {os.path.basename(model_path)}")
             # n_ctx is context window, n_threads automatically uses CPU cores
-            self.llm = Llama(model_path=model_path, n_ctx=2048, verbose=False)
+            self.llm = Llama(model_path=model_path, n_ctx=4096, verbose=False)
             self.is_loaded = True
-            print("[LLM Engine] GGUF Model loaded successfully.")
+            print(f"[LLM Engine] GGUF Model loaded successfully: {os.path.basename(model_path)}")
         except ImportError:
             if not self.has_warned:
                 print("[LLM Engine] Info: 'llama_cpp' not installed. Using built-in smart linguistic analyzer.")
@@ -114,42 +259,106 @@ class LocalLLMEngine:
                 self.has_warned = True
             self.is_loaded = True
 
-    def _smart_fallback_analysis(self, text: str) -> str:
-        """Intelligent semantic and mood analyzer for Khmer, Vietnamese, and multilingual lyrics."""
+    # ── Weighted Semantic Mood Scoring ────────────────────────────────────────
+    # Replaces fragile binary keyword matching with weighted scoring.
+    # Each mood has keywords with weights, and the highest total score wins.
+    # This catches songs where a secondary mood overtakes a weak primary signal.
+    _MOOD_KEYWORDS: Dict[str, Dict[str, float]] = {
+        "romantic": {
+            "ស្នេហា": 3.0, "ស្រឡាញ់": 3.0, "love": 2.5, "heart": 1.5, "yêu": 2.5,
+            "tình": 2.0, "miss": 1.5, "បេះដូង": 2.5, "ចាំ": 1.0, "អូន": 1.5,
+            "crush": 1.5, "kiss": 2.0, "forever": 1.0, "dream": 1.0, "ស្រមៃ": 1.5,
+            "រាត្រី": 0.8, "ផ្កា": 1.0, "ចន្ទ": 1.2, "thương": 2.0, "nhớ": 1.8,
+        },
+        "melancholy": {
+            "យំ": 3.0, "ឈឺ": 2.5, "sad": 2.5, "pain": 2.0, "tears": 2.0,
+            "khóc": 2.5, "sầu": 2.0, "បែក": 2.0, "ព្រាត់": 2.5, "ឯកា": 2.5,
+            "lonely": 2.0, "cry": 2.0, "goodbye": 1.5, "lost": 1.5, "rain": 1.0,
+            "ភ្លៀង": 1.0, "ងងឹត": 1.5, "ស្លាប់": 1.5, "buồn": 2.0, "đau": 2.0,
+        },
+        "energetic": {
+            "រាំ": 3.0, "សប្បាយ": 2.5, "dance": 2.5, "party": 2.5, "fire": 1.5,
+            "bass": 2.0, "vui": 2.0, "club": 2.0, "jump": 2.0, "beat": 1.5,
+            "trap": 1.5, "energy": 2.0, "tonight": 1.0, "ចង្វាក់": 2.0, "hype": 2.0,
+        },
+        "golden_era": {
+            "យុគមាស": 4.0, "ស៊ីសាមុត": 4.0, "បុរាណ": 3.0, "vintage": 3.0,
+            "retro": 2.5, "classic": 2.0, "ចំប៉ា": 2.5, "បាត់ដំបង": 2.0,
+            "60s": 2.0, "vinyl": 2.0, "ស្ទឹង": 1.5, "ដងស្ទឹង": 1.5,
+        },
+        "heritage": {
+            "អង្គរ": 3.5, "ប្រាសាទ": 3.0, "ជាតិ": 2.0, "heritage": 2.5,
+            "កម្ពុជា": 2.0, "ដូនតា": 2.5, "ខ្មែរ": 1.5, "ទង់ជាតិ": 2.0,
+            "មោទនភាព": 2.5, "វប្បធម៌": 2.0,
+        },
+    }
+
+    _MOOD_META: Dict[str, Dict[str, str]] = {
+        "romantic": {
+            "mood": "Romantic & Sentimental",
+            "theme": "Love & Longing (មនោសញ្ចេតនា)",
+            "style": "Angkor Mandala / Sunset Glow",
+        },
+        "melancholy": {
+            "mood": "Melancholic & Reflective",
+            "theme": "Heartbreak & Solitude (ការព្រាត់ប្រាស)",
+            "style": "Horizon Wave / Deep Blue Cyberpunk",
+        },
+        "energetic": {
+            "mood": "Energetic & Uplifting",
+            "theme": "High Energy Dance (ចង្វាក់រស់រវើក)",
+            "style": "Trap Nation / Hyper Liquid Pulse",
+        },
+        "golden_era": {
+            "mood": "Golden Era Nostalgic (យុគមាស)",
+            "theme": "Cambodian 60s Vinyl Heritage",
+            "style": "Vintage Vinyl (ស៊ីន ស៊ីសាមុត 33⅓ RPM)",
+        },
+        "heritage": {
+            "mood": "Heritage & Patriotic",
+            "theme": "Khmer National Pride (មោទនភាពជាតិ)",
+            "style": "Angkor Dawn / Royal Gold Cinematic",
+        },
+    }
+
+    def _score_mood(self, text: str) -> Tuple[str, float]:
+        """Scores text against all mood keyword dictionaries, returns (best_mood, score)."""
         t = text.lower()
-        
-        # Check script / language
+        best_mood = "default"
+        best_score = 0.0
+        for mood_name, keywords in self._MOOD_KEYWORDS.items():
+            score = sum(weight for kw, weight in keywords.items() if kw in t)
+            if score > best_score:
+                best_score = score
+                best_mood = mood_name
+        return best_mood, best_score
+
+    def _smart_fallback_analysis(self, text: str) -> str:
+        """Weighted semantic mood analyzer for Khmer, Vietnamese, and multilingual lyrics.
+
+        Uses scored keyword matching instead of binary checks, so mixed-mood
+        lyrics (e.g. a sad love song) are classified by the dominant signal.
+        """
         has_khmer = any(0x1780 <= ord(c) <= 0x17FF for c in text)
-        
-        mood = "Melodic & Emotional"
-        themes = []
-        style_rec = "Fluid Wave (Neon Glow)"
-        
-        # Keyword heuristic checks
-        if any(w in t for w in ["ស្នេហា", "ស្រឡាញ់", "love", "heart", "yêu", "tình", "miss", "បេះដូង", "ចាំ"]):
-            mood = "Romantic & Sentimental"
-            themes.append("Love & Longing (មនោសញ្ចេតនា)")
-            style_rec = "Angkor Mandala / Sunset Glow"
-        elif any(w in t for w in ["យំ", "ឈឺ", "sad", "pain", "tears", "khóc", "sầu", "បែក", "ព្រាត់", "ឯកា"]):
-            mood = "Melancholic & Reflective"
-            themes.append("Heartbreak & Solitude (ការព្រាត់ប្រាស)")
-            style_rec = "Horizon Wave / Deep Blue Cyberpunk"
-        elif any(w in t for w in ["រាំ", "សប្បាយ", "dance", "party", "fire", "bass", "vui", "club", "jump"]):
-            mood = "Energetic & Uplifting"
-            themes.append("High Energy Dance (ចង្វាក់រស់រវើក)")
-            style_rec = "Trap Nation / Hyper Liquid Pulse"
-        elif any(w in t for w in ["យុគមាស", "ស៊ីសាមុត", "បុរាណ", "vintage", "retro", "classic", "ចំប៉ា", "បាត់ដំបង"]):
-            mood = "Golden Era Nostalgic (យុគមាស)"
-            themes.append("Cambodian 60s Vinyl Heritage")
-            style_rec = "Vintage Vinyl (ស៊ីន ស៊ីសាមុត 33⅓ RPM)"
+
+        best_mood, score = self._score_mood(text)
+
+        if score >= 1.5 and best_mood in self._MOOD_META:
+            meta = self._MOOD_META[best_mood]
+            mood = meta["mood"]
+            themes = [meta["theme"]]
+            style_rec = meta["style"]
         else:
-            themes.append("Poetic Narrative & Musical Expression")
-            
+            mood = "Melodic & Emotional"
+            themes = ["Poetic Narrative & Musical Expression"]
+            style_rec = "Fluid Wave (Neon Glow)"
+
         lang_label = "Khmer (ភាសាខ្មែរ)" if has_khmer else "Multilingual"
-        
+        confidence = f" (confidence: {min(score / 6.0, 1.0):.0%})" if score > 0 else ""
+
         return (
             f"🎵 **Language**: {lang_label}\n"
-            f"✨ **Mood**: {mood}\n"
+            f"✨ **Mood**: {mood}{confidence}\n"
             f"📝 **Themes**: {', '.join(themes)}\n"
             f"🎨 **Recommended Visual Style**: {style_rec}"
         )
@@ -452,14 +661,18 @@ class LocalLLMEngine:
             gem_raw = call_gemini_api(gem_prompt, json_mode=True, timeout=10)
             if gem_raw:
                 parsed = json.loads(gem_raw)
-                if parsed.get("sections"):
+                # Schema validation: reject malformed AI output early instead
+                # of silently falling through to static templates.
+                if _validate_lyric_sections(parsed):
                     chosen = {
                         "title": parsed.get("title", f"បទចម្រៀងខ្មែរ: {genre.capitalize()}"),
                         "genre_name": f"{genre.capitalize()} (Gemini Cloud AI)",
                         "tempo_bpm": bpm or 85,
                         "sections": parsed["sections"],
-                        "model_used": "Gemini 3.1 Flash (Google Cloud AI)"
+                        "model_used": "Gemini Flash (Google Cloud AI)"
                     }
+                else:
+                    log.warning("[Gemini Lyric Composer] Returned JSON failed schema validation, using preset")
         except Exception as gem_e:
             print(f"[Gemini Lyric Composer] Notice: {gem_e}")
 
@@ -692,20 +905,24 @@ class LocalLLMEngine:
             }
 
         # 1. ⚡ Gemini Cloud AI Fast-Path for chat & linguistic analysis (1-2s)
+        #    Conversation context is prepended so users can iteratively refine.
         try:
+            context = self._build_context_prefix()
             gem_prompt = (
-                "You are an intelligent music, lyrics, and cultural AI assistant for VIDA Studio. "
+                f"{context}"
                 "Provide a clear, helpful, expert answer in the language requested (Khmer or English). "
                 "Keep formatting clean with bullet points and bold headers.\n\n"
                 f"User request: {text}"
             )
+            self._remember("user", text)
             gem_res = call_gemini_api(gem_prompt, json_mode=False, timeout=10)
             if gem_res:
+                self._remember("assistant", gem_res)
                 return {
                     "status": "success",
                     "analysis": gem_res,
                     "text": text,
-                    "model_used": "Gemini 3.1 Flash (Google Cloud AI)"
+                    "model_used": "Gemini Flash (Google Cloud AI)"
                 }
         except Exception as gem_e:
             print(f"[Gemini Chat] Notice: {gem_e}. Falling back to local analyzer.")
@@ -790,6 +1007,14 @@ class LocalLLMEngine:
             return "Vietnamese"
         return "English"
 
+    # A real 12-line Vietnamese -> Khmer batch measures 43.8s for one model attempt with the full
+    # adaptation brief in the prompt. So: 60s per attempt, and a hard ceiling for the whole call —
+    # the fallback list is six models long and without a ceiling one request can silently burn
+    # six attempts and outrun the browser's own timeout.
+    KHMER_ATTEMPT_TIMEOUT_S = 60
+    KHMER_DRAFT_TIMEOUT_S = 150
+    KHMER_POLISH_TIMEOUT_S = 150
+
     @staticmethod
     def _build_khmer_translation_prompt(
         source_lang: str,
@@ -797,16 +1022,29 @@ class LocalLLMEngine:
         song_title: str = "",
         artist: str = ""
     ) -> str:
-        """Builds the culturally-adapted Khmer lyric translation prompt.
+        """Builds the culturally-adapted Khmer lyric prompt.
 
-        Implements the studio adaptation brief: never word-for-word, natural everyday Khmer,
-        emotion and meaning preserved, rhythm matched, Khmer script only in the output. The
-        output contract stays JSON (id/text) so cue order and timings are never disturbed.
+        The brief the model has to follow is a meaning-first song adaptation, not a
+        translation: read the feeling, drop the source sentence shape, say it the way Khmer
+        lyrics are actually written, then back-check it aloud. Every rule and example pair
+        below is asserted by tests/test_khmer_translation_prompt.py, because a single word-for-word
+        line is what makes native listeners say "this sounds like machine translation".
         """
         return (
-            "You are an expert Khmer song lyric translator and cultural adapter. "
-            "Your task is to translate song lyrics from foreign languages into natural, "
-            "beautiful Khmer (ភាសាខ្មែរ).\n\n"
+            "You are an award-winning Khmer song lyricist. You are NOT translating words, you are "
+            "re-singing a foreign song in Khmer (ភាសាខ្មែរ) so that Khmer listeners feel it "
+            "immediately and can sing along.\n\n"
+
+            "## HOW TO WORK — MEANING FIRST, NEVER LETTER FOR LETTER:\n"
+            "STEP 1 — GRASP THE MEANING: for each line, quietly answer \"what does the singer really "
+            "say and feel here?\" before choosing a single Khmer word.\n"
+            "STEP 2 — DROP THE SOURCE SENTENCE: forget the {src} word order and grammar. Never carry "
+            "the shape of the foreign sentence into Khmer.\n"
+            "STEP 3 — SAY IT IN KHMER: write the line the way a Khmer lyricist would write it — "
+            "everyday words, natural Khmer word order, Khmer images and idioms.\n"
+            "STEP 4 — BACK-CHECK ALOUD: read your line out loud. If a native speaker would have to "
+            "pause and re-read it, it is wrong: rewrite it until it lands in one hearing, while "
+            "still carrying the STEP 1 meaning.\n\n"
 
             "## CRITICAL RULES:\n\n"
             "1. **DO NOT translate word-by-word (កុំបកប្រែពាក្យម៉ាត់ៗ)**\n"
@@ -818,18 +1056,33 @@ class LocalLLMEngine:
             "   - A Khmer listener must understand it immediately, without confusion\n\n"
             "3. **Preserve the emotion and meaning (រក្សាអារម្មណ៍ និងអត្ថន័យ)**\n"
             "   - Keep the original song's emotional tone (sad, happy, romantic, energetic)\n"
-            "   - The core message must remain the same\n"
-            "   - Adapt cultural references to Khmer equivalents when needed\n\n"
+            "   - The core message must remain the same — adapt the words, not the feeling\n"
+            "   - Adapt cultural references to Khmer equivalents when needed\n"
+            "   - Never add an idea that is not in the original line, never drop its idea away\n\n"
             "4. **Use everyday Khmer vocabulary (ប្រើពាក្យខ្មែរដែលប្រើប្រចាំថ្ងៃ)**\n"
             "   - Avoid overly formal or literary Khmer that sounds unnatural\n"
             "   - Avoid Pali/Sanskrit heavy words unless they are commonly used\n"
             "   - Use words that ordinary Khmer speakers would easily understand\n\n"
             "5. **Match the rhythm and flow (ឱ្យត្រូវនឹងចង្វាក់បទ)**\n"
-            "   - Keep a similar syllable count per line where possible\n"
+            "   - Keep the line close to the length of the source line so it still fits the melody\n"
+            "   - Stay short enough to sing in one breath: a Khmer line above roughly 24 sung units "
+            "(base consonants) is longer than any real Khmer lyric line and will not fit the cue\n"
+            "   - Prefer two short Khmer clauses over one long stacked noun phrase — a sung line "
+            "has to fit in one breath\n"
             "   - The Khmer text must flow smoothly when read aloud or sung along\n\n"
             "6. **Khmer script only in the output (សរសេរអក្សរខ្មែរប៉ុណ្ណោះ)**\n"
             "   - Never leave Thai, Lao, Myanmar, Vietnamese or Chinese characters inside a translated line\n"
+            "   - Never romanise or transliterate a source word into Khmer letters just because "
+            "no obvious word comes to mind — that is word-for-word thinking\n"
             "   - ❌ 'ปล่อយវាទៅ' (Thai characters slipped in) → ✅ 'លែងវាទៅ'\n\n"
+            "7. **Pick one voice and keep it (រក្សាបង/អូនឱ្យស៊ីគ្នាទាំងបទ)**\n"
+            "   - Choose the pronoun pair that fits the song (បង/អូន for romance, មិត្ត/អ្នក for "
+            "friendship, ខ្ញុំ/អ្នក only when the song is truly neutral) and use it consistently "
+            "in every line of this song\n"
+            "   - Never switch register mid-song, and never mix អ្នក with អូន for the same person\n\n"
+            "8. **One line in, one line out (មួយបន្ទាត់ ចូល មួយបន្ទាត់ ចេញ)**\n"
+            "   - Keep every line independent: never merge two lines, never split one line into two\n"
+            "   - Chorus repeats, hooks and 'oh/la la' sounds stay as repeats, they are not dropped\n\n"
 
             "## EXAMPLES (word-for-word ❌ versus natural Khmer ✅):\n\n"
             "English → Khmer\n"
@@ -839,6 +1092,8 @@ class LocalLLMEngine:
             "    ❌ 'រាល់ដង្ហើមដែលអ្នកដក ខ្ញុំនឹងមើលអ្នក'   ✅ 'រាល់ដង្ហើមរបស់អូន បងនៅតែមើលថែ'\n"
             "  'Let it go, let it go, can't hold it back anymore'\n"
             "    ❌ 'ទុកវាទៅ ទុកវាទៅ មិនអាចកាន់វាត្រឡប់ទៀតទេ'   ✅ 'លែងវាទៅ លែងខ្វល់ទៀតហើយ លែងអាចស៊ូទ្រាំទៀតហើយ'\n"
+            "  'Oh my dear, this love is as sweet as orange juice'\n"
+            "    ❌ 'អូស្ដី ក្ដីស្រឡាញ់នេះផ្អែមដូចទឹកផ្លុំក្រូច'   ✅ 'អូនអើយ ស្នេហ៍យើងផ្អែមល្អណាស់'\n"
             "Chinese → Khmer\n"
             "  '月亮代表我的心'\n"
             "    ❌ 'ព្រះច័ន្ទតំណាងបេះដូងរបស់ខ្ញុំ'   ✅ 'ព្រះច័ន្ទជាសាក្សីស្នេហ៍បង'\n"
@@ -847,7 +1102,14 @@ class LocalLLMEngine:
             "    ❌ 'ស្រឡាញ់អ្នក'   ✅ 'បងស្រឡាញ់អូន'\n"
             "Thai → Khmer\n"
             "  'คิดถึงเธอทุกวัน'\n"
-            "    ❌ 'គិតដល់អ្នករាល់ថ្ងៃ'   ✅ 'នឹកអូនរាល់ថ្ងៃមិនធ្លាប់ភ្លេច'\n\n"
+            "    ❌ 'គិតដល់អ្នករាល់ថ្ងៃ'   ✅ 'នឹកអូនរាល់ថ្ងៃមិនធ្លាប់ភ្លេច'\n"
+            "Vietnamese → Khmer\n"
+            "  'Yêu em thầm lặng'\n"
+            "    ❌ 'ស្រឡាញ់អូនដោយស្ងាត់ៗ'   ✅ 'បងស្រឡាញ់អូនមិនហ៊ានប្រាប់'\n\n"
+            "Those pairs teach the STYLE, not the answer. Never copy an example line into the song — "
+            "write what THIS song actually says, in that style.\n"
+            "If the Khmer you produce is letter-for-letter identical to one of the ✅ examples, "
+            "you have not adapted the line, you have recycled it: rewrite it from the meaning.\n\n"
 
             "## SONG CONTEXT:\n"
             f"- Source language: {source_lang}\n"
@@ -857,23 +1119,311 @@ class LocalLLMEngine:
             "## OUTPUT FORMAT:\n"
             "Return ONLY a valid JSON array with one object per input line, in the same order:\n"
             "  [{\"id\": <original id>, \"text\": \"<Khmer line>\"}, ...]\n"
-            "Each original line must get exactly one Khmer line: never merge lines, never skip lines, "
-            "never transliterate the source, and add no explanations, notes or markdown.\n\n"
+            "Each original line must get exactly one Khmer line: translate the IDEA of each line, "
+            "not its letters, never transliterate the source, and add no explanations, notes or markdown.\n\n"
             f"## ORIGINAL LYRICS (line by line):\n{payload_str}"
+        ).replace("{src}", source_lang)
+
+    # ---- Naturalness guard -------------------------------------------------------
+    # "Meaning-first, never letter-for-letter" is only useful if the studio can tell
+    # whether a Khmer line actually landed. These cheap deterministic checks grade every
+    # Khmer line and decide which drafts deserve a second, focused rewrite pass.
+
+    _KHMER_LETTER_RE = re.compile(r'[\u1780-\u17FF]')
+    _FOREIGN_LETTER_RE = re.compile(
+        r'[A-Za-z\u0E00-\u0EFF\u1000-\u109F\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF]'
+    )
+
+    # A Khmer line is graded in consonant units, the same proxy the timing engine uses for
+    # word timestamps. Measured over the studio's real .km.srt / .srt corpus (183 Khmer lines):
+    # median 17, p90 21, p97 22, longest 25 — so anything past 24 units is beyond what this
+    # library of native lyrics ever asks a singer to hold, whatever the source length was.
+    KHMER_LINE_UNIT_CAP = 24
+
+    @staticmethod
+    def _sung_syllables(text: str) -> int:
+        """Counts sung units in a lyric line using the timing engine's convention.
+
+        Khmer base consonants that do not hang below a coeng, one unit per CJK character, one
+        per Latin vowel group. It is a proxy, not linguistics: a final consonant adds a unit,
+        which is why the corpus above is what sets the caps, not a syllable theory.
+        """
+        if not text:
+            return 0
+        khmer = re.findall(r'(?<!\u17D2)[\u1780-\u17B3]', text)
+        if khmer:
+            return len(khmer)
+        cjk = re.findall(r'[\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF]', text)
+        if cjk:
+            return len(cjk)
+        groups = re.findall(r'[aeiouyàáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]+',
+                            text, re.IGNORECASE)
+        return len(groups)
+
+    # Machine-translation tells that survive even when the line is clean Khmer script of sane
+    # length: a possessive chain stacked the way English writes it, and a handful of calques the
+    # model keeps producing for songs it has never heard sung in Khmer.
+    _KHMER_CALQUES = (
+        'បញ្ឈប់ការ',      # "stop the act of …" — word-for-word 'can't stop'
+        'តំណាង',          # "represents" — the 月亮代表我的心 calque
+        'ទឹកក្រូច',       # literal "orange juice" in a love line
+        'ការស្រឡាញ់អ្នក',  # "the loving of you"
+        'នូវពាក្យ',        # "the words of …" calque
+    )
+
+    def _khmer_line_issues(self, original: str, khmer: str) -> List[str]:
+        """Why this Khmer line probably does not sound native yet (empty list means it does)."""
+        if not str(khmer).strip():
+            return ["empty"]
+        text = str(khmer)
+        src_syl = self._sung_syllables(original)
+        km_syl = self._sung_syllables(text)
+        issues: List[str] = []
+        if not self._KHMER_LETTER_RE.search(text):
+            issues.append("no_khmer")
+        if self._FOREIGN_LETTER_RE.search(text):
+            issues.append("foreign_letters")
+        if text.strip() == str(original).strip():
+            issues.append("unchanged")
+        if src_syl >= 3 and km_syl <= 1:
+            issues.append("meaning_dropped")
+        # Cross-script unit counts are not comparable (Khmer writes a final consonant as its own
+        # unit), so this only fires for lines that are un-singable on their own terms.
+        if km_syl > max(self.KHMER_LINE_UNIT_CAP, int(src_syl * 3.2)):
+            issues.append("too_long_to_sing")
+        # '…នៃ…របស់…' is how a machine writes English possessives in Khmer letters; a Khmer
+        # lyricist sings "បេះដូងបង", not "បេះដូងនៃជីវិតរបស់ខ្ញុំ".
+        if text.count('នៃ') + text.count('របស់') >= 2:
+            issues.append("stiff_possessive_chain")
+        if any(cal in text for cal in self._KHMER_CALQUES):
+            issues.append("literal_calque")
+        return issues
+
+    @staticmethod
+    def _build_khmer_polish_prompt(
+        source_lang: str,
+        payload_str: str,
+        song_title: str = "",
+        artist: str = ""
+    ) -> str:
+        """Shared rewrite brief for the second pass.
+
+        Used both by the automatic polish inside translation and by the manual
+        "Fix Khmer with AI" button, so the two can never drift apart.
+        """
+        return (
+            "You are an award-winning Khmer song lyricist doing the final rewrite of translated "
+            "lyrics. The Khmer drafts below were produced by machine translation and are too "
+            "literal, too long, or leak foreign letters.\n"
+            f"The original song is in {source_lang}. Song title: {song_title or 'not provided'}. "
+            f"Artist: {artist or 'not provided'}.\n"
+            "For each line: the 'original' text carries the MEANING you must keep; the 'khmer' text "
+            "is only a draft, so feel free to throw its wording away. 'issue' says what the studio's "
+            "naturalness grader found — fix exactly that:\n"
+            "  • no_khmer / unchanged — the line is still in the source language: write Khmer.\n"
+            "  • foreign_letters — foreign or romanised letters are stuck inside: say it in Khmer words.\n"
+            "  • literal_calque — a word-for-word calque (បញ្ឈប់ការ, តំណាង, ទឹកក្រូច…): replace the "
+            "calqued phrase with what a Khmer singer would actually say.\n"
+            "  • stiff_possessive_chain — '…នៃ…របស់…' is English grammar in Khmer letters: rebuild the "
+            "possessive the Khmer way (បេះដូងបង, not បេះដូងនៃជីវិតរបស់ខ្ញុំ).\n"
+            "  • too_long_to_sing — the line cannot fit the cue: cut it short, keep the feeling.\n"
+            "  • meaning_dropped / empty — too little was said: give the line its full meaning.\n\n"
+            "REWRITE RULES (the same brief as the first pass):\n"
+            "1. Meaning first, never letter-for-letter (បកប្រែតាមអត្ថន័យ មិនតាមអក្សរ). "
+            "Must sound like natural, native Khmer (ត្រូវតែស្ដាប់ជាខ្មែរធម្មជាតិ).\n"
+            "   - Fix unnatural metaphors, literal food names, or stiff grammar.\n"
+            "   - Example: ❌ 'ប្រណាំងទូកហើយញ៉ាំបាយជាមួយគ្នា អយស្ទ័រនិងទឹកអំពិល' -> ✅ 'ប្រណាំងទូកហើយញ៉ាំត្រីកែវជ្រលក់ទឹកត្រីអំពិល'\n"
+            "   - Example: ❌ 'ឋានសួគ៌គឺអង្គុយក្បែរមាត់ស្រះជាមួយមនុស្សជាទីស្រឡាញ់' -> ✅ 'ទោះនៅបាតអណ្ដូងក៏ជាឋានសួគ៌ឱ្យតែបាននៅក្បែរអូន'\n"
+            "2. Everyday Khmer words a listener understands on first hearing; no heavy "
+            "Pali/Sanskrit stacks, no formal register in a love song.\n"
+            "3. Singable length: stay close to the length of the original line and under roughly 24 "
+            "sung units (Khmer base consonants) — longer than that cannot fit the cue. "
+            "Two short clauses beat one long phrase.\n"
+            "4. Preserve the emotion and meaning of the original line — never invent new content.\n"
+            "5. Use one consistent pronoun pair (បង/អូន for romance) across every line; never mix "
+            "អ្នក with អូន for the same person.\n"
+            "6. Output Khmer script only (អក្សរខ្មែរ). No foreign letters and no romanization.\n"
+            "7. STRICT 1:1 LINE INTEGRITY: exactly 1 output line per input line, same id and order, "
+            "never merge or split lines.\n"
+            "8. Return ONLY a valid JSON array of objects with schema:\n"
+            '[{"id": 0, "text": "..."}]\n\n'
+            f"Lines to rewrite:\n{payload_str}"
         )
+
+    @staticmethod
+    def _parse_id_text(res_str: str, require_id: bool = False) -> Dict[str, str]:
+        """Reads an id/text JSON reply as tolerantly as the models actually deliver it.
+
+        Gemini occasionally wraps the array in a ```json fence, in a sentence of prose, or in an
+        object such as {"translations": [...]}, and names the field 'translation' instead of
+        'text'. Every one of those shapes used to raise inside json.loads and cost the whole
+        button press, so the shape is repaired here instead of failing the request.
+
+        require_id is used by chunked rewrite passes: without an explicit id a line could be
+        written back onto the wrong neighbour, so those replies are dropped rather than guessed.
+        """
+        raw = str(res_str or "").strip()
+        if not raw:
+            return {}
+
+        tries = [raw]
+        lb, rb = raw.find("["), raw.rfind("]")
+        if 0 <= lb < rb:
+            tries.append(raw[lb:rb + 1])
+        lc, rc = raw.find("{"), raw.rfind("}")
+        if 0 <= lc < rc:
+            tries.append(raw[lc:rc + 1])
+
+        data = None
+        for candidate in tries:
+            try:
+                data = json.loads(candidate)
+                break
+            except Exception:
+                continue
+        if data is None:
+            return {}
+
+        text_keys = ("text", "translation", "translated_text", "khmer", "value", "output")
+        if isinstance(data, dict):
+            items = next((v for v in data.values() if isinstance(v, list)), None)
+            items = items if items is not None else [data]
+        elif isinstance(data, list):
+            items = data
+        else:
+            return {}
+
+        parsed: Dict[str, str] = {}
+        for i, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            text = ""
+            for key in text_keys:
+                value = str(item.get(key) or "").strip()
+                if value:
+                    text = value
+                    break
+            if not text:
+                continue
+            item_id = item.get("id", item.get("line_id"))
+            if item_id is None:
+                if require_id:
+                    continue
+                item_id = i
+            parsed[str(item_id)] = text
+        return parsed
+
+    def _polish_khmer_pairs(
+        self,
+        pairs: List[Dict[str, Any]],
+        source_lang: str,
+        song_title: str = "",
+        artist: str = ""
+    ) -> Dict[str, str]:
+        """Runs the rewrite brief over {id, original, khmer, issue} objects, in chunks."""
+        fixed: Dict[str, str] = {}
+        CHUNK = 30
+        for start in range(0, len(pairs), CHUNK):
+            chunk = pairs[start:start + CHUNK]
+            payload_str = json.dumps(chunk, ensure_ascii=False)
+            prompt = self._build_khmer_polish_prompt(
+                source_lang, payload_str, song_title=song_title, artist=artist
+            )
+            try:
+                res_str = call_gemini_api(
+                    prompt, json_mode=True,
+                    timeout=self.KHMER_ATTEMPT_TIMEOUT_S,
+                    total_timeout=self.KHMER_POLISH_TIMEOUT_S
+                )
+                if not res_str:
+                    continue
+                fixed.update(self._parse_id_text(res_str))
+            except Exception as e:
+                print(f"[Khmer Polish] Gemini call notice: {e}")
+        return fixed
+
+    def _grade_and_polish_khmer(
+        self,
+        result_data: List[Dict[str, Any]],
+        source_texts: List[str],
+        source_lang: str,
+        song_title: str = "",
+        artist: str = ""
+    ) -> List[Dict[str, Any]]:
+        """Grades every Khmer line, then rewrites only the ones that fail the ear test.
+
+        A rewrite replaces the draft only when it scores strictly fewer problems, so the second
+        pass can never make a line worse. Each line carries 'naturalness' for the API and UI.
+        """
+        flagged: List[Dict[str, Any]] = []
+        pos_by_id: Dict[str, int] = {}
+        for i, line in enumerate(result_data):
+            original = str(source_texts[i]) if i < len(source_texts) else ""
+            draft = str(line.get("text", ""))
+            issues = self._khmer_line_issues(original, draft)
+            line["naturalness"] = {"status": "still_literal" if issues else "natural", "issues": issues}
+            if issues:
+                line_id = str(line.get("line_id", i))
+                flagged.append({
+                    "id": line_id,
+                    "original": original.strip(),
+                    "khmer": draft.strip(),
+                    "issue": ", ".join(issues)
+                })
+                pos_by_id[line_id] = i
+
+        if flagged:
+            fixed = self._polish_khmer_pairs(flagged, source_lang, song_title=song_title, artist=artist)
+            for item in flagged:
+                candidate = fixed.get(str(item.get("id")), "")
+                pos = pos_by_id.get(str(item.get("id")))
+                if not candidate or pos is None or pos >= len(result_data):
+                    continue
+                try:
+                    from backend.lyric_engine import normalize_khmer_orthography
+                    candidate = normalize_khmer_orthography(candidate)
+                except Exception:
+                    pass
+                remaining = self._khmer_line_issues(item["original"], candidate)
+                line = result_data[pos]
+                draft_issues = [x for x in item["issue"].split(", ") if x]
+                if len(remaining) >= len(draft_issues):
+                    continue  # the rewrite did not help — keep the better draft
+                line["text"] = candidate
+                line["words"] = []
+                line["naturalness"] = {
+                    "status": "polished" if not remaining else "still_literal",
+                    "issues": remaining
+                }
+        return result_data
+
+    def khmer_naturalness_summary(self, lines: List[Dict[str, Any]]) -> Dict[str, int]:
+        """Counts how many Khmer lines read as native, were rewritten, or still need a human."""
+        natural = polished = literal = 0
+        for l in lines:
+            status = str((l.get("naturalness") or {}).get("status") or "")
+            if status == "natural":
+                natural += 1
+            elif status == "polished":
+                polished += 1
+            elif status == "still_literal":
+                literal += 1
+        return {"natural": natural, "polished": polished, "still_literal": literal}
 
     def translate_lyrics_data(
         self,
         lyrics_data: List[Dict[str, Any]],
         target_lang: str = "Khmer",
         song_title: str = "",
-        artist: str = ""
+        artist: str = "",
+        auto_polish: bool = True
     ) -> List[Dict[str, Any]]:
         """Translates an array of lyrics_data objects to the target language using Gemini.
 
-        When the target is Khmer, uses the culturally-adapted prompt that enforces natural
-        poetic Khmer instead of word-for-word output. Song title and artist are passed as
-        context because they steer pronoun choice (បង/អូន) and register.
+        When the target is Khmer the culturally-adapted brief is used and, by default, the
+        result is graded for naturalness: any line that still reads word-for-word, keeps foreign
+        letters or is too long to sing gets one focused rewrite before it is returned. auto_polish
+        can be turned off to save a request, and song title / artist steer pronoun choice (បង/អូន).
         """
         if not lyrics_data:
             return lyrics_data
@@ -910,29 +1460,55 @@ class LocalLLMEngine:
                 f"Input:\n{payload_str}"
             )
 
-        try:
-            res_str = call_gemini_api(prompt, json_mode=True, timeout=30)
+        # Gemini sometimes echoes the input back instead of translating it. A single-line
+        # Khmer → English request reproduced exactly that in testing: attempt 1 returned the
+        # source unchanged, attempt 2 returned "I love you, but I'm too afraid to say." One
+        # bounded retry turns that into a working translation instead of a failed button press.
+        src_by_id = {str(s["id"]): str(s["text"]).strip() for s in simplified_lines}
+        trans_map: Dict[str, str] = {}
+        for attempt in (1, 2):
+            try:
+                res_str = call_gemini_api(
+                    prompt, json_mode=True,
+                    timeout=self.KHMER_ATTEMPT_TIMEOUT_S if is_khmer_target else 30,
+                    total_timeout=self.KHMER_DRAFT_TIMEOUT_S if is_khmer_target else 60
+                )
+            except Exception as e:
+                print(f"[Lyric Translator] Gemini request failed: {e}")
+                continue
             if not res_str:
-                return lyrics_data
+                continue
+            parsed = self._parse_id_text(res_str, require_id=True)
+            if not parsed:
+                if attempt == 1:
+                    print("[Lyric Translator] the reply was not usable id/text JSON, retrying once")
+                continue
+            trans_map = parsed
+            if any(str(v).strip() and str(v).strip() != src_by_id.get(k, "\x00")
+                   for k, v in trans_map.items()):
+                break
+            if attempt == 1:
+                print("[Lyric Translator] the model echoed the source lines, retrying once")
 
-            translated_lines = json.loads(res_str)
-            # Create a lookup map by id
-            trans_map = {str(item.get("id")): item.get("text", "") for item in translated_lines if "id" in item}
-
-            # Map back to original structure
-            result_data = []
-            for i, l in enumerate(lyrics_data):
-                new_l = dict(l)
-                line_id = str(l.get("line_id", i))
-                if line_id in trans_map and trans_map[line_id].strip():
-                    new_l["text"] = trans_map[line_id]
-                    # Clear word-level timings because they are no longer valid for translated text
-                    new_l["words"] = []
-                result_data.append(new_l)
-            return result_data
-        except Exception as e:
-            print(f"[Lyric Translator] Translation failed: {e}")
-            return lyrics_data
+        # Map back to original structure. This runs even when a request or the grading pass below
+        # fails, because throwing away a usable draft is worse than returning an ungraded one.
+        result_data = []
+        for i, l in enumerate(lyrics_data):
+            new_l = dict(l)
+            line_id = str(l.get("line_id", i))
+            if line_id in trans_map and trans_map[line_id].strip():
+                new_l["text"] = trans_map[line_id]
+                # Clear word-level timings because they are no longer valid for translated text
+                new_l["words"] = []
+            result_data.append(new_l)
+        if is_khmer_target and auto_polish and trans_map:
+            try:
+                result_data = self._grade_and_polish_khmer(
+                    result_data, texts, source_lang, song_title=song_title, artist=artist
+                )
+            except Exception as e:
+                print(f"[Khmer Naturalness] grading pass failed, keeping the ungraded draft: {e}")
+        return result_data
 
     def refine_khmer_lyrics(
         self,
@@ -946,6 +1522,9 @@ class LocalLLMEngine:
         Rewrites translated Khmer lyrics into natural, singable, native Khmer like a song
         originally composed in Khmer, fixing literal/machine translations, unnatural phrasing,
         and preserving exact 1:1 line ordering and timestamps.
+
+        Shares one rewrite brief with the automatic polish inside translate_lyrics_data, and
+        grades both draft and rewrite so a "fix" can never replace a good line with a worse one.
         """
         if not pairs:
             return pairs
@@ -955,63 +1534,64 @@ class LocalLLMEngine:
             originals = [str(p.get("original", "")).strip() for p in pairs if p.get("original")]
             source_lang = self._detect_source_language(originals) if originals else "Vietnamese"
 
-        import json
-        simplified = [
-            {
+        simplified = []
+        for i, p in enumerate(pairs):
+            original = str(p.get("original", "")).strip()
+            khmer = str(p.get("khmer", "")).strip()
+            issues = self._khmer_line_issues(original, khmer) if khmer else ["empty"]
+            simplified.append({
                 "id": p.get("id", i),
-                "original": str(p.get("original", "")).strip(),
-                "khmer": str(p.get("khmer", "")).strip()
-            }
-            for i, p in enumerate(pairs)
-        ]
-        payload_str = json.dumps(simplified, ensure_ascii=False, indent=2)
+                "original": original,
+                "khmer": khmer,
+                "issue": ", ".join(issues)
+            })
 
-        prompt = (
-            "You are an expert Khmer song lyricist and cultural translator.\n"
-            "TASK: AI-Powered Native Khmer Refinement of translated song lyrics.\n"
-            "Rewrite each Khmer translation line so it sounds completely NATURAL, BEAUTIFUL, and NATIVE to Khmer speakers, "
-            "like a song originally composed in Khmer.\n"
-            f"The original song lyrics are in {source_lang}. Song title: {song_title or 'not provided'}. Artist: {artist or 'not provided'}.\n"
-            "Current Khmer translations are often too literal, stiff, or contain mistranslations from machine translation.\n\n"
-            "CRITICAL RULES:\n"
-            "1. Must sound like natural, native Khmer (ត្រូវតែស្ដាប់ជាខ្មែរធម្មជាតិ). Never translate word-by-word.\n"
-            "   - Fix unnatural metaphors, literal food names, or stiff grammar.\n"
-            "   - Example: ❌ 'ប្រណាំងទូកហើយញ៉ាំបាយជាមួយគ្នា អយស្ទ័រនិងទឹកអំពិល' -> ✅ 'ប្រណាំងទូកហើយញ៉ាំត្រីកែវជ្រលក់ទឹកត្រីអំពិល'\n"
-            "   - Example: ❌ 'ឋានសួគ៌គឺអង្គុយក្បែរមាត់ស្រះជាមួយមនុស្សជាទីស្រឡាញ់' -> ✅ 'ទោះនៅបាតអណ្ដូងក៏ជាឋានសួគ៌ឱ្យតែបាននៅក្បែរអូន'\n"
-            "2. Preserve original romantic emotion, rhythm, and singability.\n"
-            "   - Use authentic romantic pronouns (e.g. បង/អូន, ខ្ញុំ/អ្នក) matching the song mood.\n"
-            "3. Output Khmer script only (អក្សរខ្មែរ). No foreign letters or romanization.\n"
-            "4. STRICT 1:1 LINE INTEGRITY: Exactly 1 output line per input line, preserving original id and order.\n"
-            "5. Return ONLY a valid JSON array of objects with schema:\n"
-            '[{"id": 0, "text": "..."}]\n\n'
-            f"Lines to refine:\n{payload_str}"
+        fixed = self._polish_khmer_pairs(
+            simplified, source_lang, song_title=song_title, artist=artist
         )
 
         try:
-            res_str = call_gemini_api(prompt, json_mode=True, timeout=35)
-            if res_str:
-                refined_list = json.loads(res_str)
-                refined_map = {str(item.get("id")): str(item.get("text", "")).strip() for item in refined_list if "id" in item and item.get("text")}
-                out = []
-                for i, p in enumerate(pairs):
-                    copied = dict(p)
-                    pid = str(p.get("id", i))
-                    if pid in refined_map and refined_map[pid]:
-                        copied["text"] = refined_map[pid]
-                    else:
-                        copied["text"] = p.get("khmer") or p.get("original") or ""
-                    out.append(copied)
-                return out
-        except Exception as e:
-            print(f"[Khmer Refinement] Gemini call notice: {e}")
+            from backend.lyric_engine import normalize_khmer_orthography
+        except Exception:
+            normalize_khmer_orthography = None
 
-        # Offline fallback: apply orthography normalization
-        from backend.lyric_engine import normalize_khmer_orthography
         out = []
-        for i, p in enumerate(pairs):
-            copied = dict(p)
-            khmer_txt = p.get("khmer") or p.get("original") or ""
-            copied["text"] = normalize_khmer_orthography(khmer_txt) if khmer_txt else ""
+        for i, item in enumerate(simplified):
+            copied = dict(pairs[i]) if i < len(pairs) else {}
+            pid = str(item.get("id"))
+            candidate = str(fixed.get(pid, "")).strip()
+            draft = item["khmer"]
+            draft_issues = [x for x in item["issue"].split(", ") if x]
+            if candidate:
+                if normalize_khmer_orthography:
+                    try:
+                        candidate = normalize_khmer_orthography(candidate)
+                    except Exception:
+                        pass
+                new_issues = self._khmer_line_issues(item["original"], candidate)
+                # Accept the rewrite unless it scores strictly worse than what we already had.
+                if len(new_issues) <= len(draft_issues):
+                    copied["text"] = candidate
+                    copied["naturalness"] = {
+                        "status": "polished" if not new_issues else "still_literal",
+                        "issues": new_issues
+                    }
+                else:
+                    copied["text"] = draft or item["original"]
+                    copied["naturalness"] = {"status": "still_literal", "issues": draft_issues}
+            else:
+                # No rewrite came back: keep the draft, normalising the orthography if we can.
+                fallback = draft or item["original"]
+                if normalize_khmer_orthography and fallback:
+                    try:
+                        fallback = normalize_khmer_orthography(fallback)
+                    except Exception:
+                        pass
+                copied["text"] = fallback
+                copied["naturalness"] = {
+                    "status": "natural" if not draft_issues else "still_literal",
+                    "issues": draft_issues
+                }
             out.append(copied)
         return out
 
