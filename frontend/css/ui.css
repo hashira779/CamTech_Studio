@@ -104,6 +104,9 @@
   user-select: none;
 }
 .ui-sec > summary::-webkit-details-marker { display: none; }
+/* status chips wrap under the title instead of running off a narrow inspector */
+.ui-sec > summary { flex-wrap: wrap; row-gap: 4px; }
+.ui-sec > summary > .ui-chip { flex: 0 0 auto; }
 .ui-sec > summary:hover { background: rgba(255, 255, 255, 0.05); }
 .ui-sec > summary::before {
   content: "▸";
@@ -474,8 +477,9 @@
 /* ---------- teleprompter list ---------- */
 .ui-tp {
   flex: 1 1 auto;
-  min-height: 180px;
-  max-height: 46vh;
+  /* the lyric list is the first thing in the Lyrics tab: show a real page of lines */
+  min-height: min(360px, 45vh);
+  max-height: 62vh;
   overflow-y: auto;
   resize: vertical;
   display: flex;
@@ -747,6 +751,36 @@
   box-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.9);
 }
 .ui-modal-card--sm { max-width: 480px; }
+.ui-modal-card--align { max-width: 600px; }
+/* which song the align dialog will write to, and how many lines it replaces */
+.align-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-r-md);
+  background: rgba(255, 255, 255, 0.02);
+  min-width: 0;
+}
+.align-target-lab {
+  font-size: var(--ui-fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  flex: 0 0 auto;
+}
+.align-target-song {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text-main);
+  font-family: 'Kantumruy Pro', 'Battambang', var(--font-ui, sans-serif);
+}
+.align-target .ui-chip { flex: 0 0 auto; }
 .ui-modal-card--xs { max-width: 340px; padding: 18px; align-items: stretch; }
 .ui-modal-hd {
   display: flex;
@@ -857,12 +891,14 @@ body.daw-theme { grid-template-columns: minmax(0, 1fr); }
    controls on the right never do (a squeezed select reads as broken). */
 .daw-header { padding: 0 12px; gap: 8px; flex-wrap: nowrap; }
 .header-left, .header-right { gap: 8px; min-width: 0; }
-.header-left { flex: 0 1 auto; flex-wrap: nowrap; }
+/* The menus never shrink (a squeezed menu bar spills under the title); the centre
+   column takes whatever is left and the title ellipsizes inside it. */
+.header-left { flex: 0 0 auto; flex-wrap: nowrap; }
 .header-right { flex-wrap: nowrap; flex: 0 0 auto; }
-.header-center { min-width: 0; flex: 0 1 auto; }
+.header-center { min-width: 0; flex: 1 1 0; overflow: hidden; }
 .project-title-capsule { min-width: 0; max-width: 100%; }
 .project-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.menu-items { flex-wrap: nowrap; min-width: 0; }
+.menu-items { flex: 0 0 auto; flex-wrap: nowrap; }
 .nav-menu-item { flex: 0 0 auto; }
 .menu-trigger-btn { white-space: nowrap; padding: 4px 6px; }
 .panel-toggle-btn { white-space: nowrap; flex: 0 0 auto; }
@@ -1212,11 +1248,10 @@ body.daw-theme { grid-template-columns: minmax(0, 1fr); }
 .khmer-card:hover { transform: none; box-shadow: 0 10px 22px -8px rgba(0, 0, 0, 0.6); }
 
 /* ---------- responsive: fit the window instead of hiding the tools ---------- */
-/* 1240px and below: every control still has to live in one fixed 52px row. The
-   menu bar and the export button may never shrink (they would spill over the
-   project capsule), so the two purely decorative chips step out first and the
-   header tightens its own rhythm. */
-@media (max-width: 1240px) {
+/* 1650px and below: every control still has to live in one fixed 52px row. The
+   full header needs ~1650px, so below that the two purely decorative chips step
+   out first and the header tightens its own rhythm; the title takes what is left. */
+@media (max-width: 1650px) {
   .daw-header { padding: 0 8px; gap: 6px; }
   .header-left, .header-right { gap: 6px; }
   .header-left { flex: 0 0 auto; }

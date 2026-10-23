@@ -153,8 +153,8 @@
         </div>
       </div>
 
-      <button id="btn-toggle-right-panel" class="panel-toggle-btn active" title="Toggle Inspector Panel (Wide View)">
-        <span class="ui-hide-lg">Inspector</span>
+      <button id="btn-toggle-right-panel" class="panel-toggle-btn active" title="Toggle Inspector Panel (Wide View)" aria-label="Toggle Inspector panel">
+        <span aria-hidden="true">⊟</span> <span class="ui-hide-lg">Inspector</span>
       </button>
       <div class="status-indicator ui-hide-md">
         <span class="dot active"></span> Local LLM: Ready
@@ -172,7 +172,7 @@
           <option value="unlisted">Unlisted</option>
           <option value="private">Private</option>
         </select>
-        <button id="btn-open-yt-modal" class="ui-btn ui-btn--sm" title="Preview & customize the YouTube title and description with lyrics & tags"><span class="ui-hide-sm ui-hide-lg">Details</span></button>
+        <button id="btn-open-yt-modal" class="ui-btn ui-btn--sm" title="Preview & customize the YouTube title and description with lyrics & tags" aria-label="YouTube video details"><span aria-hidden="true">⚙</span><span class="ui-hide-sm ui-hide-lg"> Details</span></button>
         <button id="btn-youtube-connect" class="ui-btn ui-btn--sm ui-btn--bad" title="Connect or authorize your YouTube channel">
           <span id="yt-connect-icon">🔴</span>
           <span id="yt-connect-text">Connect YT</span>
@@ -461,7 +461,7 @@
               <textarea id="input-ai-prompt" class="prop-input ui-textarea" placeholder="Ask the AI in Khmer or English, or paste original lyrics here to align &amp; fix the teleprompter..."></textarea>
               <div class="ui-acts">
                 <button id="btn-ask-gemini" class="ui-btn ui-btn--ai" title="Send the prompt to the local / Gemini assistant"><span>Ask Gemini</span></button>
-                <button id="btn-ai-align-lyrics" class="ui-btn ui-btn--go" title="Align and fix the loaded teleprompter with the original lyrics pasted above"><span>Align lyrics</span></button>
+                <button id="btn-ai-align-lyrics" class="ui-btn ui-btn--go" title="Open the align dialog with the lyrics pasted above, then match every word to the singer"><span>Align lyrics</span></button>
               </div>
             </div>
           </details>
@@ -520,14 +520,194 @@
     <aside class="panel right-panel" id="right-panel">
       <!-- Segmented Navigation Switcher -->
       <div class="segmented-nav" id="nav-right-panel">
-        <button class="segmented-tab active" data-target="tab-right-visualizer">Style</button>
+        <button class="segmented-tab active" data-target="tab-right-lyrics">Lyrics</button>
+        <button class="segmented-tab" data-target="tab-right-visualizer">Style</button>
         <button class="segmented-tab" data-target="tab-right-director">Director & VFX</button>
         <button class="segmented-tab" data-target="tab-right-dsp">DSP</button>
       </div>
 
       <div class="panel-content">
-        <!-- TAB 1: Visualizer Style -->
-        <div id="tab-right-visualizer" class="tab-pane">
+        <!-- TAB 1: Lyrics — the lines, their timing and how they are shown -->
+        <div id="tab-right-lyrics" class="tab-pane">
+          <!-- Synced Lyrics Teleprompter -->
+          <details class="ui-sec" id="sec-teleprompter" open>
+            <summary>Lyric lines
+              <span class="ui-spacer"></span>
+              <span id="lyrics-count-badge" class="ui-chip ui-chip--info">0 Lines</span>
+              <span id="lyrics-mode-badge" class="ui-chip" title="What the stage and export actually paint">Original only</span>
+              <span id="studio-engine-chip" class="ui-chip ui-chip--warn" style="display: none;">Energy sync only</span>
+              <span id="lyrics-verified-badge" class="ui-chip ui-chip--warn" style="display: none;">Timing Checked</span>
+            </summary>
+            <div class="ui-sec-body">
+              <div class="ui-row ui-row--split">
+                <button id="btn-paste-align-lyrics" class="ui-btn ui-btn--go" title="Paste the song's real lyrics and match every word to the singer">Paste &amp; Align</button>
+                <div class="ui-row">
+                  <button id="btn-fullscreen-teleprompter" class="ui-btn ui-btn--sm" title="Open the teleprompter full screen">Full</button>
+                  <button id="btn-toggle-teleprompter" class="ui-btn ui-btn--sm" title="Hide or show the lyric list">Hide</button>
+                  <button id="btn-clear-lyrics" class="ui-btn ui-btn--sm ui-btn--ghost" title="Remove the loaded lyric lines from the panel">Clear</button>
+                </div>
+              </div>
+
+              <div id="lyrics-teleprompter" class="ui-tp">
+                <div class="teleprompter-empty">No lyrics loaded yet</div>
+              </div>
+
+              <hr class="ui-sep">
+
+              <div class="ui-field">
+                <span class="ui-lab">Lyric quality</span>
+                <div class="ui-acts">
+                  <button id="btn-autofix-lyrics" class="ui-btn ui-btn--warn" title="Auto-fix phonetic and spelling mistakes in words in place without changing any line structure or timing">Fix Words</button>
+                  <button id="btn-fix-khmer-lyrics" class="ui-btn ui-btn--ai" title="AI-powered native Khmer refinement — rewrites translated Khmer lyrics into natural, singable, native Khmer while preserving timestamps">Fix Khmer</button>
+                  <button id="btn-reload-subtitles" class="ui-btn ui-btn--primary" title="Reload full authentic subtitles from server disk file (.srt / .lrc)">Reload from File</button>
+                  <button id="btn-sync-vocal-timing" class="ui-btn ui-btn--go" title="Measure every line and word start against the selected singer audio and rewrite the timestamps. The lyric text you loaded stays exactly as it is.">Re-Sync to Music</button>
+                  <button id="btn-verify-lyrics" class="ui-btn ui-btn--go" title="Re-check the timestamps against the singer audio. If the check cannot be done honestly, it refuses instead of guessing.">Double-Check</button>
+                </div>
+              </div>
+
+              <div class="ui-field">
+                <span class="ui-lab">Line timing</span>
+                <div class="ui-acts ui-acts--3">
+                  <button id="btn-show-earlier-500" class="ui-btn ui-btn--sm" title="Appear 0.5s earlier before the singer starts singing">Earlier 0.5s</button>
+                  <button id="btn-show-earlier-100" class="ui-btn ui-btn--sm" title="Fine-tune lead-in: appear 0.1s earlier">Earlier 0.1s</button>
+                  <button id="btn-show-later-500" class="ui-btn ui-btn--sm" title="Delay lyrics 0.5s later">Later 0.5s</button>
+                </div>
+                <p class="ui-hint">Timing shifts move when a line appears only — the original .srt text stays as it is.</p>
+              </div>
+
+              <hr class="ui-sep">
+
+              <div class="ui-field">
+                <span class="ui-lab">Edit &amp; export</span>
+                <button id="btn-open-srt-editor" class="ui-btn ui-btn--block" title="Open full SRT Subtitle Editor — edit timing, text, add/delete cues, and export to SRT/VTT/LRC"><span>SRT Editor</span></button>
+                <div class="ui-row">
+                  <button id="btn-quick-export-capcut" class="ui-btn ui-btn--primary" style="flex: 1 1 auto;" title="Instant 1-Click Export: generate perfect SRT for CapCut with 100% voice sync">CapCut SRT</button>
+                  <div id="export-sub-dropdown-wrapper" class="ui-ddw">
+                    <button id="btn-export-subtitles" class="ui-btn" title="Export subtitles as SRT, VTT, LRC, or plain text">Export ▾</button>
+                    <div id="export-sub-dropdown" class="ui-dd" style="display: none;">
+                      <div class="ui-dd-hdr">Dual Tracks (2 SRTs)</div>
+                      <button class="export-sub-option ui-dd-item ui-dd-item--feature" data-format="both_srts" title="Download 2 separate SRT files (Original + Second) at once">⚡ Export 2 SRTs (Original &amp; Second)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="both_capcut" title="Download 2 CapCut-optimized SRT files (Original + Second)">🎬 CapCut 2 SRTs (Original &amp; Second)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="orig_srt" title="Export Original language SRT only">1️⃣ Original SRT only (.srt)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="second_srt" title="Export Second / Translated language SRT only">2️⃣ Second (Translated) SRT only (.srt)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="bilingual" title="Export stacked bilingual SRT (both lines in single cue)">🔤 Bilingual Dual-Line (.srt)</button>
+                      <div class="ui-dd-sep"></div>
+                      <div class="ui-dd-hdr">Standard Formats</div>
+                      <button class="export-sub-option ui-dd-item ui-dd-item--feature" data-format="capcut" title="Export 100% voice-synced SRT optimized specifically for CapCut video editor">CapCut Perfect (.srt)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="srt" title="SubRip Subtitle (.srt) — universal format for YouTube, VLC, Premiere">SubRip (.srt)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="vtt" title="WebVTT (.vtt) — HTML5 video, web players, modern browsers">WebVTT (.vtt)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="lrc" title="LRC lyrics format (.lrc) — music players, karaoke apps">LRC Lyrics (.lrc)</button>
+                      <div class="ui-dd-sep"></div>
+                      <button class="export-sub-option ui-dd-item" data-format="txt" title="Plain text (.txt) — lyrics only, no timestamps">Plain Text (.txt)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="ass" title="Advanced SubStation Alpha (.ass) — styled subtitles for video editors">SSA/ASS (.ass)</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="ui-row" style="margin-top: 6px;">
+                  <button id="btn-export-two-srts" class="ui-btn ui-btn--ai ui-btn--block" title="⚡ 1-Click Dual Export: Download 2 separate SRT files (1 Original SRT + 1 Second/Translated SRT) for CapCut / Premiere">
+                    <span>⚡ Export 2 SRTs (Original &amp; Second)</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <!-- Lyrics Display Mode + Translated Track -->
+          <details class="ui-sec" id="sec-lyrics-display" open>
+            <summary>Lyrics Display &amp; Translation
+              <span class="ui-spacer"></span>
+              <span id="translation-status-badge" class="ui-chip">No translation</span>
+            </summary>
+            <div class="ui-sec-body">
+
+              <!-- 3-way display mode selector (original only is the default) -->
+              <div class="ui-field">
+                <span class="ui-lab">Display mode</span>
+                <div id="translation-mode-group" class="ui-seg" role="group" aria-label="Lyrics display mode">
+                  <button class="trans-mode-btn ui-seg-btn" data-mode="original_only" title="Show only the original lyrics from the existing SRT (default)">
+                    <span class="tmb-num">1</span><span class="tmb-label">Original</span>
+                  </button>
+                  <button class="trans-mode-btn ui-seg-btn" data-mode="translation_only" title="Show only the translated lyrics, timed to the original SRT">
+                    <span class="tmb-num">2</span><span class="tmb-label">Translation</span>
+                  </button>
+                  <button class="trans-mode-btn ui-seg-btn" data-mode="bilingual" title="Original lyric line with the translated line directly below">
+                    <span class="tmb-num">3</span><span class="tmb-label">Both</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="ui-field">
+                <span class="ui-lab">Translation track</span>
+                <div class="ui-row">
+                  <select id="select-translation-lang" class="prop-select" style="flex: 1 1 auto; min-width: 0;" title="Target language for the second lyric track">
+                    <option value="km">Khmer (ភាសាខ្មែរ)</option>
+                    <option value="en">English</option>
+                    <option value="th">Thai</option>
+                    <option value="vi">Vietnamese</option>
+                    <option value="zh">Chinese</option>
+                    <option value="ja">Japanese</option>
+                    <option value="ko">Korean</option>
+                    <option value="fr">French</option>
+                    <option value="es">Spanish</option>
+                  </select>
+                  <button id="btn-translate-all" class="ui-btn ui-btn--ai" title="AI-translate every lyric line into the selected language (original lyrics and timing untouched)">
+                    <span>Translate</span>
+                  </button>
+                </div>
+                <label class="ui-check" title="When the loaded lyrics are not Khmer, Khmer becomes the default target and the track is built automatically on load">
+                  <input type="checkbox" id="chk-auto-khmer">
+                  <span>Auto-translate foreign songs → Khmer</span>
+                </label>
+                <div class="ui-acts">
+                  <button id="btn-edit-translation" class="ui-btn" title="Manually edit translated lines or re-translate single lines">
+                    <span>Edit lines</span>
+                  </button>
+                  <button id="btn-export-translation-srt" class="ui-btn" title="Export the translated track as its own .srt with the original timestamps">
+                    <span>Export .srt</span>
+                  </button>
+                </div>
+              </div>
+
+              <details class="ui-sec ui-sec--inner" id="sec-translation-style">
+                <summary>Second-line style</summary>
+                <div class="ui-sec-body">
+                  <div class="ui-grid2">
+                    <label class="ui-field">
+                      <span class="ui-lab">Size</span>
+                      <input type="range" id="range-trans-size" class="ui-range" min="30" max="90" value="55">
+                    </label>
+                    <label class="ui-field">
+                      <span class="ui-lab">Gap</span>
+                      <input type="range" id="range-trans-offset" class="ui-range" min="10" max="140" value="55">
+                    </label>
+                    <label class="ui-field">
+                      <span class="ui-lab">Colour</span>
+                      <input type="color" id="color-trans" class="ui-color" value="#ffffff">
+                    </label>
+                    <div class="ui-field">
+                      <span class="ui-lab">Align</span>
+                      <select id="select-trans-align" class="prop-select" title="Translation text alignment">
+                        <option value="center">Center</option>
+                        <option value="left">Left</option>
+                        <option value="right">Right</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="ui-row ui-row--wrap">
+                    <label class="ui-check"><input type="checkbox" id="check-trans-outline" checked><span>Outline</span></label>
+                    <label class="ui-check"><input type="checkbox" id="check-trans-shadow" checked><span>Shadow</span></label>
+                    <label class="ui-check"><input type="checkbox" id="check-trans-background"><span>Glass pill</span></label>
+                  </div>
+                  <p class="ui-hint">Original lyrics, timings and the source .srt are never modified — each translation is its own companion file.</p>
+                </div>
+              </details>
+
+            </div>
+          </details>
+        </div>
+
+        <!-- TAB 2: Visualizer Style -->
+        <div id="tab-right-visualizer" class="tab-pane hidden">
           <!-- Visual style: Khmer template, theme, palette, lyric animation -->
           <details class="ui-sec" id="sec-style" open>
             <summary>Visual Style</summary>
@@ -728,185 +908,9 @@
             </div>
           </details>
 
-
-          <!-- Lyrics Display Mode + Translated Track -->
-          <details class="ui-sec" id="sec-lyrics-display" open>
-            <summary>Lyrics Display &amp; Translation
-              <span class="ui-spacer"></span>
-              <span id="translation-status-badge" class="ui-chip">No translation</span>
-            </summary>
-            <div class="ui-sec-body">
-
-              <!-- 3-way display mode selector (original only is the default) -->
-              <div class="ui-field">
-                <span class="ui-lab">Display mode</span>
-                <div id="translation-mode-group" class="ui-seg" role="group" aria-label="Lyrics display mode">
-                  <button class="trans-mode-btn ui-seg-btn" data-mode="original_only" title="Show only the original lyrics from the existing SRT (default)">
-                    <span class="tmb-num">1</span><span class="tmb-label">Original</span>
-                  </button>
-                  <button class="trans-mode-btn ui-seg-btn" data-mode="translation_only" title="Show only the translated lyrics, timed to the original SRT">
-                    <span class="tmb-num">2</span><span class="tmb-label">Translation</span>
-                  </button>
-                  <button class="trans-mode-btn ui-seg-btn" data-mode="bilingual" title="Original lyric line with the translated line directly below">
-                    <span class="tmb-num">3</span><span class="tmb-label">Both</span>
-                  </button>
-                </div>
-              </div>
-
-              <div class="ui-field">
-                <span class="ui-lab">Translation track</span>
-                <div class="ui-row">
-                  <select id="select-translation-lang" class="prop-select" style="flex: 1 1 auto; min-width: 0;" title="Target language for the second lyric track">
-                    <option value="km">Khmer (ភាសាខ្មែរ)</option>
-                    <option value="en">English</option>
-                    <option value="th">Thai</option>
-                    <option value="vi">Vietnamese</option>
-                    <option value="zh">Chinese</option>
-                    <option value="ja">Japanese</option>
-                    <option value="ko">Korean</option>
-                    <option value="fr">French</option>
-                    <option value="es">Spanish</option>
-                  </select>
-                  <button id="btn-translate-all" class="ui-btn ui-btn--ai" title="AI-translate every lyric line into the selected language (original lyrics and timing untouched)">
-                    <span>Translate</span>
-                  </button>
-                </div>
-                <label class="ui-check" title="When the loaded lyrics are not Khmer, Khmer becomes the default target and the track is built automatically on load">
-                  <input type="checkbox" id="chk-auto-khmer">
-                  <span>Auto-translate foreign songs → Khmer</span>
-                </label>
-                <div class="ui-acts">
-                  <button id="btn-edit-translation" class="ui-btn" title="Manually edit translated lines or re-translate single lines">
-                    <span>Edit lines</span>
-                  </button>
-                  <button id="btn-export-translation-srt" class="ui-btn" title="Export the translated track as its own .srt with the original timestamps">
-                    <span>Export .srt</span>
-                  </button>
-                </div>
-              </div>
-
-              <details class="ui-sec ui-sec--inner" id="sec-translation-style">
-                <summary>Second-line style</summary>
-                <div class="ui-sec-body">
-                  <div class="ui-grid2">
-                    <label class="ui-field">
-                      <span class="ui-lab">Size</span>
-                      <input type="range" id="range-trans-size" class="ui-range" min="30" max="90" value="55">
-                    </label>
-                    <label class="ui-field">
-                      <span class="ui-lab">Gap</span>
-                      <input type="range" id="range-trans-offset" class="ui-range" min="10" max="140" value="55">
-                    </label>
-                    <label class="ui-field">
-                      <span class="ui-lab">Colour</span>
-                      <input type="color" id="color-trans" class="ui-color" value="#ffffff">
-                    </label>
-                    <div class="ui-field">
-                      <span class="ui-lab">Align</span>
-                      <select id="select-trans-align" class="prop-select" title="Translation text alignment">
-                        <option value="center">Center</option>
-                        <option value="left">Left</option>
-                        <option value="right">Right</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div class="ui-row ui-row--wrap">
-                    <label class="ui-check"><input type="checkbox" id="check-trans-outline" checked><span>Outline</span></label>
-                    <label class="ui-check"><input type="checkbox" id="check-trans-shadow" checked><span>Shadow</span></label>
-                    <label class="ui-check"><input type="checkbox" id="check-trans-background"><span>Glass pill</span></label>
-                  </div>
-                  <p class="ui-hint">Original lyrics, timings and the source .srt are never modified — each translation is its own companion file.</p>
-                </div>
-              </details>
-
-            </div>
-          </details>
-
-          <!-- Synced Lyrics Teleprompter -->
-          <details class="ui-sec" id="sec-teleprompter" open>
-            <summary>Synced Teleprompter
-              <span class="ui-spacer"></span>
-              <span id="lyrics-count-badge" class="ui-chip ui-chip--info">0 Lines</span>
-              <span id="lyrics-mode-badge" class="ui-chip" title="What the stage and export actually paint">Original only</span>
-              <span id="studio-engine-chip" class="ui-chip ui-chip--warn" style="display: none;">Energy sync only</span>
-              <span id="lyrics-verified-badge" class="ui-chip ui-chip--warn" style="display: none;">Timing Checked</span>
-            </summary>
-            <div class="ui-sec-body">
-
-              <div class="ui-field">
-                <span class="ui-lab">Lyric quality</span>
-                <div class="ui-acts">
-                  <button id="btn-autofix-lyrics" class="ui-btn ui-btn--warn" title="Auto-fix phonetic and spelling mistakes in words in place without changing any line structure or timing">Fix Words</button>
-                  <button id="btn-fix-khmer-lyrics" class="ui-btn ui-btn--ai" title="AI-powered native Khmer refinement — rewrites translated Khmer lyrics into natural, singable, native Khmer while preserving timestamps">Fix Khmer</button>
-                  <button id="btn-paste-align-lyrics" class="ui-btn ui-btn--ai" title="Paste authentic original lyrics to fix Whisper misheard words while preserving timestamps">Paste &amp; Align</button>
-                  <button id="btn-reload-subtitles" class="ui-btn ui-btn--primary" title="Reload full authentic subtitles from server disk file (.srt / .lrc)">Reload from File</button>
-                  <button id="btn-sync-vocal-timing" class="ui-btn ui-btn--go" title="Measure every line and word start against the selected singer audio and rewrite the timestamps. The lyric text you loaded stays exactly as it is.">Re-Sync to Music</button>
-                  <button id="btn-verify-lyrics" class="ui-btn ui-btn--go" title="Re-check the timestamps against the singer audio. If the check cannot be done honestly, it refuses instead of guessing.">Double-Check</button>
-                </div>
-              </div>
-
-              <div class="ui-field">
-                <span class="ui-lab">Line timing</span>
-                <div class="ui-acts ui-acts--3">
-                  <button id="btn-show-earlier-500" class="ui-btn ui-btn--sm" title="Appear 0.5s earlier before the singer starts singing">Earlier 0.5s</button>
-                  <button id="btn-show-earlier-100" class="ui-btn ui-btn--sm" title="Fine-tune lead-in: appear 0.1s earlier">Earlier 0.1s</button>
-                  <button id="btn-show-later-500" class="ui-btn ui-btn--sm" title="Delay lyrics 0.5s later">Later 0.5s</button>
-                </div>
-                <p class="ui-hint">Timing shifts move when a line appears only — the original .srt text stays as it is.</p>
-              </div>
-
-              <hr class="ui-sep">
-
-              <div class="ui-field">
-                <span class="ui-lab">Edit &amp; export</span>
-                <button id="btn-open-srt-editor" class="ui-btn ui-btn--block" title="Open full SRT Subtitle Editor — edit timing, text, add/delete cues, and export to SRT/VTT/LRC"><span>SRT Editor</span></button>
-                <div class="ui-row">
-                  <button id="btn-quick-export-capcut" class="ui-btn ui-btn--primary" style="flex: 1 1 auto;" title="Instant 1-Click Export: generate perfect SRT for CapCut with 100% voice sync">CapCut SRT</button>
-                  <div id="export-sub-dropdown-wrapper" class="ui-ddw">
-                    <button id="btn-export-subtitles" class="ui-btn" title="Export subtitles as SRT, VTT, LRC, or plain text">Export ▾</button>
-                    <div id="export-sub-dropdown" class="ui-dd" style="display: none;">
-                      <div class="ui-dd-hdr">Dual Tracks (2 SRTs)</div>
-                      <button class="export-sub-option ui-dd-item ui-dd-item--feature" data-format="both_srts" title="Download 2 separate SRT files (Original + Second) at once">⚡ Export 2 SRTs (Original &amp; Second)</button>
-                      <button class="export-sub-option ui-dd-item" data-format="both_capcut" title="Download 2 CapCut-optimized SRT files (Original + Second)">🎬 CapCut 2 SRTs (Original &amp; Second)</button>
-                      <button class="export-sub-option ui-dd-item" data-format="orig_srt" title="Export Original language SRT only">1️⃣ Original SRT only (.srt)</button>
-                      <button class="export-sub-option ui-dd-item" data-format="second_srt" title="Export Second / Translated language SRT only">2️⃣ Second (Translated) SRT only (.srt)</button>
-                      <button class="export-sub-option ui-dd-item" data-format="bilingual" title="Export stacked bilingual SRT (both lines in single cue)">🔤 Bilingual Dual-Line (.srt)</button>
-                      <div class="ui-dd-sep"></div>
-                      <div class="ui-dd-hdr">Standard Formats</div>
-                      <button class="export-sub-option ui-dd-item ui-dd-item--feature" data-format="capcut" title="Export 100% voice-synced SRT optimized specifically for CapCut video editor">CapCut Perfect (.srt)</button>
-                      <button class="export-sub-option ui-dd-item" data-format="srt" title="SubRip Subtitle (.srt) — universal format for YouTube, VLC, Premiere">SubRip (.srt)</button>
-                      <button class="export-sub-option ui-dd-item" data-format="vtt" title="WebVTT (.vtt) — HTML5 video, web players, modern browsers">WebVTT (.vtt)</button>
-                      <button class="export-sub-option ui-dd-item" data-format="lrc" title="LRC lyrics format (.lrc) — music players, karaoke apps">LRC Lyrics (.lrc)</button>
-                      <div class="ui-dd-sep"></div>
-                      <button class="export-sub-option ui-dd-item" data-format="txt" title="Plain text (.txt) — lyrics only, no timestamps">Plain Text (.txt)</button>
-                      <button class="export-sub-option ui-dd-item" data-format="ass" title="Advanced SubStation Alpha (.ass) — styled subtitles for video editors">SSA/ASS (.ass)</button>
-                    </div>
-                  </div>
-                </div>
-                <div class="ui-row" style="margin-top: 6px;">
-                  <button id="btn-export-two-srts" class="ui-btn ui-btn--ai ui-btn--block" title="⚡ 1-Click Dual Export: Download 2 separate SRT files (1 Original SRT + 1 Second/Translated SRT) for CapCut / Premiere">
-                    <span>⚡ Export 2 SRTs (Original &amp; Second)</span>
-                  </button>
-                </div>
-              </div>
-
-              <div class="ui-row ui-row--split">
-                <div class="ui-row">
-                  <button id="btn-fullscreen-teleprompter" class="ui-btn ui-btn--sm" title="Open the teleprompter full screen">Full</button>
-                  <button id="btn-toggle-teleprompter" class="ui-btn ui-btn--sm" title="Hide or show the lyric list">Hide</button>
-                </div>
-                <button id="btn-clear-lyrics" class="ui-btn ui-btn--sm ui-btn--ghost" title="Remove the loaded lyric lines from the panel">Clear</button>
-              </div>
-
-              <div id="lyrics-teleprompter" class="ui-tp">
-                <div class="teleprompter-empty">No lyrics loaded yet</div>
-              </div>
-            </div>
-          </details>
-
         </div>
 
-        <!-- TAB 2: Director & VFX -->
+        <!-- TAB 3: Director & VFX -->
         <div id="tab-right-director" class="tab-pane hidden">
           <!-- Smart Video Director -->
           <details class="ui-sec" id="sec-director" open>
@@ -958,7 +962,7 @@
           </details>
         </div>
 
-        <!-- TAB 3: Audio DSP -->
+        <!-- TAB 4: Audio DSP -->
         <div id="tab-right-dsp" class="tab-pane hidden">
           <details class="ui-sec" id="sec-eq" open>
             <summary>3-Band Master Equalizer</summary>
@@ -1141,30 +1145,40 @@
   </div>
 
   <!-- Modal: Paste & Align Original Lyrics -->
-  <div id="align-lyrics-modal" class="export-modal-overlay" style="display: none; z-index: 9999;">
-    <div class="export-modal-card ui-modal-card--ai">
-      <div class="export-modal-header ui-modal-hd">
-        <div class="ui-row">
-          <span class="ui-modal-ico">📝</span>
+  <div id="align-lyrics-modal" class="ui-modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="align-modal-title">
+    <div class="ui-modal-card ui-modal-card--align">
+      <div class="ui-modal-hd">
+        <div class="ui-modal-titlerow">
+          <span class="ui-modal-ico" aria-hidden="true">🎙</span>
           <div>
-            <div class="ui-modal-name">Align & Correct with Original Lyrics</div>
-            <div class="ui-modal-sub">Fix phonetic Whisper errors while preserving exact audio timestamps & karaoke glow</div>
+            <h2 id="align-modal-title" class="ui-modal-name">Align lyrics to the singer</h2>
+            <span class="ui-modal-sub">Paste the song's real lyrics. Every word is matched to the voice; your text stays exactly as written.</span>
           </div>
         </div>
-        <button id="btn-close-align-modal" class="ui-btn ui-btn--ghost ui-btn--icon">✕</button>
+        <button id="btn-close-align-modal" class="ui-btn ui-btn--ghost ui-modal-x" aria-label="Close">✕</button>
       </div>
-      <div class="ui-field">
-        <div class="ui-row ui-row--split">
-          <label class="ui-lab">Paste 100% Correct Original Lyrics (without timestamps):</label>
-          <span id="align-modal-line-count" class="ui-chip ui-chip--info">0 Lines</span>
+
+      <div class="ui-modal-body">
+        <div class="align-target">
+          <span class="align-target-lab">Song</span>
+          <span id="align-modal-song" class="align-target-song">—</span>
+          <span id="align-modal-replace" class="ui-chip">Replaces 0 lines</span>
         </div>
-        <textarea id="input-align-reference" placeholder="ដល់រដូវភ្ជុំ&#10;ស្រីម៉ុម វេចនំឬទេ?&#10;ដល់រដូវភ្ជុំ&#10;ស្រីម៉ុម វេចនំឬទេ?&#10;បងគិតសុំជួយវេច អូនដែរ&#10;មាសស្នេហ៍ ព្រមដែរ ឬអ្វី?&#10;ឆ្លើយប្រាប់ មកបង បានទេ?&#10;..." class="ui-textarea ui-textarea--khmer"></textarea>
+
+        <div class="ui-field">
+          <div class="ui-row ui-row--split">
+            <label class="ui-lab" for="input-align-reference">Lyrics, one sung line per row</label>
+            <span id="align-modal-line-count" class="ui-chip ui-chip--info">0 Lines</span>
+          </div>
+          <textarea id="input-align-reference" class="ui-textarea ui-textarea--khmer" spellcheck="false"
+                    placeholder="Paste the lyrics here…&#10;&#10;Timestamps, line numbers, [Music] and (Solo) markers are removed for you."></textarea>
+          <span class="ui-hint">About 30 seconds. The first time for a new song also separates the voice from the music, which adds about a minute.</span>
+        </div>
       </div>
-      <div class="ui-row ui-row--split">
-        <button id="btn-cancel-align-modal" class="btn-secondary ui-btn">Cancel</button>
-        <button id="btn-submit-align-lyrics" class="btn-ai ui-btn ui-btn--go">
-          <span>Align & Fix Teleprompter</span>
-        </button>
+
+      <div class="ui-modal-ft">
+        <button id="btn-cancel-align-modal" class="ui-btn ui-btn--ghost">Cancel</button>
+        <button id="btn-submit-align-lyrics" class="ui-btn ui-btn--go" disabled>Align to singer</button>
       </div>
     </div>
   </div>

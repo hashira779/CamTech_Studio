@@ -282,6 +282,8 @@ body.daw-theme {
   padding: 2px 6px;
   border-radius: 10px;
   letter-spacing: 0.5px;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 /* Header Status & Export */
