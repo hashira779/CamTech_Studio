@@ -374,18 +374,18 @@ class LocalLLMEngine:
 
         # Check genre and select authentic poetic templates
         g = (genre or "romantic").lower()
-        p_lower = prompt.lower() if prompt else ""
-
-        if any(w in p_lower for w in ["យុគមាស", "ស៊ីសាមុត", "បុរាណ", "vintage", "retro", "60s", "classic", "ចំប៉ា", "បាត់ដំបង"]):
-            g = "golden_era"
-        elif any(w in p_lower for w in ["យំ", "ឈឺ", "sad", "pain", "tears", "ព្រាត់", "បែក", "ឯកា", "ស្លាប់"]):
-            g = "melancholy"
-        elif any(w in p_lower for w in ["រាំ", "សប្បាយ", "dance", "party", "ចូលឆ្នាំ", "ក្បាច់", "រាំវង់"]):
-            g = "romvong"
-        elif any(w in p_lower for w in ["remix", "trap", "bass", "pop", "modern", "យុវវ័យ", "ទាន់សម័យ"]):
-            g = "modern_pop"
-        elif any(w in p_lower for w in ["អង្គរ", "ប្រាសាទ", "ជាតិ", "heritage", "កម្ពុជា", "ដូនតា"]):
-            g = "heritage"
+        if prompt:
+            p_lower = prompt.lower()
+            detected_mood, score = self._score_mood(p_lower)
+            if score >= 1.5:
+                mood_to_genre = {
+                    "romantic": "romantic",
+                    "melancholy": "melancholy",
+                    "energetic": "romvong" if any(w in p_lower for w in ["ចូលឆ្នាំ", "ក្បាច់", "រាំវង់", "folk", "ប្រពៃណី"]) else "modern_pop",
+                    "golden_era": "golden_era",
+                    "heritage": "heritage",
+                }
+                g = mood_to_genre.get(detected_mood, g)
 
         # Genre presets with authentic poetic verses & rhyming meters
         presets = {
@@ -953,18 +953,35 @@ class LocalLLMEngine:
         return self.analyze_text(text)
 
     def translate_text(self, text: str, target_lang: str = "Khmer") -> str:
-        """Translates text between languages."""
+        """Translates text between languages using Gemini (fast) or local LLM (offline)."""
+        if not text or not text.strip():
+            return ""
+
+        # 1. Try Gemini cloud first (fast, high quality)
+        try:
+            gem_prompt = (
+                f"Translate the following text to {target_lang}. "
+                "Return ONLY the translation, no notes or explanations.\n\n"
+                f"{text}"
+            )
+            gem_res = call_gemini_api(gem_prompt, json_mode=False, timeout=8)
+            if gem_res:
+                return gem_res.strip()
+        except Exception as e:
+            log.debug(f"[translate_text] Gemini failed: {e}")
+
+        # 2. Fall back to local LLM
         if not self.is_loaded:
             self.load_model()
         if self.llm is None:
-            return "[Translation Failed - No Model]"
+            return f"[Translation to {target_lang} unavailable offline]"
 
         prompt = f"Translate the following text to {target_lang}:\n\n{text}\n\nTranslation:"
         try:
-            output = self.llm(prompt, max_tokens=100, temperature=0.1, stop=["\n\n"])
+            output = self.llm(prompt, max_tokens=150, temperature=0.1, stop=["\n\n"])
             return output['choices'][0]['text'].strip()
         except Exception as e:
-            return f"Error: {e}"
+            return f"[Translation error: {e}]"
 
     def translate_to_khmer(self, english_text: str) -> str:
         return self.translate_text(english_text, target_lang="Khmer")
@@ -1144,8 +1161,9 @@ class LocalLLMEngine:
     def _sung_syllables(text: str) -> int:
         """Counts sung units in a lyric line using the timing engine's convention.
 
-        Khmer base consonants that do not hang below a coeng, one unit per CJK character, one
-        per Latin vowel group. It is a proxy, not linguistics: a final consonant adds a unit,
+        Khmer base consonants that do not hang below a coeng, one unit per CJK character,
+        one unit per Thai/Lao/Myanmar consonant cluster, one per Latin vowel group.
+        It is a proxy, not linguistics: a final consonant adds a unit,
         which is why the corpus above is what sets the caps, not a syllable theory.
         """
         if not text:
@@ -1156,6 +1174,11 @@ class LocalLLMEngine:
         cjk = re.findall(r'[\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF]', text)
         if cjk:
             return len(cjk)
+        # Thai consonants (U+0E01-U+0E2E), Lao consonants (U+0E81-U+0EAE),
+        # Myanmar consonants (U+1000-U+1021)
+        sea = re.findall(r'[\u0E01-\u0E2E\u0E81-\u0EAE\u1000-\u1021]', text)
+        if sea:
+            return len(sea)
         groups = re.findall(r'[aeiouyàáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]+',
                             text, re.IGNORECASE)
         return len(groups)
@@ -1170,6 +1193,75 @@ class LocalLLMEngine:
         'ការស្រឡាញ់អ្នក',  # "the loving of you"
         'នូវពាក្យ',        # "the words of …" calque
     )
+
+    # ---- Generalized naturalness guard for any target language ----------------
+    # Vietnamese: diacritical/tonal integrity checks
+    _VIETNAMESE_TONE_RE = re.compile(
+        r'[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]',
+        re.IGNORECASE
+    )
+    _THAI_LETTER_RE = re.compile(r'[\u0E00-\u0E7F]')
+    _LAO_LETTER_RE = re.compile(r'[\u0E80-\u0EFF]')
+    _KOREAN_LETTER_RE = re.compile(r'[\uAC00-\uD7AF\u1100-\u11FF]')
+    _CJK_LETTER_RE = re.compile(r'[\u4E00-\u9FFF\u3040-\u30FF]')
+
+    def _line_issues(self, original: str, translated: str, target_lang: str = "Khmer") -> List[str]:
+        """Detects naturalness issues for any target language.
+
+        Khmer gets the full battery (possessive chains, calques, sung-unit cap).
+        Vietnamese, Thai, and others get baseline checks (empty, unchanged, foreign
+        script leaking in, length sanity).
+        """
+        target_lower = target_lang.lower().strip()
+        is_khmer = target_lower in ("khmer", "km", "cambodian", "ខ្មែរ")
+
+        # Delegate to the rich Khmer grader for Khmer targets
+        if is_khmer:
+            return self._khmer_line_issues(original, translated)
+
+        # ---- Generic checks for all other languages ----
+        if not str(translated).strip():
+            return ["empty"]
+        text = str(translated).strip()
+        issues: List[str] = []
+
+        if text == str(original).strip():
+            issues.append("unchanged")
+
+        src_syl = self._sung_syllables(original)
+        tgt_syl = self._sung_syllables(text)
+
+        if src_syl >= 3 and tgt_syl <= 1:
+            issues.append("meaning_dropped")
+
+        is_vietnamese = target_lower in ("vietnamese", "vi", "tiếng việt")
+        is_thai = target_lower in ("thai", "th", "ไทย")
+
+        if is_vietnamese:
+            # Vietnamese MUST have tone marks on most lines; bare ASCII is suspicious
+            if len(text) > 10 and not self._VIETNAMESE_TONE_RE.search(text):
+                issues.append("missing_diacritics")
+            # Khmer or Thai script leaking into Vietnamese output
+            if self._KHMER_LETTER_RE.search(text) or self._THAI_LETTER_RE.search(text):
+                issues.append("foreign_letters")
+        elif is_thai:
+            # Thai output must contain Thai script
+            if not self._THAI_LETTER_RE.search(text):
+                issues.append("no_target_script")
+            # Khmer or Lao leaking into Thai
+            if self._KHMER_LETTER_RE.search(text) or self._LAO_LETTER_RE.search(text):
+                issues.append("foreign_letters")
+        else:
+            # For any other language, just check for source script leaking
+            if text == str(original).strip():
+                pass  # already flagged as unchanged
+
+        # Gross length check: if the translation is 4x longer in sung units,
+        # something probably went wrong
+        if src_syl >= 3 and tgt_syl > src_syl * 4:
+            issues.append("too_long_to_sing")
+
+        return issues
 
     def _khmer_line_issues(self, original: str, khmer: str) -> List[str]:
         """Why this Khmer line probably does not sound native yet (empty list means it does)."""
@@ -1192,7 +1284,7 @@ class LocalLLMEngine:
         if km_syl > max(self.KHMER_LINE_UNIT_CAP, int(src_syl * 3.2)):
             issues.append("too_long_to_sing")
         # '…នៃ…របស់…' is how a machine writes English possessives in Khmer letters; a Khmer
-        # lyricist sings "បេះដូងបង", not "បេះដូងនៃជីវិតរបស់ខ្ញុំ".
+        # lyricist sings "បេះដូង​បង", not "បេះដូង​នៃ​ជីវិត​របស់​ខ្ញុំ".
         if text.count('នៃ') + text.count('របស់') >= 2:
             issues.append("stiff_possessive_chain")
         if any(cal in text for cal in self._KHMER_CALQUES):
@@ -1508,6 +1600,19 @@ class LocalLLMEngine:
                 )
             except Exception as e:
                 print(f"[Khmer Naturalness] grading pass failed, keeping the ungraded draft: {e}")
+        elif not is_khmer_target and trans_map:
+            # Grade non-Khmer translations with the generalized _line_issues checker.
+            # No automatic rewrite pass (only Khmer has one), but the frontend gets
+            # naturalness metadata so it can warn the user about problematic lines.
+            texts = [l.get("text", "") for l in lyrics_data]
+            for i, line in enumerate(result_data):
+                original = str(texts[i]) if i < len(texts) else ""
+                draft = str(line.get("text", ""))
+                issues = self._line_issues(original, draft, target_lang)
+                line["naturalness"] = {
+                    "status": "natural" if not issues else "still_literal",
+                    "issues": issues
+                }
         return result_data
 
     def refine_khmer_lyrics(

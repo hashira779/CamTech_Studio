@@ -2022,6 +2022,15 @@ def llm_translate_text(req: LLMTranslateRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM Translation failed: {str(e)}")
 
+@app.post("/api/ai/chat/clear")
+def clear_ai_chat_history():
+    """Clears conversation memory so the AI starts fresh (e.g. after loading a new song)."""
+    try:
+        llm_engine.clear_history()
+        return {"status": "success", "message": "AI conversation memory cleared"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear chat history: {str(e)}")
+
 @app.post("/api/lyrics/generate")
 def generate_lyrics_api(req: GenerateLyricsRequest):
     """Generates structured, poetic Khmer lyrics with rhyming verse patterns and synchronized LRC output."""

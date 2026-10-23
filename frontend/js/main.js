@@ -2441,6 +2441,8 @@ document.addEventListener('DOMContentLoaded', () => {
     state.translation.ownerKey = null;
     state.translation.displayMode = 'original_only';
     state.translation.visible = false;
+    // Clear AI conversation memory so the new song gets a fresh context
+    fetch('/api/ai/chat/clear', { method: 'POST' }).catch(() => {});
     renderLyricsTeleprompter(state.lyrics); // also starts the translation-track load
     window.__VIDA_SERVER_PATH = serverPath || '';
 
