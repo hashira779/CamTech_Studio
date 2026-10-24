@@ -411,6 +411,11 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _WORKER_TIMEOUT_S = 300.0
 _LOCK_WAIT_S = 120.0
 
+# Remembers when the CTC subprocess has crashed with an access violation (0xc0000005).
+# After Demucs uses the GPU, torch's checkpoint mapper faults deterministically on this
+# machine, so retrying or re-attempting on the next song just wastes another 30-60s.
+_CTC_CRASHED = False
+
 
 def ctc_align_lyrics(
     lyrics_lines: List[str],
@@ -426,8 +431,12 @@ def ctc_align_lyrics(
     A fault cannot be caught from Python, so the aligner runs out-of-process and any
     failure simply means "no word alignment" and the caller keeps its acoustic sync.
     """
+    global _CTC_CRASHED
     lines = [str(l).strip() for l in lyrics_lines]
     if not any(lines) or not audio_path or not os.path.exists(audio_path):
+        return None
+    if _CTC_CRASHED:
+        log.debug("[CTC Align] Skipped — aligner crashed earlier this session")
         return None
     missing = missing_dependency()
     if missing:
@@ -462,6 +471,7 @@ def ctc_align_lyrics(
         if torch is not None and torch.cuda.is_available():
             torch.cuda.empty_cache()
         def _aligned_lines():
+            global _CTC_CRASHED
             for attempt in (1, 2):
                 proc = subprocess.run(
                     [sys.executable, "-m", "backend.ctc_worker", job_path, out_path],
@@ -475,6 +485,12 @@ def ctc_align_lyrics(
                     os.remove(out_path)
                 tail = " | ".join((proc.stderr or "").strip().splitlines()[-2:])
                 log.warning(f"[CTC Align] aligner process exited {proc.returncode:#x} (attempt {attempt}): {tail}")
+                # Access violation (0xc0000005) is deterministic after Demucs GPU use —
+                # retrying just wastes another 30-60s on the same crash.
+                if proc.returncode in (0xc0000005, -0x3FFFFFFB, -1073741819):
+                    _CTC_CRASHED = True
+                    log.warning("[CTC Align] Access violation — disabling CTC for this session")
+                    return None
             return None
 
         try:
