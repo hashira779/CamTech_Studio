@@ -106,8 +106,26 @@ def _lang_code(text: str) -> Optional[str]:
     return None
 
 
+def _khmer_as_sung(s: str) -> str:
+    """
+    uroman spells Khmer letter by letter, adding sounds a singer never makes: an inherent vowel
+    after the final consonant (បង -> "bango", ណាស់ -> "nnaasa"), "q" for the silent អ onset and
+    "nn" for ណ. Removing them raised line confidence on every Khmer song measured (8 songs) and
+    cut unsure lines from 89 to 82, without hurting timing accuracy on repeated sections.
+    """
+    s = s.lower()
+    if s.startswith("q"):
+        s = s[1:]
+    s = s.replace("nn", "n")
+    if len(s) > 2 and s[-1] in "ao" and s[-2] not in "aeiou":
+        s = s[:-1]
+    return s
+
+
 def _romanize(word: str, lcode: Optional[str], vocab: Dict[str, int]) -> List[int]:
     s = word if word.isascii() else _get_uroman().romanize_string(word, lcode=lcode)
+    if lcode == "khm" and not word.isascii():
+        s = _khmer_as_sung(str(s))
     s = unicodedata.normalize("NFKD", str(s).lower())
     return [vocab[c] for c in s if c in vocab and c != "-"]
 
@@ -244,7 +262,8 @@ def _ctc_align_lyrics_inproc(
     line_scores: Dict[int, List[float]] = {}
     for li, wi, a, b in word_slots:
         ws = spans[a:b + 1]
-        timed[(li, wi)] = (ws[0].start * _FRAME_S, ws[-1].end * _FRAME_S, 0.0)
+        word_conf = sum(float(x.score) for x in ws) / len(ws)
+        timed[(li, wi)] = (ws[0].start * _FRAME_S, ws[-1].end * _FRAME_S, word_conf)
         line_scores.setdefault(li, []).extend(float(s.score) for s in ws)
 
     all_scores = [s for v in line_scores.values() for s in v]
@@ -270,14 +289,14 @@ def _ctc_align_lyrics_inproc(
         rows: List[List[float]] = []
         for wi in range(len(words)):
             if (li, wi) in timed:
-                s, e, _ = timed[(li, wi)]
-                rows.append([s, e])
+                s, e, c = timed[(li, wi)]
+                rows.append([s, e, c])
             else:
                 prev = max((k for k in known if k[0] < wi), default=None, key=lambda k: k[0])
                 nxt = min((k for k in known if k[0] > wi), default=None, key=lambda k: k[0])
                 s = prev[1][1] if prev else max(0.0, nxt[1][0] - 0.3)
                 e = nxt[1][0] if nxt else s + 0.3
-                rows.append([s, max(s + 0.04, e)])
+                rows.append([s, max(s + 0.04, e), 0.0])  # no letters to hear: timing interpolated
         raw_lines.append(rows)
 
     starts = [r[0][0] if r else None for r in raw_lines]
@@ -300,7 +319,7 @@ def _ctc_align_lyrics_inproc(
             continue
 
         out_words = []
-        for wi, (s, e) in enumerate(rows):
+        for wi, (s, e, wconf) in enumerate(rows):
             if wi + 1 < len(rows):
                 nxt = rows[wi + 1][0]
                 gap = nxt - e
@@ -310,7 +329,8 @@ def _ctc_align_lyrics_inproc(
                 end = max(e + 0.25, min(_segment_end_after(e, vocal_segments), e + sustain_cap))
                 end = min(end, limit)
             end = max(end, s + 0.04)
-            out_words.append({"word": words[wi], "start": round(s, 2), "end": round(end, 2)})
+            # conf: how clearly this word was heard; lets repairs match repeats word by word
+            out_words.append({"word": words[wi], "start": round(s, 2), "end": round(end, 2), "conf": round(wconf, 3)})
 
         sc = line_scores.get(li, [])
         aligned.append({
@@ -323,8 +343,15 @@ def _ctc_align_lyrics_inproc(
         })
 
     repaired = _repair_collapsed_lines(aligned, vocal_segments, audio_path)
+    try:
+        from backend.sync_repair import repair_sync
+    except ImportError:
+        from sync_repair import repair_sync
+    fixes = repair_sync(aligned, vocal_segments)
     log.info(f"[CTC Align] ✅ Word-aligned {len(aligned)} lines to the singer (confidence {confidence:.2f}, "
-             f"{repaired} unclear lines re-spaced on sung phrases)")
+             f"{repaired} unclear lines re-spaced on sung phrases, {fixes['from_repeats']} timed from a repeat, "
+             f"{fixes['refit_to_voice']} moved off silence onto the singing, "
+             f"{fixes['ended_at_breaks']} ended at an instrumental break)")
     return aligned
 
 
@@ -409,12 +436,16 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # A 3-minute song aligns in ~25 s on the GPU; anything near these limits is a hung worker
 # or a busy model budget, and the studio is better off keeping its acoustic sync.
 _WORKER_TIMEOUT_S = 300.0
+# The CPU path takes about 0.6x the song's length (127 s for a 3.5 min song).
+_CPU_TIMEOUT_S = 900.0
 _LOCK_WAIT_S = 120.0
 
 # Remembers when the CTC subprocess has crashed with an access violation (0xc0000005).
 # After Demucs uses the GPU, torch's checkpoint mapper faults deterministically on this
 # machine, so retrying or re-attempting on the next song just wastes another 30-60s.
 _CTC_CRASHED = False
+# Set when the GPU path crashed: later runs this session align on the CPU instead.
+_CTC_CPU_ONLY = False
 
 
 def ctc_align_lyrics(
@@ -431,11 +462,12 @@ def ctc_align_lyrics(
     A fault cannot be caught from Python, so the aligner runs out-of-process and any
     failure simply means "no word alignment" and the caller keeps its acoustic sync.
     """
-    global _CTC_CRASHED
     lines = [str(l).strip() for l in lyrics_lines]
     if not any(lines) or not audio_path or not os.path.exists(audio_path):
         return None
     if _CTC_CRASHED:
+        global LAST_SKIP_REASON
+        LAST_SKIP_REASON = "The word aligner crashed earlier this session (low memory). Close big programs and restart VIDA."
         log.debug("[CTC Align] Skipped — aligner crashed earlier this session")
         return None
     missing = missing_dependency()
@@ -446,16 +478,60 @@ def ctc_align_lyrics(
         )
         return None
 
-    import json
-    import subprocess
-    import tempfile
-
     job = {
         "lyrics_lines": lines,
         "audio_path": audio_path,
         "vocal_segments": [list(s) for s in vocal_segments] if vocal_segments else None,
         "min_confidence": min_confidence,
     }
+    result = _run_worker(job)
+    aligned = result.get("lines") if result else None
+    if aligned is None:
+        log.warning("[CTC Align] word aligner unavailable on this machine; keeping acoustic sync")
+    return aligned
+
+
+# The worker peaks at ~4 GB of committed memory (measured 3.6-4.1 GB; most of it is torch itself,
+# the model weights are ~1.2 GB). With less free than this, torch faults instead of raising.
+MIN_FREE_COMMIT_GB = 4.5
+# Why the last run did not word-align, in words the studio can show ("" when it did).
+LAST_SKIP_REASON = ""
+
+
+def free_commit_gb() -> Optional[float]:
+    """Memory Windows can still promise to a new program (RAM + page file), in GB, or None if unknown."""
+    try:
+        import ctypes
+
+        class _MemStatus(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+        status = _MemStatus()
+        status.dwLength = ctypes.sizeof(_MemStatus)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return None
+        return status.ullAvailPageFile / 2**30
+    except Exception:
+        return None
+
+
+def _run_worker(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Runs one job in a throwaway aligner process under the shared model budget."""
+    global LAST_SKIP_REASON
+    LAST_SKIP_REASON = ""
+    free = free_commit_gb()
+    if free is not None and free < MIN_FREE_COMMIT_GB:
+        LAST_SKIP_REASON = (f"Not enough free memory for the word aligner ({free:.1f} GB free, it needs about "
+                            f"{MIN_FREE_COMMIT_GB:.1f} GB). Close big programs (CapCut, browser tabs) and align again.")
+        log.warning(f"[CTC Align] {LAST_SKIP_REASON}")
+        return None
+    import json
+    import subprocess
+    import tempfile
+
     fd, job_path = tempfile.mkstemp(prefix="vida_ctc_job_", suffix=".json")
     out_path = job_path.replace("vida_ctc_job_", "vida_ctc_res_")
     try:
@@ -470,37 +546,44 @@ def ctc_align_lyrics(
         torch = sys.modules.get("torch")
         if torch is not None and torch.cuda.is_available():
             torch.cuda.empty_cache()
-        def _aligned_lines():
-            global _CTC_CRASHED
+
+        def _run():
+            global _CTC_CRASHED, _CTC_CPU_ONLY, LAST_SKIP_REASON
             for attempt in (1, 2):
+                on_cpu = _CTC_CPU_ONLY
+                run_env = dict(env, CUDA_VISIBLE_DEVICES="-1") if on_cpu else env
                 proc = subprocess.run(
                     [sys.executable, "-m", "backend.ctc_worker", job_path, out_path],
-                    cwd=_REPO_ROOT, env=env, timeout=_WORKER_TIMEOUT_S,
+                    cwd=_REPO_ROOT, env=run_env, timeout=_CPU_TIMEOUT_S if on_cpu else _WORKER_TIMEOUT_S,
                     stdout=None, stderr=subprocess.PIPE, text=True, errors="replace",
                 )
                 if proc.returncode == 0 and os.path.exists(out_path):
                     with open(out_path, encoding="utf-8") as handle:
-                        return json.load(handle).get("lines")
+                        return json.load(handle)
                 if os.path.exists(out_path):
                     os.remove(out_path)
                 tail = " | ".join((proc.stderr or "").strip().splitlines()[-2:])
-                log.warning(f"[CTC Align] aligner process exited {proc.returncode:#x} (attempt {attempt}): {tail}")
-                # Access violation (0xc0000005) is deterministic after Demucs GPU use —
-                # retrying just wastes another 30-60s on the same crash.
+                where = "CPU" if on_cpu else "GPU"
+                log.warning(f"[CTC Align] aligner process exited {proc.returncode:#x} on {where} (attempt {attempt}): {tail}")
                 if proc.returncode in (0xc0000005, -0x3FFFFFFB, -1073741819):
-                    _CTC_CRASHED = True
-                    log.warning("[CTC Align] Access violation — disabling CTC for this session")
-                    return None
+                    if on_cpu:
+                        LAST_SKIP_REASON = ("The word aligner crashed, most likely for lack of free memory. "
+                                            "Close big programs (CapCut, browser tabs) and restart VIDA.")
+                        _CTC_CRASHED = True
+                        log.warning("[CTC Align] Access violation on CPU too — word aligner disabled for this session")
+                        return None
+                    # The crash is in the GPU library (seen right after vocal separation used the
+                    # GPU). The CPU path avoids it: measured on a 3.5 min song, 127 s with the
+                    # same quality, so the rest of this session aligns on the CPU.
+                    _CTC_CPU_ONLY = True
+                    log.warning("[CTC Align] Access violation on GPU — retrying on CPU, and using CPU for this session")
             return None
 
         try:
-            aligned = run_locked(_aligned_lines, timeout=_LOCK_WAIT_S)
+            return run_locked(_run, timeout=_LOCK_WAIT_S)
         except TimeoutError as busy:
             log.warning(f"[CTC Align] {busy}; keeping acoustic sync")
             return None
-        if aligned is None:
-            log.warning("[CTC Align] word aligner unavailable on this machine; keeping acoustic sync")
-        return aligned
     except Exception as e:
         log.warning(f"[CTC Align] aligner process failed: {e}")
         return None
