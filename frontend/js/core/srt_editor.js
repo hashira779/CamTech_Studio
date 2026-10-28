@@ -10,6 +10,7 @@
  */
 
 import { state } from './state.js';
+import { saveLyrics } from './lyrics_store.js';
 
 // ─── Time Formatting Utilities ───
 
@@ -621,18 +622,12 @@ function loadCuesFromState() {
   selectedCueIndices.clear();
 }
 
-/** Applies editor cues back to the studio state */
+/** Applies editor cues back to the studio state, and saves them to the song's subtitle files */
 function applyCuesToState(showToastFn) {
   state.lyrics = editorCues.map(cloneCue);
-  try {
-    localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics));
-  } catch (err) {
-    console.warn('Could not save applied subtitles locally:', err);
-    if (showToastFn) showToastFn('Subtitles Applied', 'Cues synced to studio, but local saving failed.', 'warning', 3000);
-    return;
-  }
+  saveLyrics();
   if (showToastFn) {
-    showToastFn('Subtitles Applied', `${editorCues.length} cues synced to studio and saved locally.`, 'success', 2500);
+    showToastFn('Subtitles Applied', `${editorCues.length} cues synced to studio and saved.`, 'success', 2500);
   }
 }
 

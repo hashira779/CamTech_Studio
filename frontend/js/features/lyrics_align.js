@@ -3,6 +3,7 @@
 // open the same dialog, so there is one flow to learn and one code path to keep working.
 
 import { state } from '../core/state.js';
+import { cacheLyrics } from '../core/lyrics_store.js';
 import { showToast } from '../ui/feedback.js';
 import { initPasteCheck } from './paste_check.js';
 import { remapTranslationToLyrics } from '../core/translation.js';
@@ -181,7 +182,7 @@ export function initLyricsAlign({ setGlobalProgress, renderLyrics, save = async 
       }
       const oldLyrics = state.lyrics || [];
       const kept = applySyncResult(data.lyrics);
-      try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch (_) {}
+      cacheLyrics(state.lyrics);
       // The translation follows each line by its text, so new or split lines never shift it.
       const hadTranslation = (state.translation?.lines || []).some((l) => (l?.text || '').trim());
       const untranslated = hadTranslation ? await remapTranslationToLyrics(oldLyrics) : 0;

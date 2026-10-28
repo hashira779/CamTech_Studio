@@ -12,6 +12,7 @@ import { initLyricsReview, updateLyricsReview, setUnlistedSinging, setTimingSour
 import { initTapSync } from './features/tap_sync.js';
 import { initLineTiming } from './features/line_timing.js';
 import { applySyncResult, initSyncKeep } from './features/sync_keep.js';
+import { cacheLyrics, saveLyrics, pickNewer } from './core/lyrics_store.js';
 import {
   initTranslationTrack,
   loadTranslationForSong,
@@ -174,10 +175,13 @@ document.addEventListener('DOMContentLoaded', () => {
       .then(r => r.json())
       .then(data => {
         if (data && data.status === 'success' && Array.isArray(data.lyrics) && data.lyrics.length > 0) {
-          // If server file has more lines or different line count, upgrade to server's authentic file
-          if (!state.lyrics || state.lyrics.length < data.lyrics.length || data.lyrics.length >= 30) {
+          // The newer copy wins. This browser's copy is only newer when the last save could not
+          // reach the file, so write it there now; otherwise the saved file is the truth.
+          if (state.lyrics?.length && pickNewer(audioTargetInit, data.modified) === 'local') {
+            saveLyrics();
+          } else {
             state.lyrics = data.lyrics;
-            try { localStorage.setItem('vida_lyrics', JSON.stringify(data.lyrics)); } catch(_) {}
+            cacheLyrics(state.lyrics);
             renderLyricsTeleprompter(state.lyrics, true);
             setStudioPipelineProgress(3, 100, `${state.lyrics.length} authentic lines loaded (100%)`, 'Lyrics Synced');
           }
@@ -1667,7 +1671,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setGlobalProgress(100, true, 'Lyric timing checked');
         if (data.status === 'success' && data.lyrics) {
           const kept = applySyncResult(data.lyrics);
-          try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(e) {}
+          cacheLyrics(state.lyrics);
           renderLyricsTeleprompter(state.lyrics, true);
           if (kept) await saveTimings();
           showToast(
@@ -1706,7 +1710,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const data = await res.json();
         if (data && data.status === 'success' && Array.isArray(data.lyrics) && data.lyrics.length > 0) {
           state.lyrics = data.lyrics;
-          try { localStorage.setItem('vida_lyrics', JSON.stringify(data.lyrics)); } catch(_) {}
+          cacheLyrics(data.lyrics);
           renderLyricsTeleprompter(state.lyrics, true);
           setStudioPipelineProgress(3, 100, `${state.lyrics.length} authentic lines loaded (100%)`, 'Lyrics Synced');
           showToast('Subtitles Reloaded', `Loaded all ${data.lyrics.length} complete lines from ${data.file || 'server disk'}!`, 'success', 3500);
@@ -1739,7 +1743,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const subData = await subRes.json();
           if (subData && subData.status === 'success' && Array.isArray(subData.lyrics) && subData.lyrics.length > (state.lyrics ? state.lyrics.length : 0)) {
             state.lyrics = subData.lyrics;
-            try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(_) {}
+            cacheLyrics(state.lyrics);
             renderLyricsTeleprompter(state.lyrics, true);
           }
         } catch(_) {}
@@ -1766,7 +1770,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setGlobalProgress(100, true, 'Timing Re-Sync Complete');
         if (data.status === 'success' && data.lyrics && data.lyrics.length > 0) {
           const kept = applySyncResult(data.lyrics);
-          try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(e) {}
+          cacheLyrics(state.lyrics);
           renderLyricsTeleprompter(state.lyrics, true);
           if (kept) await saveTimings();
           setUnlistedSinging(data.unlisted, state.lyrics.length);
@@ -1793,17 +1797,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Saves the lines to the song's subtitle files and this browser's copy, together.
   async function persistSubtitleChanges() {
-    const audioFilePath = state.audioServerPath || state.audioPath || window.__VIDA_SERVER_PATH || '';
-    if (audioFilePath && state.lyrics && state.lyrics.length > 0) {
-      try {
-        await fetch('/api/subtitles/save', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lyrics_data: state.lyrics, audio_path: audioFilePath })
-        });
-      } catch(_) {}
-    }
+    await saveLyrics();
   }
 
   function shiftLyricsEarlier(amount = 0.5) {
@@ -1835,7 +1831,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       prevEnd = newEnd;
     });
-    try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(e) {}
+    cacheLyrics(state.lyrics);
     renderLyricsTeleprompter(state.lyrics, true);
     persistSubtitleChanges();
     showToast('Show Earlier', `Lyric timing increased by +${amount}s earlier (now showing earlier before vocals).`, 'success', 2500);
@@ -1860,7 +1856,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
     });
-    try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(e) {}
+    cacheLyrics(state.lyrics);
     renderLyricsTeleprompter(state.lyrics, true);
     persistSubtitleChanges();
     showToast('⏪ Show Later', `All lyrics delayed by ${amount}s later.`, 'success', 2000);
@@ -1901,7 +1897,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setGlobalProgress(100, true, 'Words Fixed');
         if (data.status === 'success' && data.lyrics) {
           state.lyrics = data.lyrics;
-          try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(e) {}
+          await saveLyrics();
           renderLyricsTeleprompter(state.lyrics, true);
           showToast(
             'Words Fixed (Structure Preserved)',
@@ -1951,7 +1947,7 @@ document.addEventListener('DOMContentLoaded', () => {
               state.lyrics[idx].text = item.text;
             }
           });
-          try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch (_) {}
+          await saveLyrics();
           renderLyricsTeleprompter(state.lyrics, true);
           showToast(
             'Khmer Lyrics Refined',
@@ -2167,7 +2163,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const newText = e.target.textContent.trim();
         if (newText !== line.text) {
           state.lyrics[index].text = newText;
-          try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(_) {}
+          cacheLyrics(state.lyrics);
           if (typeof persistSubtitleChanges === 'function') {
             await persistSubtitleChanges();
           }
@@ -2416,7 +2412,7 @@ document.addEventListener('DOMContentLoaded', () => {
       localStorage.setItem('vida_song_title', state.songTitle);
       localStorage.setItem('vida_artist_name', state.artistName);
       if (lyrics && lyrics.length > 0) {
-        localStorage.setItem('vida_lyrics', JSON.stringify(lyrics));
+        cacheLyrics(lyrics);
       } else {
         localStorage.removeItem('vida_lyrics');
       }
@@ -2607,7 +2603,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const subCheckData = await subCheckRes.json();
       if (subCheckData && subCheckData.status === 'success' && subCheckData.lyrics && subCheckData.source === 'subtitle') {
         state.lyrics = subCheckData.lyrics;
-        try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(_) {}
+        cacheLyrics(state.lyrics);
         renderLyricsTeleprompter(state.lyrics, true);
         if (btnTranscribe) clearButtonLoading(btnTranscribe, 'Lyrics Synced (100%)');
         setStudioPipelineProgress(3, 100, `${state.lyrics.length} authentic lines synced from verified captions (100%)`, 'Lyrics Synced');
@@ -3327,7 +3323,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderLyricsTeleprompter(state.lyrics);
         if (kept) await saveTimings();
         try {
-          localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics));
+          cacheLyrics(state.lyrics);
           if (state.audioServerPath) localStorage.setItem('vida_audio_server_path', state.audioServerPath);
           if (state.songTitle) localStorage.setItem('vida_song_title', state.songTitle);
           if (state.artistName) localStorage.setItem('vida_artist_name', state.artistName);

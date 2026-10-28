@@ -6,6 +6,7 @@
 //   - the lyrics as they were before the sync are kept, and "↶ Undo last sync" brings them back.
 
 import { state } from '../core/state.js';
+import { cacheLyrics } from '../core/lyrics_store.js';
 import { showToast } from '../ui/feedback.js';
 import { refit } from './tap_sync.js';
 
@@ -96,7 +97,7 @@ export function initSyncKeep({ renderLyrics, save, onRestore = async () => {} })
     // Swap, so pressing it again redoes the sync.
     try { localStorage.setItem(PREV_KEY, JSON.stringify({ song: songKey(), lyrics: current })); } catch (_) {}
     state.lyrics = saved.lyrics;
-    try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch (_) {}
+    cacheLyrics(state.lyrics);
     await onRestore(current);
     renderLyrics(state.lyrics);
     await save();

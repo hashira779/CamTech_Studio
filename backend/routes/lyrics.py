@@ -108,7 +108,9 @@ def get_subtitles_api(audio_path: Optional[str] = None):
     if not sub_path or not os.path.exists(sub_path):
         return not_found
     lyrics = parse_subtitle_file(sub_path)
-    return {"status": "success", "file": sub_path, "count": len(lyrics), "lyrics": lyrics}
+    # When the file was last saved, so the studio can tell whether its browser copy is newer.
+    return {"status": "success", "file": sub_path, "count": len(lyrics), "lyrics": lyrics,
+            "modified": os.path.getmtime(sub_path)}
 
 
 @router.post("/api/subtitles/save")

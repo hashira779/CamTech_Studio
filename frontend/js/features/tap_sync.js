@@ -6,6 +6,7 @@
 // relative places inside the line. A tapped line counts as confirmed, so it is no longer "unsure".
 
 import { state } from '../core/state.js';
+import { cacheLyrics } from '../core/lyrics_store.js';
 import { showToast } from '../ui/feedback.js';
 import { escapeHtml } from '../core/translation.js';
 
@@ -130,7 +131,7 @@ export function initTapSync({ renderLyrics, save }) {
     target = -1;
     undo = [];
     if (!count) return;
-    try { localStorage.setItem('vida_lyrics', JSON.stringify(lines())); } catch (_) {}
+    cacheLyrics(lines());
     await save();
     showToast('Tap Sync Saved', `${count} line${count > 1 ? 's' : ''} timed by your taps.`, 'success', 4000);
   };

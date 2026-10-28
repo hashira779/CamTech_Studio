@@ -8,6 +8,7 @@
 // line it was sure of, and re-times those lines word by word.
 
 import { state } from '../core/state.js';
+import { cacheLyrics } from '../core/lyrics_store.js';
 import { showToast } from '../ui/feedback.js';
 import { refit } from './tap_sync.js';
 
@@ -162,7 +163,7 @@ export function initLineTiming({ renderLyrics, save }) {
     if (Math.abs(applied - t) > 0.005) {
       showToast('Time Adjusted', `Kept the lines in order: set to ${formatClock(applied)} instead.`, 'info', 3500);
     }
-    try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch (_) {}
+    cacheLyrics(state.lyrics);
     await save();
     if (result.moved && RELISTEN) relistenAfter(index, result.moved);
     else if (result.moved) showToast('Lines After Moved Too', `The ${result.moved} unsure line${result.moved > 1 ? 's' : ''} after it moved by the same amount. Play them to check.`, 'info', 4000);
@@ -181,7 +182,7 @@ export function initLineTiming({ renderLyrics, save }) {
     const sure = await relistenStretch(index, moved);
     if (sure === null) return; // the shifted timing stays
     renderLyrics(state.lyrics || []);
-    try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch (_) {}
+    cacheLyrics(state.lyrics);
     await save();
     showToast('Lines After Re-timed', sure
       ? `Listened again: ${sure} of ${moved} line${plural ? 's are' : ' is'} now heard clearly. Play the rest to check.`
