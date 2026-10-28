@@ -27,8 +27,10 @@ log = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[int, str], None]
 
-# Below this the acoustic model barely heard the words; the studio marks those lines for review.
-LOW_LINE_CONFIDENCE = 0.4
+# Below this a line's timing is likely off, so the studio marks it for review. Calibrated on 154
+# repeated-line pairs across 7 Khmer songs: lines at 0.2-0.4 sat within 0.5 s of their twin
+# 79-89% of the time (as often as confident lines), below 0.2 only 43-56%, with many off by >2 s.
+LOW_LINE_CONFIDENCE = 0.2
 
 
 class AlignmentError(HTTPException):
@@ -56,15 +58,20 @@ _INSTRUMENTAL = re.compile(
     re.IGNORECASE,
 )
 _PUNCTUATION_ONLY = re.compile(r'^[()\[\]{}<>\s.…·\-–—~:;!?។៕,]+$')
+# Labels written in square brackets are never sung: song sections ([Verse 1], [Chorus],
+# [Pre-Chorus]) and singer tags ([Singer 1], [Both / Duet]). A whole-line label is dropped and a
+# label in front of a lyric is removed. Backing vocals stay: they are written in ( ) and sung.
+_BRACKET_LABEL = re.compile(r'^\s*\[[^\[\]\n]{1,40}\]\s*')
 
 
-def parse_reference_lyrics(text: str) -> List[str]:
+def parse_reference_rows(text: str) -> List[Tuple[int, str]]:
     """
-    The sung lines of pasted lyrics: drops LRC headers, timestamps, list markers, speaker tags,
-    instrumental markers and punctuation-only lines, and keeps every real line in order.
+    The sung lines of pasted lyrics with the pasted row each came from: drops LRC headers,
+    timestamps, list markers, speaker tags, [section / singer] labels, instrumental markers and
+    punctuation-only lines.
     """
-    lines = []
-    for raw in text.splitlines():
+    rows = []
+    for row, raw in enumerate(text.splitlines()):
         line = raw.strip()
         if not line or _LRC_TAG.match(line):
             continue
@@ -72,9 +79,16 @@ def parse_reference_lyrics(text: str) -> List[str]:
         line = _LRC_TIME.sub('', line)
         line = _SRT_TIME.sub('', line)
         line = _SPEAKER_TAG.sub('', line).strip()
+        while _BRACKET_LABEL.match(line):
+            line = _BRACKET_LABEL.sub('', line, count=1).strip()
         if line and not _INSTRUMENTAL.match(line) and not _PUNCTUATION_ONLY.match(line):
-            lines.append(line)
-    return lines
+            rows.append((row, line))
+    return rows
+
+
+def parse_reference_lyrics(text: str) -> List[str]:
+    """The sung lines of pasted lyrics, in order (see parse_reference_rows)."""
+    return [line for _, line in parse_reference_rows(text)]
 
 
 # --- Locating the audio ----------------------------------------------------------------------

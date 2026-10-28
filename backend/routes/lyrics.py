@@ -217,6 +217,25 @@ def ai_fix_subtitles_api(req: SubtitleAIFixRequest):
 
 # --- Align to the singer ---------------------------------------------------------------------
 
+def _timing_note(source: str) -> str:
+    """Why the word aligner was not used, for the studio to show next to a rough result."""
+    if source == "ctc_word_alignment":
+        return ""
+    from backend import ctc_align
+    return ctc_align.LAST_SKIP_REASON
+
+
+def _unlisted(lines: List[Dict[str, Any]], audio_p: str) -> List[Dict[str, Any]]:
+    """Where someone sings words the lyrics do not contain. A helper: never fails the alignment."""
+    try:
+        from backend.services.lyric_review import unlisted_singing
+        from backend.vocal_align import detect_vocal_segments
+        return unlisted_singing(lines, detect_vocal_segments(audio_p))
+    except Exception as e:
+        log.warning(f"[Lyrics Align] Unlisted-singing check skipped: {e}")
+        return []
+
+
 @router.post("/api/subtitles/align-audio")
 def align_subtitles_to_audio_api(req: SubtitleAIFixRequest):
     """Re-times the loaded lines against the singer, keeping their text."""
@@ -236,8 +255,49 @@ def align_subtitles_to_audio_api(req: SubtitleAIFixRequest):
         "count": len(verified),
         "lyrics": verified,
         "report": report,
+        "unlisted": _unlisted(verified, audio_p),
+        "timing_note": _timing_note(source),
         "srt_content": export_subtitles_to_srt(verified),
     }
+
+
+class PasteCheckRequest(BaseModel):
+    reference_text: str
+
+
+@router.post("/api/lyrics/check-paste")
+def check_paste_api(req: PasteCheckRequest):
+    """
+    Rows that seem left out of pasted lyrics, found from the song's own repeats (no audio needed),
+    and rows that write one phrase twice, which the user may want shown as two lines.
+    Each group is one gap; a group with two options is a gap the text alone cannot place, so the
+    user picks. `insert_after_row` is the pasted row (0-based, -1 for the top) to insert after.
+    """
+    from backend.services.lyric_alignment import parse_reference_rows
+    from backend.services.lyric_review import doubled_rows, missing_row_groups
+    rows = parse_reference_rows(req.reference_text or "")
+    lines = [text for _, text in rows]
+    groups = []
+    for group in missing_row_groups(lines):
+        options = []
+        for m in group:
+            a = m["after"]
+            options.append({
+                "text": m["text"],
+                "after_line": a + 1,  # 1-based sung line the row goes after
+                "insert_after_row": rows[a][0] if a >= 0 else -1,
+                "before": lines[a] if a >= 0 else "",
+                "next": lines[a + 1] if a + 1 < len(lines) else "",
+                "copied_from_line": m["source"] + 1,
+            })
+        groups.append(options)
+    doubled = [{
+        "phrase": g["phrase"],
+        "halves": g["halves"],
+        "lines": [i + 1 for i in g["lines"]],  # 1-based, for the message
+        "rows": [rows[i][0] for i in g["lines"]],  # pasted rows to split
+    } for g in doubled_rows(lines)]
+    return {"status": "success", "lines_count": len(lines), "missing": groups, "doubled": doubled}
 
 
 @router.post("/api/lyrics/correct-with-reference")
@@ -277,5 +337,7 @@ def correct_lyrics_with_reference_api(req: LyricsCorrectReferenceRequest):
         "source": source,
         "report": report,
         "unsure_lines": unsure,
+        "unlisted": _unlisted(aligned, audio_p),
+        "timing_note": _timing_note(source),
         "lyrics": aligned,
     }
