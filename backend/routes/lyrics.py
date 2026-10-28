@@ -261,6 +261,38 @@ def align_subtitles_to_audio_api(req: SubtitleAIFixRequest):
     }
 
 
+class RelistenRequest(BaseModel):
+    lines: List[str]
+    start: float
+    end: float
+    audio_path: Optional[str] = None
+
+
+@router.post("/api/subtitles/relisten")
+def relisten_api(req: RelistenRequest):
+    """
+    Hears only [start, end] of the song again and times these lines inside it. Used after the
+    user fixes the first line of an unsure stretch: their time is where the stretch starts, and
+    the next line the aligner was sure of is where it must end, so the aligner has far fewer
+    places to get lost than in the whole song. Returns the lines with words and confidence.
+    """
+    from backend import ctc_align
+    from backend.vocal_align import detect_vocal_segments
+    lines = [str(l).strip() for l in req.lines if str(l).strip()]
+    if not lines or req.end - req.start < 0.5:
+        raise HTTPException(status_code=400, detail="Nothing to listen to")
+    audio_p = require_audio_file(req.audio_path)
+    try:
+        segments = detect_vocal_segments(audio_p)
+    except Exception:
+        segments = []
+    aligned = ctc_align.ctc_align_lyrics(lines, audio_p, vocal_segments=segments, min_confidence=0.0,
+                                         window=(max(0.0, req.start), req.end))
+    if not aligned or len(aligned) != len(lines):
+        return {"status": "unavailable", "detail": ctc_align.LAST_SKIP_REASON or "The aligner could not hear these lines."}
+    return {"status": "success", "lines": aligned}
+
+
 class PasteCheckRequest(BaseModel):
     reference_text: str
 

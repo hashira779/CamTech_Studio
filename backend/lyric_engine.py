@@ -47,9 +47,12 @@ def _ensure_nvidia_dll_paths():
     except Exception:
         pass
     try:
-        import torch
-        torch_lib = os.path.join(os.path.dirname(torch.__file__), "lib")
-        if os.path.isdir(torch_lib):
+        # Find torch's folder without importing it: importing torch costs ~1 GB of memory,
+        # which the word aligner's worker process needs for itself.
+        import importlib.util
+        spec = importlib.util.find_spec("torch")
+        torch_lib = os.path.join(os.path.dirname(spec.origin), "lib") if spec and spec.origin else ""
+        if torch_lib and os.path.isdir(torch_lib):
             try:
                 os.add_dll_directory(torch_lib)
             except Exception:

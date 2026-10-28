@@ -79,7 +79,12 @@ def missing_dependency() -> Optional[str]:
     little address space to load its checkpoint, which faults instead of raising.
     """
     import importlib.util
-    for module in ("torch", "torchaudio", "uroman"):
+    try:
+        from backend import onnx_aligner
+    except ImportError:
+        import onnx_aligner
+    needed = ("uroman",) if onnx_aligner.is_available() else ("torch", "torchaudio", "uroman")
+    for module in needed:
         try:
             if importlib.util.find_spec(module) is None:
                 return module
@@ -142,26 +147,56 @@ def _load_audio(audio_path: str):
     return data.astype(np.float32, copy=False)
 
 
-def compute_emission(audio_path: str):
-    """Per-frame log-probabilities (T, C) over the aligner vocabulary, cached per file."""
-    import torch
+def _onnx():
+    try:
+        from backend import onnx_aligner
+    except ImportError:
+        import onnx_aligner
+    return onnx_aligner
+
+
+def _vocab() -> Dict[str, int]:
+    ox = _onnx()
+    return ox.get_vocab() if ox.is_available() else _get_model()[1]
+
+
+def compute_emission(audio_path: str, window: Optional[Tuple[float, float]] = None):
+    """
+    Per-frame log-probabilities (T, C) over the aligner vocabulary as a float32 numpy array,
+    cached per file. Uses the light ONNX model when it is installed, torch otherwise.
+    With `window` (start, end seconds) only that stretch is heard; frame 0 is its start.
+    """
     try:
         from backend.vocal_align import get_cached_vocals_path
     except ImportError:
         from vocal_align import get_cached_vocals_path
 
     target = get_cached_vocals_path(audio_path) or audio_path
-    key = (os.path.abspath(target), os.path.getmtime(target))
+    key = (os.path.abspath(target), os.path.getmtime(target), window)
     if key in _EMISSION_CACHE:
         return _EMISSION_CACHE[key]
 
+    def audio():
+        data = _load_audio(target)
+        if window:
+            data = data[max(0, int(window[0] * SAMPLE_RATE)):max(0, int(window[1] * SAMPLE_RATE))]
+        return data
+
+    ox = _onnx()
+    if ox.is_available():
+        emission = ox.emission(audio(), SAMPLE_RATE, _HOP, _CHUNK_S, _CONTEXT_S)
+        _EMISSION_CACHE.clear()
+        _EMISSION_CACHE[key] = emission
+        return emission
+
+    import torch
     model, _ = _get_model()
     try:
         device = next(model.parameters()).device
     except Exception:
         device = torch.device("cpu")
 
-    data = _load_audio(target)
+    data = audio()
     n = len(data)
     chunk = int(_CHUNK_S * SAMPLE_RATE) // _HOP * _HOP
     ctx = int(_CONTEXT_S * SAMPLE_RATE) // _HOP * _HOP
@@ -180,7 +215,7 @@ def compute_emission(audio_path: str):
             if em.shape[0] < core:
                 em = torch.cat([em, em[-1:].expand(core - em.shape[0], -1)])
             pieces.append(em)
-    emission = torch.cat(pieces) if pieces else torch.zeros(0, len(_DICT))
+    emission = (torch.cat(pieces) if pieces else torch.zeros(0, len(_DICT))).float().numpy()
 
     _EMISSION_CACHE.clear()
     _EMISSION_CACHE[key] = emission
@@ -199,17 +234,19 @@ def _ctc_align_lyrics_inproc(
     audio_path: str,
     vocal_segments: Optional[List[Tuple[float, float]]] = None,
     min_confidence: float = MIN_CONFIDENCE,
+    window: Optional[Tuple[float, float]] = None,
 ) -> Optional[List[Dict[str, Any]]]:
     """
     Aligns every lyric word to the moment it is sung. Returns None when the model is unavailable
     or the lyrics clearly do not match the audio (caller should fall back to energy-based sync).
+    With `window` (start, end in seconds), only that stretch of the song is heard: the lines
+    must be sung inside it, and the times returned are still song times.
     """
     lines = [str(l).strip() for l in lyrics_lines]
     if not any(lines) or not audio_path or not os.path.exists(audio_path) or not is_available():
         return None
 
-    import torch
-    import torchaudio.functional as AF
+    import numpy as np
     try:
         from backend.lyric_engine import tokenize_line_words, compute_weighted_word_timestamps
         from backend.vocal_align import get_cached_vocals_path, detect_vocal_segments
@@ -218,8 +255,8 @@ def _ctc_align_lyrics_inproc(
         from vocal_align import get_cached_vocals_path, detect_vocal_segments
 
     try:
-        _, vocab = _get_model()
-        emission = compute_emission(audio_path)
+        vocab = _vocab()
+        emission = compute_emission(audio_path, window)
     except Exception as e:
         log.warning(f"[CTC Align] Acoustic model unavailable: {e}")
         return None
@@ -247,23 +284,25 @@ def _ctc_align_lyrics_inproc(
         log.info("[CTC Align] Lyrics too long for audio or nothing to align")
         return None
 
-    em = torch.cat([emission, torch.full((T, 1), _STAR_LOGP, dtype=emission.dtype)], dim=1)
+    ox = _onnx()
+    em = np.concatenate([emission, np.full((T, 1), _STAR_LOGP, dtype=np.float32)], axis=1)
     try:
-        ali, scores = AF.forced_align(em.unsqueeze(0), torch.tensor([targets], dtype=torch.int32), blank=0)
+        ali, scores = ox.forced_align(em, targets, blank=0)
     except Exception as e:
         log.warning(f"[CTC Align] Forced alignment failed: {e}")
         return None
-    spans = AF.merge_tokens(ali[0], scores[0].exp(), blank=0)
+    spans = ox.merge_tokens(ali, np.exp(scores), blank=0)
     if len(spans) != len(targets):
         log.warning(f"[CTC Align] Token span mismatch ({len(spans)} vs {len(targets)})")
         return None
 
+    offset = window[0] if window else 0.0
     timed: Dict[Tuple[int, int], Tuple[float, float, float]] = {}
     line_scores: Dict[int, List[float]] = {}
     for li, wi, a, b in word_slots:
         ws = spans[a:b + 1]
         word_conf = sum(float(x.score) for x in ws) / len(ws)
-        timed[(li, wi)] = (ws[0].start * _FRAME_S, ws[-1].end * _FRAME_S, word_conf)
+        timed[(li, wi)] = (offset + ws[0].start * _FRAME_S, offset + ws[-1].end * _FRAME_S, word_conf)
         line_scores.setdefault(li, []).extend(float(s.score) for s in ws)
 
     all_scores = [s for v in line_scores.values() for s in v]
@@ -453,9 +492,11 @@ def ctc_align_lyrics(
     audio_path: str,
     vocal_segments: Optional[List[Tuple[float, float]]] = None,
     min_confidence: float = MIN_CONFIDENCE,
+    window: Optional[Tuple[float, float]] = None,
 ) -> Optional[List[Dict[str, Any]]]:
     """
-    Word-level sync for the studio, run in a throwaway process.
+    Word-level sync for the studio, run in a throwaway process. With `window` (start, end
+    seconds) only that stretch of the song is heard (see _ctc_align_lyrics_inproc).
 
     Loading the wav2vec2 checkpoint right after Demucs has used the GPU faults inside
     torch's file reader on Windows (measured: 4/4 native access violations, exit 139).
@@ -483,6 +524,7 @@ def ctc_align_lyrics(
         "audio_path": audio_path,
         "vocal_segments": [list(s) for s in vocal_segments] if vocal_segments else None,
         "min_confidence": min_confidence,
+        "window": list(window) if window else None,
     }
     result = _run_worker(job)
     aligned = result.get("lines") if result else None
@@ -491,9 +533,11 @@ def ctc_align_lyrics(
     return aligned
 
 
-# The worker peaks at ~4 GB of committed memory (measured 3.6-4.1 GB; most of it is torch itself,
+# The worker peaks at ~4 GB of committed memory (measured 3.6-4.5 GB; most of it is torch itself,
 # the model weights are ~1.2 GB). With less free than this, torch faults instead of raising.
 MIN_FREE_COMMIT_GB = 4.5
+# The same model on onnxruntime, without torch (backend/onnx_aligner.py): peak PEAK_ONNX_GB.
+MIN_FREE_COMMIT_GB_ONNX = 3.0
 # Why the last run did not word-align, in words the studio can show ("" when it did).
 LAST_SKIP_REASON = ""
 
@@ -522,10 +566,12 @@ def _run_worker(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Runs one job in a throwaway aligner process under the shared model budget."""
     global LAST_SKIP_REASON
     LAST_SKIP_REASON = ""
+    light = _onnx().is_available()
+    need = MIN_FREE_COMMIT_GB_ONNX if light else MIN_FREE_COMMIT_GB
     free = free_commit_gb()
-    if free is not None and free < MIN_FREE_COMMIT_GB:
+    if free is not None and free < need:
         LAST_SKIP_REASON = (f"Not enough free memory for the word aligner ({free:.1f} GB free, it needs about "
-                            f"{MIN_FREE_COMMIT_GB:.1f} GB). Close big programs (CapCut, browser tabs) and align again.")
+                            f"{need:.1f} GB). Close big programs (CapCut, browser tabs) and align again.")
         log.warning(f"[CTC Align] {LAST_SKIP_REASON}")
         return None
     import json
@@ -550,7 +596,7 @@ def _run_worker(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         def _run():
             global _CTC_CRASHED, _CTC_CPU_ONLY, LAST_SKIP_REASON
             for attempt in (1, 2):
-                on_cpu = _CTC_CPU_ONLY
+                on_cpu = _CTC_CPU_ONLY or light  # onnxruntime runs on the CPU
                 run_env = dict(env, CUDA_VISIBLE_DEVICES="-1") if on_cpu else env
                 proc = subprocess.run(
                     [sys.executable, "-m", "backend.ctc_worker", job_path, out_path],

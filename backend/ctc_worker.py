@@ -19,6 +19,7 @@ def _align(job) -> dict:
         job["audio_path"],
         vocal_segments=segments,
         min_confidence=job.get("min_confidence", MIN_CONFIDENCE),
+        window=tuple(job["window"]) if job.get("window") else None,
     )
     elapsed = time.time() - t0
     if lines:
