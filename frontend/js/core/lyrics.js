@@ -411,6 +411,16 @@ export function drawTranslationLine(ctx, w, h, text, anchorY, baseFontSize) {
   ctx.restore();
 }
 
+// Backing echoes are written after the lead words in parentheses: "lead line (echo...)".
+// They are sung, so they keep their place and timing in the line, but are drawn at this
+// opacity so the lead vocal reads first and the echo trails softly behind it.
+export const ECHO_ALPHA = 0.5;
+
+/** Index where a trailing "( ... )" echo starts in the line, or -1 when there is none. */
+export function echoStart(text) {
+  return String(text || '').indexOf('(');
+}
+
 export function drawLyrics(ctx, w, h) {
   if (!activeLyricState || state.showLyrics === false || state.lyricStyle === 'none') return;
 
@@ -560,6 +570,21 @@ export function drawLyrics(ctx, w, h) {
   }
 
   const startX = Math.max(24, (w - totalWidth) / 2);
+  // Echo part of the line: everything from "(" on is drawn softer, in every style below.
+  const echoIdx = echoStart(fullText);
+  const echoX = echoIdx >= 0 ? startX + ctx.measureText(fullText.substring(0, echoIdx)).width : null;
+  const fillLine = (x, y) => {
+    if (echoX === null) { ctx.fillText(fullText, x, y); return; }
+    ctx.save();
+    ctx.beginPath(); ctx.rect(-w, -h, echoX + w, 3 * h); ctx.clip();
+    ctx.fillText(fullText, x, y);
+    ctx.restore();
+    ctx.save();
+    ctx.beginPath(); ctx.rect(echoX, -h, 2 * w, 3 * h); ctx.clip();
+    ctx.globalAlpha *= ECHO_ALPHA;
+    ctx.fillText(fullText, x, y);
+    ctx.restore();
+  };
   const paddingX = fontSize * 0.80;
   const paddingY = fontSize * 0.72;
 
@@ -647,7 +672,7 @@ export function drawLyrics(ctx, w, h) {
   ctx.fillStyle = style === 'cinematic' ? 'rgba(255, 255, 255, 0.85)' : 'rgba(255, 255, 255, 0.72)';
   ctx.shadowColor = 'rgba(0, 0, 0, 0.75)';
   ctx.shadowBlur = 6;
-  ctx.fillText(fullText, startX, textY);
+  fillLine(startX, textY);
   ctx.restore();
 
   // ============ Render Kinetic Animations per Style ============
@@ -665,7 +690,7 @@ export function drawLyrics(ctx, w, h) {
     ctx.fillStyle = pal.highlight;
     ctx.shadowColor = pal.glow;
     ctx.shadowBlur = 18;
-    ctx.fillText(fullText, startX, textY);
+    fillLine(startX, textY);
     ctx.restore();
   } else if (style === 'glow' && activeWordBox) {
     // Neon bloom pulse on active word
@@ -676,12 +701,13 @@ export function drawLyrics(ctx, w, h) {
     ctx.fillStyle = '#ffffff';
     ctx.shadowColor = pal.glow;
     ctx.shadowBlur = 20 + Math.sin(activeWordBox.p * Math.PI) * 12;
-    ctx.fillText(fullText, startX, textY);
+    fillLine(startX, textY);
     ctx.restore();
   } else if (style === 'bounce' && activeWordBox) {
     // Kinetic vertical scale bounce on active word
     const bounceH = Math.sin(activeWordBox.p * Math.PI) * (fontSize * 0.28);
     ctx.save();
+    if (echoX !== null && activeWordBox.x0 >= echoX) ctx.globalAlpha *= ECHO_ALPHA;
     ctx.fillStyle = pal.highlight;
     ctx.shadowColor = pal.glow;
     ctx.shadowBlur = 16;
@@ -697,7 +723,7 @@ export function drawLyrics(ctx, w, h) {
       ctx.fillStyle = '#ffd700'; // Pure polished gold
       ctx.shadowColor = 'rgba(255, 215, 0, 0.75)';
       ctx.shadowBlur = 16;
-      ctx.fillText(fullText, startX, textY);
+      fillLine(startX, textY);
       ctx.restore();
     }
   } else {
@@ -712,12 +738,12 @@ export function drawLyrics(ctx, w, h) {
       ctx.fillStyle = pal.highlight;
       ctx.shadowColor = pal.glow;
       ctx.shadowBlur = 18;
-      ctx.fillText(fullText, startX, textY);
+      fillLine(startX, textY);
 
       // Top specular sheen
       ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
       ctx.shadowBlur = 4;
-      ctx.fillText(fullText, startX, textY);
+      fillLine(startX, textY);
       ctx.restore();
 
       // Brilliant leading edge light ray / glowing beam

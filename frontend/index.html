@@ -542,12 +542,31 @@
               <div class="ui-row ui-row--split">
                 <button id="btn-paste-align-lyrics" class="ui-btn ui-btn--go" title="Paste the song's real lyrics and match every word to the singer">Paste &amp; Align</button>
                 <div class="ui-row">
+                  <button id="btn-undo-sync" class="ui-btn ui-btn--sm" hidden title="Bring back the lyrics as they were before the last sync (press again to redo)">↶ Undo sync</button>
+                  <button id="btn-tap-sync" class="ui-btn ui-btn--sm" title="Play the song and press Enter the moment each line starts. Best for songs the aligner cannot hear well.">✋ Tap sync</button>
                   <button id="btn-fullscreen-teleprompter" class="ui-btn ui-btn--sm" title="Open the teleprompter full screen">Full</button>
                   <button id="btn-toggle-teleprompter" class="ui-btn ui-btn--sm" title="Hide or show the lyric list">Hide</button>
                   <button id="btn-clear-lyrics" class="ui-btn ui-btn--sm ui-btn--ghost" title="Remove the loaded lyric lines from the panel">Clear</button>
                 </div>
               </div>
 
+              <div id="tap-sync-bar" class="tap-bar" hidden>
+                <div class="tap-head">
+                  <b>Tap sync</b>
+                  <span class="tap-help">Press <kbd>Enter</kbd> the moment this line starts · <kbd>Backspace</kbd> undo · <kbd>Esc</kbd> done</span>
+                  <span id="tap-sync-count" class="tap-count"></span>
+                </div>
+                <div id="tap-sync-line" class="tap-line"></div>
+                <div class="ui-row">
+                  <button id="btn-tap-tap" class="ui-btn ui-btn--go">Tap (Enter)</button>
+                  <button id="btn-tap-undo" class="ui-btn ui-btn--sm">Undo</button>
+                  <button id="btn-tap-done" class="ui-btn ui-btn--sm ui-btn--ghost">Done</button>
+                </div>
+              </div>
+              <div id="lyrics-review-bar" class="tp-review" hidden>
+                <span id="lyrics-review-text" class="tp-review-text"></span>
+                <button id="btn-review-next" class="ui-btn ui-btn--sm" title="Jump to the next unsure line and play it">▶ Play next</button>
+              </div>
               <div id="lyrics-teleprompter" class="ui-tp">
                 <div class="teleprompter-empty">No lyrics loaded yet</div>
               </div>
@@ -1174,6 +1193,8 @@
                     placeholder="Paste the lyrics here…&#10;&#10;Timestamps, line numbers, [Music] and (Solo) markers are removed for you."></textarea>
           <span class="ui-hint">About 30 seconds. The first time for a new song also separates the voice from the music, which adds about a minute.</span>
         </div>
+
+        <div id="align-missing" class="align-missing" hidden aria-live="polite"></div>
       </div>
 
       <div class="ui-modal-ft">

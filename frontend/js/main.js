@@ -8,6 +8,10 @@ import { triggerCameraShake, triggerShockwave, triggerBloomFlash } from './plugi
 import { initSRTEditor } from './core/srt_editor.js';
 import { showToast, setButtonLoading, clearButtonLoading } from './ui/feedback.js';
 import { initLyricsAlign } from './features/lyrics_align.js';
+import { initLyricsReview, updateLyricsReview, setUnlistedSinging, setTimingSource } from './features/lyrics_review.js';
+import { initTapSync } from './features/tap_sync.js';
+import { initLineTiming } from './features/line_timing.js';
+import { applySyncResult, initSyncKeep } from './features/sync_keep.js';
 import {
   initTranslationTrack,
   loadTranslationForSong,
@@ -15,6 +19,7 @@ import {
   refineKhmerViaAI,
   updateSingleTranslationLine,
   persistTranslation,
+  remapTranslationToLyrics,
   setDisplayMode,
   escapeHtml
 } from './core/translation.js';
@@ -1661,14 +1666,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!res.ok) throw new Error(data.detail || 'Lyric timing check failed');
         setGlobalProgress(100, true, 'Lyric timing checked');
         if (data.status === 'success' && data.lyrics) {
-          state.lyrics = data.lyrics;
+          const kept = applySyncResult(data.lyrics);
           try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(e) {}
           renderLyricsTeleprompter(state.lyrics, true);
+          if (kept) await saveTimings();
           showToast(
             'Lyric Timing Checked',
-            data.source === 'ctc_word_alignment'
+            (data.source === 'ctc_word_alignment'
               ? `Aligned ${data.lines_count} lines (${data.words_count || 0} words) to singer audio. Review playback.`
-              : 'Timing structure checked; estimated singing timing still needs playback review.',
+              : 'Timing structure checked; estimated singing timing still needs playback review.') + (kept ? ` Kept your own timing on ${kept} line${kept > 1 ? 's' : ''}.` : ''),
             data.source === 'ctc_word_alignment' ? 'success' : 'warning',
             3500
           );
@@ -1759,14 +1765,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!res.ok) throw new Error(data.detail || 'Lyric synchronization failed');
         setGlobalProgress(100, true, 'Timing Re-Sync Complete');
         if (data.status === 'success' && data.lyrics && data.lyrics.length > 0) {
-          state.lyrics = data.lyrics;
+          const kept = applySyncResult(data.lyrics);
           try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch(e) {}
           renderLyricsTeleprompter(state.lyrics, true);
+          if (kept) await saveTimings();
+          setUnlistedSinging(data.unlisted, state.lyrics.length);
+          setTimingSource(data.source, state.lyrics.length, data.timing_note);
           const wordAligned = data.source === 'ctc_word_alignment';
           showToast(
             wordAligned ? 'Singer Timing Aligned' : 'Estimated Vocal Timing',
             wordAligned
-              ? `Aligned ${data.count || state.lyrics.length} original lines and word timings. Review playback.`
+              ? `Aligned ${data.count || state.lyrics.length} original lines and word timings. Review playback.` + (kept ? ` Kept your own timing on ${kept} line${kept > 1 ? 's' : ''}.` : '')
               : 'Acoustic estimates applied; the word aligner could not confidently match this song. Review playback.',
             wordAligned ? 'success' : 'warning',
             4000
@@ -2005,7 +2014,18 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  initLyricsAlign({ setGlobalProgress, renderLyrics: (lines) => renderLyricsTeleprompter(lines, true) });
+  initLyricsAlign({ setGlobalProgress, renderLyrics: (lines) => renderLyricsTeleprompter(lines, true), save: () => saveTimings() });
+  initLyricsReview();
+  // Timings changed by hand (tap sync, or a typed time) are saved with their translation, which
+  // follows lines by time when it is loaded again.
+  const saveTimings = async () => {
+    await persistSubtitleChanges();
+    if (state.translation && state.translation.loaded) { try { await persistTranslation(); } catch (_) {} }
+  };
+  const redrawLyrics = (lines) => renderLyricsTeleprompter(lines, true);
+  initTapSync({ renderLyrics: redrawLyrics, save: saveTimings });
+  initLineTiming({ renderLyrics: redrawLyrics, save: saveTimings });
+  initSyncKeep({ renderLyrics: redrawLyrics, save: saveTimings, onRestore: (before) => remapTranslationToLyrics(before) });
 
   // Clear Lyrics Button
   const btnClearLyrics = document.getElementById('btn-clear-lyrics');
@@ -2054,6 +2074,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ============ Synced Lyrics Teleprompter ============
+  // "lead line (echo...)": the backing echo in parentheses is shown softer than the lead words.
+  const echoMarkup = (text) => escapeHtml(text).replace(/\([^)]*\)?/g, (m) => `<span class="tp-echo">${m}</span>`);
+
   function renderLyricsTeleprompter(lyrics, isVerified = true) {
     const el = document.getElementById('lyrics-teleprompter');
     const badge = document.getElementById('lyrics-count-badge');
@@ -2071,6 +2094,7 @@ document.addEventListener('DOMContentLoaded', () => {
       el.innerHTML = '<div class="ui-empty">No lyrics loaded yet</div>';
       if (badge) badge.textContent = '0 Lines';
       if (verifiedBadge) verifiedBadge.style.display = 'none';
+      updateLyricsReview();
       return;
     }
 
@@ -2105,14 +2129,14 @@ document.addEventListener('DOMContentLoaded', () => {
       const trIsKhmer = /[\u1780-\u17FF]/.test(trText);
       const trFont = trIsKhmer ? "'Kantumruy Pro', 'Battambang', 'Siemreap', sans-serif" : "'Outfit', 'Inter', sans-serif";
 
-      // Matches LOW_LINE_CONFIDENCE in backend/app.py
-      const unsure = Number.isFinite(line.confidence) && line.confidence < 0.4;
+      // Matches LOW_LINE_CONFIDENCE in backend/services/lyric_alignment.py
+      const unsure = Number.isFinite(line.confidence) && line.confidence < 0.2;
       if (unsure) item.classList.add('tp-unsure');
       const unsureChip = unsure
-        ? `<span class="tp-check" title="The aligner could barely hear these words (confidence ${Math.round(line.confidence * 100)}%). Click the line to play it and check the timing.">Check</span>`
+        ? `<span class="tp-check" title="The aligner could barely hear these words (${Math.round(line.confidence * 100)}% sure), so this timing is its best guess. Click the line to hear it.">unsure</span>`
         : '';
 
-      item.innerHTML = `<div class="tp-main"><span class="tp-time">[${formatTime(line.start)}]</span>${unsureChip}<span class="editable-lyric tp-text" contenteditable="true" spellcheck="false" style="font-family: ${font}">${escapeHtml(line.text)}</span><button class="tp-del-cue-btn" title="Void / Remove this line" data-index="${index}">✕</button></div>${showTr ? `<div class="tp-tr" style="font-family: ${trFont}"><span class="editable-tr tp-tr-text" contenteditable="true" spellcheck="false" title="Click to edit Khmer translation">${escapeHtml(trText)}</span><button class="tp-fix-khmer-btn" title="Refine this line to natural native Khmer with AI" data-index="${index}">✨ Fix</button></div>` : ''}`;
+      item.innerHTML = `<div class="tp-main"><span class="tp-time" title="Click to set this line's start time">[${formatTime(line.start)}]</span>${unsureChip}<span class="editable-lyric tp-text" contenteditable="true" spellcheck="false" style="font-family: ${font}">${echoMarkup(line.text)}</span><button class="tp-del-cue-btn" title="Void / Remove this line" data-index="${index}">✕</button></div>${showTr ? `<div class="tp-tr" style="font-family: ${trFont}"><span class="editable-tr tp-tr-text" contenteditable="true" spellcheck="false" title="Click to edit Khmer translation">${escapeHtml(trText)}</span><button class="tp-fix-khmer-btn" title="Refine this line to natural native Khmer with AI" data-index="${index}">✨ Fix</button></div>` : ''}`;
       
       const delBtn = item.querySelector('.tp-del-cue-btn');
       if (delBtn) {
@@ -2212,6 +2236,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       el.appendChild(item);
     });
+    updateLyricsReview();
   }
 
   // Initialize empty teleprompter state safely
@@ -3298,8 +3323,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (btnTranscribe) clearButtonLoading(btnTranscribe, 'Synced 100%');
         setStudioPipelineProgress(3, 100, `Synced ${data.count} lines (100%)`, 'AI Whisper Lyrics');
 
-        state.lyrics = data.lyrics;
+        const kept = applySyncResult(data.lyrics);
         renderLyricsTeleprompter(state.lyrics);
+        if (kept) await saveTimings();
         try {
           localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics));
           if (state.audioServerPath) localStorage.setItem('vida_audio_server_path', state.audioServerPath);

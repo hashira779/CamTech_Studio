@@ -120,6 +120,7 @@ function buildLines(texts) {
     out.push({
       index: i,
       text: String((texts && texts[i]) || '').trim(),
+      source: String(l.text || ''),  // the lyric line this translates, so it can follow that line
       start: Number(l.start) || 0,
       end: Number(l.end) || 0
     });
@@ -518,6 +519,70 @@ export async function persistTranslation() {
   }, 30000);
 }
 
+/** Line text reduced to its letters, so spacing and punctuation never decide a match. */
+const lineKey = (t) => String(t || '').replace(/[\s\p{P}\p{S}]+/gu, '').toLowerCase();
+
+/**
+ * Moves the translated track onto a new set of lyric lines (after re-aligning), matching lines by
+ * their text instead of their position, so adding, splitting or merging a line never slides every
+ * later translation onto the wrong line. Same line: keeps its translation. A line split in two:
+ * the first part keeps it. Lines merged: their translations are joined. A new line: left empty
+ * rather than given a neighbour's translation. Returns how many new lines have no translation.
+ */
+export async function remapTranslationToLyrics(oldLyrics = []) {
+  const entries = state.translation.lines || [];
+  const oldTr = entries.map((l) => String((l && (typeof l === 'string' ? l : l.text)) || '').trim());
+  const newLyrics = state.lyrics || [];
+  if (!oldTr.some(Boolean)) return 0;
+  // Each translation names the line it was made for; older tracks fall back to their position.
+  const a = entries.map((l, i) => lineKey((l && l.source) || (oldLyrics && oldLyrics[i] && oldLyrics[i].text) || ''));
+  const b = newLyrics.map((l) => lineKey(l.text));
+  // A "translation" identical to its own source line was never translated: do not carry it.
+  const trOf = (i) => (lineKey(oldTr[i]) === a[i] ? '' : (oldTr[i] || ''));
+
+  // Longest common subsequence of identical lines, then fill the gaps between matches.
+  const n = a.length, m = b.length;
+  const L = Array.from({ length: n + 1 }, () => new Int16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) {
+    L[i][j] = a[i] && a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  }
+  const texts = new Array(m).fill('');
+  const fillGap = (i1, i2, j1, j2) => {
+    let i = i1, j = j1;
+    while (i < i2 && j < j2) {
+      // one old line split into several new ones
+      let k = j, joined = '';
+      while (k < j2 && joined.length < a[i].length) joined += b[k++];
+      if (joined === a[i] && k - j > 1) { texts[j] = trOf(i); i++; j = k; continue; }
+      // several old lines merged into one new one
+      let q = i; joined = '';
+      while (q < i2 && joined.length < b[j].length) joined += a[q++];
+      if (joined === b[j] && q - i > 1) {
+        texts[j] = Array.from({ length: q - i }, (_, x) => trOf(i + x)).filter(Boolean).join(' ');
+        i = q; j++; continue;
+      }
+      i++; j++; // changed wording: no safe match, leave the new line empty
+    }
+  };
+  let i = 0, j = 0, gi = 0, gj = 0;
+  while (i < n && j < m) {
+    if (a[i] && a[i] === b[j]) {
+      fillGap(gi, i, gj, j);
+      texts[j] = trOf(i);
+      i++; j++; gi = i; gj = j;
+    } else if (L[i + 1][j] >= L[i][j + 1]) i++;
+    else j++;
+  }
+  fillGap(gi, n, gj, m);
+
+  state.translation.lines = buildLines(texts);
+  state.translation.loaded = translationCount() > 0;
+  setTrackOwner();
+  try { await persistTranslation(); } catch (e) { console.warn('[VIDA Translation] save after remap failed:', e); }
+  notifyTranslationChanged();
+  return texts.filter((t) => !t).length;
+}
+
 export async function updateSingleTranslationLine(index, newText) {
   if (!state.translation.lines) state.translation.lines = [];
   while (state.translation.lines.length <= index) {
@@ -537,21 +602,30 @@ export async function updateSingleTranslationLine(index, newText) {
 }
 
 /** Reconciles stored SRT text back onto original indices by timestamp (gap-safe). */
+// A saved cue belongs to the lyric line starting nearest its own start, within this many seconds.
+// Re-aligning moves most lines by well under this; a line the aligner re-timed further is left
+// without a translation rather than given its neighbour's.
+const CUE_MATCH_S = 0.75;
+
 function mapCuesOntoLyrics(cues) {
   const lyrics = state.lyrics || [];
   const texts = new Array(lyrics.length).fill('');
-  const used = new Set();
-  for (let i = 0; i < lyrics.length; i++) {
-    const t0 = Number(lyrics[i].start) || 0;
-    const hit = cues.find((c, ci) => !used.has(ci) && Math.abs((Number(c.start) || 0) - t0) < 0.06);
-    if (hit) {
-      used.add(cues.indexOf(hit));
-      texts[i] = String(hit.text || '').trim();
-    }
+  // closest (line, cue) pairs first, each line and each cue used once
+  const pairs = [];
+  lyrics.forEach((l, i) => cues.forEach((c, ci) => {
+    const d = Math.abs((Number(c.start) || 0) - (Number(l.start) || 0));
+    if (d <= CUE_MATCH_S) pairs.push([d, i, ci]);
+  }));
+  pairs.sort((x, y) => x[0] - y[0]);
+  const lineDone = new Set(), cueDone = new Set();
+  for (const [, i, ci] of pairs) {
+    if (lineDone.has(i) || cueDone.has(ci)) continue;
+    lineDone.add(i); cueDone.add(ci);
+    texts[i] = String(cues[ci].text || '').trim();
   }
-  // Fallback: if almost nothing matched by time, assume the file is in original order
-  if (texts.every(t => !t) && cues.length) {
-    cues.slice(0, lyrics.length).forEach((c, i) => { texts[i] = String(c.text || '').trim(); });
+  // Untimed lyrics only: the file can be read in order when it has exactly as many lines.
+  if (texts.every(t => !t) && cues.length === lyrics.length) {
+    cues.forEach((c, i) => { texts[i] = String(c.text || '').trim(); });
   }
   return texts;
 }

@@ -1,11 +1,16 @@
-// Paste original lyrics -> align every word to the singer -> review the lines marked "Check".
+// Paste original lyrics -> align every word to the singer -> review the lines marked unsure.
 // Both entry points (the AI prompt's "Align lyrics" and the lyrics panel's "Paste & Align")
 // open the same dialog, so there is one flow to learn and one code path to keep working.
 
 import { state } from '../core/state.js';
 import { showToast } from '../ui/feedback.js';
+import { initPasteCheck } from './paste_check.js';
+import { remapTranslationToLyrics } from '../core/translation.js';
+import { setUnlistedSinging, setTimingSource } from './lyrics_review.js';
+import { applySyncResult } from './sync_keep.js';
 
-const ALIGN_TIMEOUT_MS = 5 * 60 * 1000;
+// A GPU crash retried on the CPU, plus first-time vocal separation, can take several minutes.
+const ALIGN_TIMEOUT_MS = 10 * 60 * 1000;
 const PROGRESS_POLL_MS = 2000;
 
 const byId = (id) => document.getElementById(id);
@@ -48,7 +53,7 @@ async function alignToSinger(referenceText, onStage) {
     return data;
   } catch (err) {
     if (err.name === 'AbortError') {
-      throw new Error('No answer after 5 minutes. Another AI job (transcribe / vocal isolation) may be running; check the backend console and try again.');
+      throw new Error('No answer after 10 minutes. Another AI job (transcribe / vocal isolation) may be running; check the backend console and try again.');
     }
     throw err;
   } finally {
@@ -75,7 +80,7 @@ function summarize(data, secs) {
   const plural = unsure.length > 1;
   return {
     title,
-    detail: `Every word matched to the singer. ${unsure.length} line${plural ? 's are' : ' is'} marked "Check" (line${plural ? 's' : ''} ${unsure.map((i) => i + 1).join(', ')}).`,
+    detail: `${unsure.length} line${plural ? 's were' : ' was'} hard to hear and ${plural ? 'are' : 'is'} marked unsure. Use "Play next" above the lyrics to check ${plural ? 'them' : 'it'}.`,
     type: 'warning',
   };
 }
@@ -84,7 +89,7 @@ function summarize(data, secs) {
  * Wires the align dialog. `setGlobalProgress(percent, visible, label)` drives the header bar and
  * `renderLyrics(lines)` redraws the teleprompter; both live in the studio shell.
  */
-export function initLyricsAlign({ setGlobalProgress, renderLyrics }) {
+export function initLyricsAlign({ setGlobalProgress, renderLyrics, save = async () => {} }) {
   const modal = byId('align-lyrics-modal');
   const input = byId('input-align-reference');
   const lineCount = byId('align-modal-line-count');
@@ -92,6 +97,8 @@ export function initLyricsAlign({ setGlobalProgress, renderLyrics }) {
   const promptInput = byId('input-ai-prompt');
   if (!modal || !input || !submitBtn) return;
 
+  // The backend's count skips instrumental markers such as "ភ្លេង", so it is the number that gets aligned.
+  const pasteCheck = initPasteCheck(input, (n) => { if (lineCount) lineCount.textContent = `${n} Lines`; });
   const songLabel = byId('align-modal-song');
   const replaceChip = byId('align-modal-replace');
 
@@ -127,13 +134,14 @@ export function initLyricsAlign({ setGlobalProgress, renderLyrics }) {
     describeTarget();
     modal.style.display = 'flex';
     updateLineCount();
+    pasteCheck.check();
     setTimeout(() => input.focus(), 100);
   };
 
   // Closing never cancels: a running alignment keeps its header progress and reports when done.
   const close = () => { modal.style.display = 'none'; };
 
-  // Bring the result into view: Lyrics tab, scrolled to the first line marked "Check".
+  // Bring the result into view: Lyrics tab, scrolled to the first unsure line.
   const revealResult = (unsure) => {
     const tab = document.querySelector('#nav-right-panel .segmented-tab[data-target="tab-right-lyrics"]');
     if (tab && !tab.classList.contains('active')) tab.click();
@@ -171,11 +179,22 @@ export function initLyricsAlign({ setGlobalProgress, renderLyrics }) {
         showToast('Alignment Notice', data.detail || 'Could not complete lyrics alignment', 'info', 3500);
         return;
       }
-      state.lyrics = data.lyrics;
+      const oldLyrics = state.lyrics || [];
+      const kept = applySyncResult(data.lyrics);
       try { localStorage.setItem('vida_lyrics', JSON.stringify(state.lyrics)); } catch (_) {}
+      // The translation follows each line by its text, so new or split lines never shift it.
+      const hadTranslation = (state.translation?.lines || []).some((l) => (l?.text || '').trim());
+      const untranslated = hadTranslation ? await remapTranslationToLyrics(oldLyrics) : 0;
       renderLyrics(state.lyrics);
+      if (kept) await save();
+      setUnlistedSinging(data.unlisted, state.lyrics.length);
+      setTimingSource(data.source, state.lyrics.length, data.timing_note);
       const { title, detail, type } = summarize(data, elapsed());
-      showToast(title, detail, type, 6000);
+      const trNote = untranslated
+        ? ` ${untranslated} new line${untranslated > 1 ? 's have' : ' has'} no translation yet.`
+        : '';
+      const keptNote = kept ? ` Kept your own timing on ${kept} line${kept > 1 ? 's' : ''}.` : '';
+      showToast(title, detail + keptNote + trNote, type, 6000);
       setGlobalProgress(100, true, 'Lyrics alignment complete');
       close();
       revealResult(data.unsure_lines);
