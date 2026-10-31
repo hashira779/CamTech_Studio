@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from typing import Optional, Tuple
 
 
@@ -148,6 +149,7 @@ def download_youtube_audio(url: str, output_dir: str, on_progress=None) -> Tuple
     Returns:
         Tuple of (output_file_path, info_dict) or (None, None) on failure
     """
+    download_start_time = time.time() - 2.0
     os.makedirs(output_dir, exist_ok=True)
 
     yt_dlp_path = _get_yt_dlp_path()
@@ -333,7 +335,7 @@ def download_youtube_audio(url: str, output_dir: str, on_progress=None) -> Tuple
                             return audio_file, info
 
             title_hint = info.get("title") if info else None
-            audio_file = _find_latest_audio_file(output_dir, title_hint=title_hint)
+            audio_file = _find_latest_audio_file(output_dir, title_hint=title_hint, min_mtime=download_start_time)
             if audio_file:
                 audio_file = _sanitize_filepath(audio_file)
                 _sanitize_subtitles_for_audio(audio_file, title=title_hint)
@@ -411,7 +413,7 @@ def convert_to_mp3(src_path: str) -> str:
     return src_path
 
 
-def _find_latest_audio_file(directory: str, title_hint: Optional[str] = None) -> Optional[str]:
+def _find_latest_audio_file(directory: str, title_hint: Optional[str] = None, min_mtime: Optional[float] = None) -> Optional[str]:
     """Find the most recently modified audio file in the directory, prioritizing title match and ignoring test/demo files."""
     audio_extensions = {".mp3", ".wav", ".m4a", ".opus", ".webm", ".ogg", ".aac", ".flac", ".mp4"}
 
@@ -424,7 +426,13 @@ def _find_latest_audio_file(directory: str, title_hint: Optional[str] = None) ->
             if ext.lower() in audio_extensions:
                 clean_name = re.sub(r'[\\/*?:"<>|]', '', name).strip().lower()
                 if sanitized and (sanitized in clean_name or clean_name in sanitized):
-                    candidates.append(os.path.join(directory, f))
+                    full_p = os.path.join(directory, f)
+                    try:
+                        if min_mtime and os.path.getmtime(full_p) < min_mtime:
+                            continue
+                    except OSError:
+                        pass
+                    candidates.append(full_p)
         if candidates:
             candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
             return convert_to_mp3(candidates[0])
@@ -444,6 +452,8 @@ def _find_latest_audio_file(directory: str, title_hint: Optional[str] = None) ->
             full_path = os.path.join(directory, f)
             try:
                 mtime = os.path.getmtime(full_path)
+                if min_mtime and mtime < min_mtime:
+                    continue
                 if mtime > best_time:
                     best_time = mtime
                     best_file = full_path

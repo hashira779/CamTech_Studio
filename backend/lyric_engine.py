@@ -24,6 +24,17 @@ try:
 except ImportError:
     khmer_word_tokenize = None
 
+# PyAV compatibility fix for faster-whisper (av 19+ dropped metadata_errors argument)
+try:
+    import av
+    _orig_av_open = av.open
+    def _safe_av_open(*args, **kwargs):
+        kwargs.pop("metadata_errors", None)
+        return _orig_av_open(*args, **kwargs)
+    av.open = _safe_av_open
+except Exception:
+    pass
+
 
 def _ensure_nvidia_dll_paths():
     """
@@ -70,6 +81,30 @@ _ensure_nvidia_dll_paths()
 def is_khmer_text(text: str) -> bool:
     """Checks if text contains Khmer Unicode characters."""
     return any('\u1780' <= c <= '\u17FF' for c in text)
+
+
+KHMER_IDENTIFIERS = (
+    "sinn sisamouth", "sisamouth", "sin sisamouth", "sisamout", "samouth",
+    "ros sereysothea", "sereysothea", "serey sothea", "ros serey",
+    "pen ron", "penhran", "houy meas", "sos mat", "im song seum",
+    "meas samon", "chhoun malay", "eng nary", "keo sarath", "noy vanneth",
+    "meng keo pichenda", "pichenda", "him sivorn", "preap sovath", "sovath",
+    "touch sunnix", "khem", "khemrak sereymun", "sereymun", "aok sokunkanha",
+    "sokunkanha", "chhorn sovannareach", "tep boprek", "g-devith", "g devith",
+    "vannda", "vann da", "vuthea", "ruthko", "kmeng khmer", "smallworld smallband",
+    "chet kanchana", "manith", "chet sovannpanha", "suboi", "klapyahendz",
+    "khmer", "cambodia", "cambodian", "romvong", "ramvong", "saravane",
+    "saravan", "kbach", "pleng", "phleng", "konseng", "soat", "champa",
+    "battambang", "siem reap", "phnom penh", "angkor", "srok khmer"
+)
+
+
+def is_khmer_track(*texts: str) -> bool:
+    """Checks if any text contains Khmer Unicode characters or known romanized Khmer artists/keywords."""
+    combined = " ".join(t for t in texts if t).lower()
+    if is_khmer_text(combined):
+        return True
+    return any(ident in combined for ident in KHMER_IDENTIFIERS)
 
 
 def is_cjk_text(text: str) -> bool:
@@ -1355,7 +1390,31 @@ def parse_subtitle_file(file_path: str, audio_path: Optional[str] = None) -> Lis
     with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
         content = f.read()
     results = parse_subtitle_content(content)
+    if results and file_path.lower().endswith(".lrc"):
+        results = _with_saved_line_ends(file_path, results)
     return results or []
+
+
+def _with_saved_line_ends(lrc_path: str, lrc_lines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    An .lrc keeps only when each line starts, so its line ends are guesses. The studio saves the
+    same lines to an .srt beside it (song.km.lrc -> song.km.srt), which keeps the real ends the
+    user set; use that copy when it holds the same lines at the same starts.
+    """
+    srt_path = lrc_path[:-4] + ".srt"
+    if not os.path.exists(srt_path):
+        return lrc_lines
+    try:
+        with open(srt_path, "r", encoding="utf-8", errors="ignore") as f:
+            srt_lines = parse_subtitle_content(f.read())
+    except OSError:
+        return lrc_lines
+    letters = lambda t: re.sub(r"[\s\W_]+", "", str(t or ""))
+    same = len(srt_lines) == len(lrc_lines) and all(
+        letters(a.get("text")) == letters(b.get("text")) and abs(float(a["start"]) - float(b["start"])) <= 0.05
+        for a, b in zip(lrc_lines, srt_lines)
+    )
+    return srt_lines if same else lrc_lines
 
 
 def find_matching_subtitles(audio_path: str, target_lang: Optional[str] = None) -> Optional[str]:
@@ -1590,6 +1649,7 @@ class WhisperTranscriber:
                     pass
 
             cpu_threads = min(8, os.cpu_count() or 4)
+            os.environ.pop("HF_HUB_OFFLINE", None)
             try:
                 self.model = WhisperModel(self.model_size, device=dev, compute_type=c_type, cpu_threads=cpu_threads)
             except Exception as cuda_err:
@@ -1624,15 +1684,15 @@ class WhisperTranscriber:
             progress_callback(19, "Filtering vocals & audio frequencies...")
         clean_audio = preprocess_vocal_audio(audio_path)
 
-        # Smart language detection: only force Khmer if explicitly requested or filename has Khmer script
+        # Smart language detection: only force Khmer if explicitly requested or filename/track has Khmer cues
         if language in ("auto", "None"):
-            if is_khmer_text(os.path.basename(audio_path)):
+            if is_khmer_track(os.path.basename(audio_path)):
                 language = "km"
             else:
                 language = None  # Full multilingual auto-detection
         elif language is None or language == "":
-            # Frontend sent null — check filename for Khmer characters as a hint
-            if is_khmer_text(os.path.basename(audio_path)):
+            # Frontend sent null — check filename for Khmer characters/artists as a hint
+            if is_khmer_track(os.path.basename(audio_path)):
                 language = "km"
             else:
                 language = None  # Let Whisper auto-detect from audio content

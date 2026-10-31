@@ -221,7 +221,7 @@ def verify_gemini_api_key(api_key: Optional[str] = None) -> Tuple[bool, Optional
     import urllib.error
     import json
 
-    models = ["gemini-flash-lite-latest", "gemini-flash-latest", "gemini-pro-latest"]
+    models = ["gemini-3-flash-preview", "gemini-flash-lite-latest", "gemini-flash-latest"]
     last_err = None
     for model in models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
@@ -275,7 +275,7 @@ def gemini_clean_youtube_metadata(
     import urllib.request
     import urllib.error
     models_to_try = [
-        "gemini-flash-lite-latest", "gemini-flash-latest", "gemini-pro-latest"
+        "gemini-3-flash-preview", "gemini-flash-lite-latest", "gemini-flash-latest"
     ]
 
     prompt = f"""Given this YouTube music video:
@@ -463,6 +463,7 @@ Example:
     }
 
     models = [
+        "gemini-3-flash-preview",
         "gemini-flash-lite-latest",
         "gemini-flash-latest",
         "gemini-pro-latest"
@@ -765,18 +766,18 @@ def transcribe_audio_with_gemini(
     )
 
     models = [
-        "gemini-flash-lite-latest", "gemini-flash-latest", "gemini-pro-latest"
+        "gemini-3-flash-preview", "gemini-flash-lite-latest", "gemini-flash-latest", "gemini-pro-latest"
     ]
     consecutive_429 = 0
     start_time = time.monotonic()
-    max_total_wait = 25.0
+    max_total_wait = 45.0
 
     for model in models:
         left = max_total_wait - (time.monotonic() - start_time)
         if left <= 1.0:
             log.warning(f"[Gemini Audio ASR] Transcribe wait budget reached; fast-failing to next pipeline step")
             break
-        attempt_timeout = min(12.0, left)
+        attempt_timeout = max(5.0, min(25.0, left))
         try:
             if progress_callback:
                 progress_callback(45, f"🎧 Gemini AI ({model}) transcribing lyrics...")
@@ -808,7 +809,7 @@ def transcribe_audio_with_gemini(
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
             req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
             
-            with urllib.request.urlopen(req, timeout=25) as resp:
+            with urllib.request.urlopen(req, timeout=int(attempt_timeout)) as resp:
                 res = json.loads(resp.read().decode("utf-8"))
                 text = res["candidates"][0]["content"]["parts"][0]["text"]
                 
@@ -861,7 +862,7 @@ def fetch_lyrics_with_gemini(title: str, artist: str = "", description: str = ""
 
     import urllib.request
     models_to_try = [
-        "gemini-flash-lite-latest", "gemini-flash-latest", "gemini-pro-latest"
+        "gemini-3-flash-preview", "gemini-flash-lite-latest", "gemini-flash-latest", "gemini-pro-latest"
     ]
 
     desc_hint = f" (Context: {description[:150]})" if description else ""
@@ -879,7 +880,7 @@ def fetch_lyrics_with_gemini(title: str, artist: str = "", description: str = ""
     data_bytes = json.dumps(payload).encode("utf-8")
     consecutive_429 = 0
     start_time = time.monotonic()
-    max_total_wait = 10.0  # Cap total wait to 10s max so UI never gets stuck
+    max_total_wait = 18.0  # Cap total wait to 18s max so UI never gets stuck
 
     for model in models_to_try:
         left = max_total_wait - (time.monotonic() - start_time)
@@ -937,14 +938,13 @@ def match_or_fetch_khmer_lyrics(
     3. Uses Gemini Multimodal Audio to LISTEN to the actual song and transcribe real words with exact timestamps.
     4. Falls back to text search if no audio file is accessible.
     """
-    # STRICT GUARD: Only run for songs that actually have Khmer text!
-    # Prevents generating Khmer lyrics for Vietnamese, English, Thai, or Chinese songs.
-    has_khmer = (
-        any('\u1780' <= c <= '\u17FF' for c in (title or "")) or
-        any('\u1780' <= c <= '\u17FF' for c in (artist or "")) or
-        any('\u1780' <= c <= '\u17FF' for c in (description or "")) or
-        any('\u1780' <= c <= '\u17FF' for c in (audio_path or ""))
-    )
+    # Intelligent check: Support both Khmer Unicode and romanized Khmer artists/keywords
+    try:
+        from backend.lyric_engine import is_khmer_track
+    except ImportError:
+        from lyric_engine import is_khmer_track
+
+    has_khmer = is_khmer_track(title, artist, description, audio_path)
     if not has_khmer:
         log.info(f"[Khmer Lyric Matcher] Skipping non-Khmer song: '{title}' by '{artist}'")
         return None

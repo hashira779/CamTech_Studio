@@ -14,14 +14,28 @@ cd /d "%BASE_DIR%"
 set HF_HUB_DISABLE_SYMLINKS_WARNING=1
 set KMP_DUPLICATE_LIB_OK=TRUE
 set OMP_NUM_THREADS=4
-set HF_HUB_OFFLINE=1
 set PYTHONUNBUFFERED=1
 
 set PYTHON_EXE=%BASE_DIR%venv\Scripts\python.exe
-if not exist "%PYTHON_EXE%" (
-    echo [*] Setting up Python environment...
-    py -3.12 -m venv venv
-    call venv\Scripts\pip install -r backend\requirements.txt
+
+:: Check if venv python exists and actually runs
+set REBUILD_VENV=0
+if not exist "%PYTHON_EXE%" set REBUILD_VENV=1
+if exist "%PYTHON_EXE%" (
+    "%PYTHON_EXE%" -c "import sys" >nul 2>&1
+    if errorlevel 1 set REBUILD_VENV=1
+)
+
+if "%REBUILD_VENV%"=="1" (
+    echo [*] Python environment is missing or invalid. Setting up with Python 3.14...
+    if exist "C:\Python314\python.exe" (
+        "C:\Python314\python.exe" -m venv "%BASE_DIR%venv"
+    ) else if exist "%LOCALAPPDATA%\Programs\Python\Python314\python.exe" (
+        "%LOCALAPPDATA%\Programs\Python\Python314\python.exe" -m venv "%BASE_DIR%venv"
+    ) else (
+        py -3.14 -m venv "%BASE_DIR%venv"
+    )
+    call "%BASE_DIR%venv\Scripts\pip.exe" install -r "%BASE_DIR%backend\requirements.txt"
     set PYTHON_EXE=%BASE_DIR%venv\Scripts\python.exe
 )
 

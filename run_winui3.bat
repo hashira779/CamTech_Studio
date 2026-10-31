@@ -28,7 +28,6 @@ if not exist "%BIN_DIR%\VidaStudio.exe" (
 set HF_HUB_DISABLE_SYMLINKS_WARNING=1
 set KMP_DUPLICATE_LIB_OK=TRUE
 set OMP_NUM_THREADS=4
-set HF_HUB_OFFLINE=1
 
 set PYTHON_EXE=%BASE_DIR%venv\Scripts\python.exe
 if not exist "%PYTHON_EXE%" set PYTHON_EXE=python

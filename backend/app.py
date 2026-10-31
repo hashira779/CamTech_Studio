@@ -13,13 +13,7 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 # Suppress CuPy CUDA warning (CuPy auto-detects CUDA at render time)
 import warnings
 warnings.filterwarnings("ignore", message="CUDA path could not be detected")
-hf_cache_root = os.path.expanduser("~/.cache/huggingface/hub")
-if os.path.exists(hf_cache_root):
-    try:
-        if any(d.startswith("models--") for d in os.listdir(hf_cache_root)):
-            os.environ["HF_HUB_OFFLINE"] = "1"
-    except Exception:
-        pass
+os.environ.pop("HF_HUB_OFFLINE", None)
 import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(line_buffering=True)
@@ -61,6 +55,7 @@ from backend.lyric_engine import (
     export_subtitles_to_txt,
     format_srt_for_capcut,
     is_khmer_text,
+    is_khmer_track,
     is_thai_text,
     tokenize_line_words,
     compute_weighted_word_timestamps
@@ -346,7 +341,7 @@ def get_gemini_status():
         "masked_key": masked,
         "valid": last_err is None if configured else False,
         "last_error": last_err,
-        "active_model": "gemini-flash-lite-latest"
+        "active_model": "gemini-3-flash-preview"
     }
 
 @app.post("/api/gemini/verify")
@@ -495,12 +490,10 @@ def transcribe_audio(req: TranscribeRequest):
     if target_lang in ("auto", "", "None"):
         target_lang = None
 
-    # Intelligent Khmer detection from audio path, title, and artist
+    # Intelligent Khmer detection from audio path, title, and artist (supporting Romanized names like Sinn Sisamouth)
     is_khmer_target = (
         target_lang == "km" or
-        is_khmer_text(req.audio_path) or
-        is_khmer_text(req.song_title or "") or
-        is_khmer_text(req.artist_name or "")
+        is_khmer_track(req.audio_path, req.song_title or "", req.artist_name or "")
     )
     if is_khmer_target and not target_lang:
         target_lang = "km"

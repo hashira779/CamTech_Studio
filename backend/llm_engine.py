@@ -72,6 +72,7 @@ def call_gemini_api(prompt: str, json_mode: bool = False, timeout: int = 25,
         # Prioritize gemini-flash-lite-latest: responds in ~1.5s with zero 503/timeout issues,
         # then fall back to standard flash and pro.
         models = [
+            "gemini-3-flash-preview",
             "gemini-flash-lite-latest",
             "gemini-flash-latest",
             "gemini-3.8-flash",
