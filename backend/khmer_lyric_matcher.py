@@ -325,11 +325,11 @@ _GEMINI_FILE_CACHE: Dict[str, Tuple[float, str]] = {}
 
 
 def upload_audio_to_gemini_files_api(api_key: str, file_path: str, mime_type: str = "audio/mp3") -> Optional[str]:
-    """Uploads audio file to Gemini Files API and returns file_uri with caching."""
+    """Uploads audio file to Gemini Files API and returns file_uri with caching and retry."""
     import urllib.request
+    if not file_path or not os.path.exists(file_path):
+        return None
     try:
-        if not os.path.exists(file_path):
-            return None
         mtime = os.path.getmtime(file_path)
         if file_path in _GEMINI_FILE_CACHE:
             cached_mtime, cached_uri = _GEMINI_FILE_CACHE[file_path]
@@ -337,39 +337,46 @@ def upload_audio_to_gemini_files_api(api_key: str, file_path: str, mime_type: st
                 return cached_uri
 
         filesize = os.path.getsize(file_path)
-        upload_url = f"https://generativelanguage.googleapis.com/upload/v1beta/files?key={api_key}"
-        headers = {
-            "X-Goog-Upload-Protocol": "resumable",
-            "X-Goog-Upload-Command": "start",
-            "X-Goog-Upload-Header-Content-Length": str(filesize),
-            "X-Goog-Upload-Header-Content-Type": mime_type,
-            "Content-Type": "application/json"
-        }
-        meta_payload = json.dumps({"file": {"display_name": os.path.basename(file_path)}}).encode("utf-8")
-        req = urllib.request.Request(upload_url, data=meta_payload, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            upload_endpoint = resp.headers.get("X-Goog-Upload-URL")
-            if not upload_endpoint:
-                return None
-        
-        with open(file_path, "rb") as f:
-            file_bytes = f.read()
-            
-        upload_headers = {
-            "Content-Length": str(filesize),
-            "X-Goog-Upload-Offset": "0",
-            "X-Goog-Upload-Command": "upload, finalize"
-        }
-        req2 = urllib.request.Request(upload_endpoint, data=file_bytes, headers=upload_headers, method="POST")
-        with urllib.request.urlopen(req2, timeout=40) as resp2:
-            file_info = json.loads(resp2.read().decode("utf-8"))
-            uri = file_info.get("file", {}).get("uri")
-            if uri:
-                _GEMINI_FILE_CACHE[file_path] = (mtime, uri)
-            return uri
+        for attempt in range(1, 3):
+            try:
+                upload_url = f"https://generativelanguage.googleapis.com/upload/v1beta/files?key={api_key}"
+                headers = {
+                    "X-Goog-Upload-Protocol": "resumable",
+                    "X-Goog-Upload-Command": "start",
+                    "X-Goog-Upload-Header-Content-Length": str(filesize),
+                    "X-Goog-Upload-Header-Content-Type": mime_type,
+                    "Content-Type": "application/json",
+                    "Connection": "close"
+                }
+                meta_payload = json.dumps({"file": {"display_name": os.path.basename(file_path)}}).encode("utf-8")
+                req = urllib.request.Request(upload_url, data=meta_payload, headers=headers, method="POST")
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    upload_endpoint = resp.headers.get("X-Goog-Upload-URL")
+                    if not upload_endpoint:
+                        continue
+
+                with open(file_path, "rb") as f:
+                    file_bytes = f.read()
+
+                upload_headers = {
+                    "Content-Length": str(filesize),
+                    "X-Goog-Upload-Offset": "0",
+                    "X-Goog-Upload-Command": "upload, finalize",
+                    "Connection": "close"
+                }
+                req2 = urllib.request.Request(upload_endpoint, data=file_bytes, headers=upload_headers, method="POST")
+                with urllib.request.urlopen(req2, timeout=45) as resp2:
+                    file_info = json.loads(resp2.read().decode("utf-8"))
+                    uri = file_info.get("file", {}).get("uri")
+                    if uri:
+                        _GEMINI_FILE_CACHE[file_path] = (mtime, uri)
+                        return uri
+            except Exception as attempt_err:
+                log.info(f"[Gemini Files API] Upload attempt {attempt} notice: {attempt_err}")
+                time.sleep(0.8)
     except Exception as e:
         log.warning(f"[Gemini Files API] Upload notice: {e}")
-        return None
+    return None
 
 
 def align_lyrics_with_gemini_multimodal(
@@ -422,8 +429,24 @@ def align_lyrics_with_gemini_multimodal(
 
     mime_type = "audio/mp3" if audio_path.lower().endswith(".mp3") else "audio/wav"
     file_uri = upload_audio_to_gemini_files_api(api_key, audio_path, mime_type=mime_type)
-    if not file_uri:
-        log.warning("[Gemini Audio Alignment] Could not obtain file URI for audio")
+    audio_part = None
+    if file_uri:
+        audio_part = {"file_data": {"file_uri": file_uri, "mime_type": mime_type}}
+    else:
+        # Resilient fallback to inline base64 if Files API upload is blocked/aborted on Windows
+        try:
+            filesize = os.path.getsize(audio_path)
+            if filesize <= 20 * 1024 * 1024:
+                import base64
+                log.info(f"[Gemini Audio Alignment] Files API upload unavailable; falling back to inline audio payload ({filesize / 1024 / 1024:.2f} MB)...")
+                with open(audio_path, "rb") as f:
+                    b64_audio = base64.b64encode(f.read()).decode("utf-8")
+                audio_part = {"inline_data": {"mime_type": mime_type, "data": b64_audio}}
+        except Exception as inline_err:
+            log.warning(f"[Gemini Audio Alignment] Inline audio fallback notice: {inline_err}")
+
+    if not audio_part:
+        log.warning("[Gemini Audio Alignment] Could not prepare audio payload for Gemini")
         return None
 
     if progress_callback:
@@ -465,7 +488,7 @@ Example:
         "contents": [{
             "parts": [
                 {"text": prompt},
-                {"file_data": {"file_uri": file_uri, "mime_type": mime_type}}
+                audio_part
             ]
         }],
         "generationConfig": {
