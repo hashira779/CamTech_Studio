@@ -438,9 +438,11 @@ def align_lyrics_with_gemini_multimodal(
             pass
     culture = "Cambodian music" if is_khmer else "music"
 
+    dur_hint = f"\nIMPORTANT: The total audio track duration is EXACTLY {total_duration:.2f} seconds. All timestamps MUST be strictly within [0.00s, {total_duration:.2f}s].\n" if total_duration > 0 else ""
+
     prompt = f"""You are a master {culture} audio engineer and precision subtitle synchronizer.
 Listen carefully to this entire audio track and accurately align the provided lyric lines to the singer's actual singing voice.
-
+{dur_hint}
 CRITICAL INSTRUCTIONS:
 1. Distinguish real human singing vocals from instrumental intros, guitar/keyboard/traditional solos, and musical pauses.
    Do NOT start subtitles during instrumental music! Subtitles must only appear when the singer actually begins singing.
@@ -549,11 +551,13 @@ Example:
 
                     if total_duration > 0 and last_e > total_duration:
                         log.info(f"[Gemini Audio Alignment] Calibrating cues for {m}: timestamps reach {last_e}s (audio duration: {total_duration}s)")
-                        if last_e > total_duration * 1.15 and len(ordered_aligned) > 2:
-                            scale = max(0.5, (total_duration - 2.0) / last_e)
+                        first_s = ordered_aligned[0]["start"] if ordered_aligned else 0.0
+                        if last_e > total_duration and len(ordered_aligned) > 2 and last_e > first_s:
+                            target_end = max(first_s + 2.0, total_duration - 1.0)
+                            singing_scale = (target_end - first_s) / (last_e - first_s)
                             for item in ordered_aligned:
-                                item["start"] = round(item["start"] * scale, 2)
-                                item["end"] = round(item["end"] * scale, 2)
+                                item["start"] = round(first_s + (item["start"] - first_s) * singing_scale, 2)
+                                item["end"] = round(first_s + (item["end"] - first_s) * singing_scale, 2)
                         else:
                             for item in ordered_aligned:
                                 if item["end"] > total_duration:
@@ -561,7 +565,7 @@ Example:
                                 if item["start"] >= item["end"]:
                                     item["start"] = round(max(0.0, item["end"] - 1.5), 2)
 
-                    karaoke_adjusted = apply_lead_in_and_flush_end(ordered_aligned, lead_in=0.50)
+                    karaoke_adjusted = apply_lead_in_and_flush_end(ordered_aligned, lead_in=0.35)
                     verified, report = double_check_lyrics(karaoke_adjusted, preserve_text=True)
                     return verified
         except urllib.error.HTTPError as e:
@@ -599,7 +603,7 @@ Example:
     return None
 
 
-def apply_lead_in_and_flush_end(cues: List[Dict[str, Any]], lead_in: float = 0.50) -> List[Dict[str, Any]]:
+def apply_lead_in_and_flush_end(cues: List[Dict[str, Any]], lead_in: float = 0.35) -> List[Dict[str, Any]]:
     """
     Applies the professional subtitling rule:
     'លោតចេញមុន យ៉ាងហោចណាស់ 0.5s ហើយចប់ត្រូវតែស្មើ' (Appear at least 0.5s early for reading, and end flush when singing stops).
