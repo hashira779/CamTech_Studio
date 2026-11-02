@@ -57,6 +57,7 @@ def _session():
             import onnxruntime as ort
             opts = ort.SessionOptions()
             opts.log_severity_level = 3
+            opts.intra_op_num_threads = min(8, os.cpu_count() or 4)
             # Without the memory pool the model peaks 0.6 GB lower (2.7 -> 2.1 GB, measured).
             opts.enable_cpu_mem_arena = False
             _SESSION = ort.InferenceSession(MODEL_PATH, opts, providers=["CPUExecutionProvider"])

@@ -863,13 +863,16 @@ def double_check_lyrics(lyrics: List[Dict[str, Any]], preserve_text: bool = Fals
 
         # Preserve full lyric phrase unless it is an extreme runaway line (> 14s duration and > 25 tokens)
         if len(fixed_words) <= 25 or (end - start) < 14.0:
-            verified_lines.append({
+            v_line = {
                 "line_id": len(verified_lines),
                 "start": round(start, 2),
                 "end": round(end, 2),
                 "text": clean_text,
                 "words": fixed_words
-            })
+            }
+            if "confidence" in raw_line:
+                v_line["confidence"] = raw_line["confidence"]
+            verified_lines.append(v_line)
         else:
             # Smart chunking only for massive unbroken run-on blocks (like Whisper hallucinations)
             chunks = []
@@ -890,13 +893,16 @@ def double_check_lyrics(lyrics: List[Dict[str, Any]], preserve_text: bool = Fals
                 if not chunk: continue
                 # Reconstruct text without spaces for Khmer if needed, but spaces are fine for Karaoke word splits
                 c_text = " ".join(w["word"] for w in chunk)
-                verified_lines.append({
+                v_line = {
                     "line_id": len(verified_lines),
                     "start": chunk[0]["start"],
                     "end": chunk[-1]["end"],
                     "text": c_text,
                     "words": chunk
-                })
+                }
+                if "confidence" in raw_line:
+                    v_line["confidence"] = raw_line["confidence"]
+                verified_lines.append(v_line)
 
     report = {
         "verified": True,

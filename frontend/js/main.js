@@ -1676,10 +1676,10 @@ document.addEventListener('DOMContentLoaded', () => {
           if (kept) await saveTimings();
           showToast(
             'Lyric Timing Checked',
-            (data.source === 'ctc_word_alignment'
+            (data.source === 'ctc_word_alignment' || data.source === 'gemini_multimodal_alignment'
               ? `Aligned ${data.lines_count} lines (${data.words_count || 0} words) to singer audio. Review playback.`
               : 'Timing structure checked; estimated singing timing still needs playback review.') + (kept ? ` Kept your own timing on ${kept} line${kept > 1 ? 's' : ''}.` : ''),
-            data.source === 'ctc_word_alignment' ? 'success' : 'warning',
+            (data.source === 'ctc_word_alignment' || data.source === 'gemini_multimodal_alignment') ? 'success' : 'warning',
             3500
           );
         } else {
@@ -1775,7 +1775,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (kept) await saveTimings();
           setUnlistedSinging(data.unlisted, state.lyrics.length);
           setTimingSource(data.source, state.lyrics.length, data.timing_note);
-          const wordAligned = data.source === 'ctc_word_alignment';
+          const wordAligned = data.source === 'ctc_word_alignment' || data.source === 'gemini_multimodal_alignment';
           showToast(
             wordAligned ? 'Singer Timing Aligned' : 'Estimated Vocal Timing',
             wordAligned
@@ -3329,7 +3329,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (state.artistName) localStorage.setItem('vida_artist_name', state.artistName);
           if (state.audioUrl) localStorage.setItem('vida_audio_src', state.audioUrl);
         } catch(e) {}
-        const sources = { subtitle: 'Captions', 'retrieved-timing': 'Retrieved Captions', ctc_word_alignment: 'Singer Word Alignment', acoustic_estimate: 'Acoustic Estimates' };
+        const sources = { subtitle: 'Captions', 'retrieved-timing': 'Retrieved Captions', gemini_multimodal_alignment: 'Gemini AI Multimodal Sync', ctc_word_alignment: 'Singer Word Alignment', acoustic_estimate: 'Acoustic Estimates' };
         const src = sources[data.source] || 'Whisper AI';
         const langTag = data.detected_language ? ` [${data.detected_language.toUpperCase()}]` : '';
         showToast('Lyrics Ready', `${data.count} lines from ${src}${langTag}. Review singing timing in playback.`, data.source === 'acoustic_estimate' ? 'warning' : 'success', 6000);

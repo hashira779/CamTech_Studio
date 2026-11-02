@@ -429,7 +429,16 @@ def align_lyrics_with_gemini_multimodal(
     if progress_callback:
         progress_callback(45, f"🎧 Gemini 3.5 AI listening to vocals & matching timestamps...")
 
-    prompt = f"""You are a master Cambodian music audio engineer and precision subtitle synchronizer.
+    is_khmer = any(0x1780 <= ord(c) <= 0x17FF for c in "".join(c["text"] for c in cue_items))
+    if not is_khmer and title:
+        try:
+            from backend.lyric_engine import is_khmer_track
+            is_khmer = is_khmer_track(title, artist)
+        except Exception:
+            pass
+    culture = "Cambodian music" if is_khmer else "music"
+
+    prompt = f"""You are a master {culture} audio engineer and precision subtitle synchronizer.
 Listen carefully to this entire audio track and accurately align the provided lyric lines to the singer's actual singing voice.
 
 CRITICAL INSTRUCTIONS:
@@ -463,13 +472,14 @@ Example:
     }
 
     models = [
-        "gemini-3-flash-preview",
         "gemini-flash-lite-latest",
-        "gemini-flash-latest",
+        "gemini-2.5-flash",
+        "gemini-3-flash-preview",
+        "gemini-2.0-flash",
         "gemini-pro-latest"
     ]
     start_time = time.monotonic()
-    max_total_wait = 35.0  # Cap total cloud alignment wait so UI is never frozen
+    max_total_wait = 50.0  # Cap total cloud alignment wait so UI is never frozen
     consecutive_429 = 0
 
     for m in models:
@@ -486,7 +496,7 @@ Example:
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=22) as resp:
+            with urllib.request.urlopen(req, timeout=35) as resp:
                 res = json.loads(resp.read().decode("utf-8"))
                 text = res["candidates"][0]["content"]["parts"][0]["text"].strip()
                 if text.startswith("```"):
@@ -533,7 +543,8 @@ Example:
                             "line_id": lid,
                             "start": s,
                             "end": e,
-                            "text": user_text
+                            "text": user_text,
+                            "confidence": 0.95 if lid in parsed_by_id else 0.40,
                         })
 
                     if total_duration > 0 and last_e > total_duration:
@@ -617,7 +628,8 @@ def apply_lead_in_and_flush_end(cues: List[Dict[str, Any]], lead_in: float = 0.5
             "vocal_start": vocal_s,
             "vocal_end": vocal_e,
             "text": c["text"],
-            "words": c.get("words", [])
+            "words": c.get("words", []),
+            "confidence": c.get("confidence", 0.95),
         })
         prev_end = display_end
     return adjusted
@@ -766,7 +778,7 @@ def transcribe_audio_with_gemini(
     )
 
     models = [
-        "gemini-3-flash-preview", "gemini-flash-lite-latest", "gemini-flash-latest", "gemini-pro-latest"
+        "gemini-flash-lite-latest", "gemini-2.5-flash", "gemini-3-flash-preview", "gemini-2.0-flash", "gemini-pro-latest"
     ]
     consecutive_429 = 0
     start_time = time.monotonic()

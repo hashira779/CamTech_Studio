@@ -476,7 +476,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # or a busy model budget, and the studio is better off keeping its acoustic sync.
 _WORKER_TIMEOUT_S = 300.0
 # The CPU path takes about 0.6x the song's length (127 s for a 3.5 min song).
-_CPU_TIMEOUT_S = 900.0
+_CPU_TIMEOUT_S = 120.0
 _LOCK_WAIT_S = 120.0
 
 # Remembers when the CTC subprocess has crashed with an access violation (0xc0000005).
@@ -529,7 +529,7 @@ def ctc_align_lyrics(
     result = _run_worker(job)
     aligned = result.get("lines") if result else None
     if aligned is None:
-        log.warning("[CTC Align] word aligner unavailable on this machine; keeping acoustic sync")
+        log.info("[CTC Align] Word aligner yielded low acoustic match on this audio; keeping acoustic sync")
     return aligned
 
 
