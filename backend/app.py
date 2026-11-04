@@ -158,6 +158,17 @@ async def _on_startup():
             print(warn, flush=True)
             logging.getLogger("uvicorn").warning(warn)
 
+    # khmer-nltk loads its word model on first use, which held the first lyrics load after a
+    # start for several seconds (the list stayed empty). Load it now, off the request path.
+    def _warm_khmer_tokenizer():
+        try:
+            from backend.lyric_engine import tokenize_line_words
+            tokenize_line_words("សួស្តី")
+        except Exception:
+            pass
+    import threading
+    threading.Thread(target=_warm_khmer_tokenizer, name="warm-khmer-nltk", daemon=True).start()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

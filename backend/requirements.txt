@@ -18,3 +18,11 @@ PySide6
 pyTelegramBotAPI
 jiwer
 setuptools
+# Word aligner (models/mms_fa.onnx, made once by tools/export_aligner_onnx.py) and the
+# voice/music separation it listens through. Without torch + demucs every song is aligned on
+# the full mix, and duets or busy arrangements come out mostly unsure.
+onnxruntime
+onnx
+torch
+torchaudio
+demucs

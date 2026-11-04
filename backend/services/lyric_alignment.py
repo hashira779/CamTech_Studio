@@ -140,9 +140,13 @@ def align_lyrics_to_audio(
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any], str]:
     """
     Times every line (and word) of `lyrics` against the singer in `audio_path`, keeping the text
-    exactly as given. Returns (lines, report, source) where source is "gemini_multimodal_alignment"
-    when aligned via Gemini multimodal audio, "ctc_word_alignment" when each word was matched
-    acoustically via Wav2Vec2 CTC, or "acoustic_estimate" when only phrases were found.
+    exactly as given. Returns (lines, report, source):
+      "ctc_word_alignment"           every word matched to the singer, with a confidence per line
+      "gemini_multimodal_alignment"  the word aligner could not run or match; Gemini's line times
+      "acoustic_estimate"            only sung phrases were found
+    The word aligner goes first. Gemini is the fallback: it hears the words well, but its times
+    drift (measured on កុំភ្លេចគុណម្តាយ: right for 23 lines, then 4.6-8.8 s late for the last 12,
+    while the word aligner was sure of all 35), and it gives no confidence to flag what to check.
     """
     from backend.audio_analyzer import decode_audio_to_numpy
     from backend.vocal_align import detect_vocal_segments, get_cached_vocals_path
@@ -155,46 +159,17 @@ def align_lyrics_to_audio(
     report_progress(20, "Reading audio structure...")
     _, _, duration = decode_audio_to_numpy(audio_path, target_sr=8000)
 
-    aligned = None
-    source = "acoustic_estimate"
+    if get_cached_vocals_path(audio_path):
+        report_progress(45, "Matching every word to the singer's voice...")
+    else:
+        report_progress(35, "Separating the voice from the music (first time for this song)...")
+    aligned = force_align_lyrics_to_audio(texts, audio_path, duration)
+    source = "ctc_word_alignment" if aligned and all("confidence" in line for line in aligned) else "acoustic_estimate"
 
-    # --- Tier 0: Multimodal Gemini AI Alignment (Smart Ear) ---
-    # Real neural audio listening directly to the song: millisecond-accurate,
-    # detects singer entry, bypasses guitar/traditional solos, and tokenizes syllables.
-    try:
-        from backend.khmer_lyric_matcher import get_gemini_api_key, align_lyrics_with_gemini_multimodal
-        if get_gemini_api_key() and os.path.exists(audio_path):
-            base = os.path.splitext(os.path.basename(audio_path))[0]
-            parts = [p.strip() for p in base.split(" - ", 1)]
-            title_hint = parts[0] if parts else ""
-            artist_hint = parts[1] if len(parts) > 1 else ""
-
-            report_progress(30, f"🎧 Multimodal AI listening to singing & synchronizing {len(texts)} lines...")
-            gemini_cues = align_lyrics_with_gemini_multimodal(
-                audio_path,
-                texts,
-                title=title_hint,
-                artist=artist_hint,
-                total_duration=duration,
-                progress_callback=report_progress,
-            )
-            if gemini_cues and len(gemini_cues) == len(texts):
-                aligned = gemini_cues
-                source = "gemini_multimodal_alignment"
-                log.info(f"[Lyric Alignment] ✅ Gemini Multimodal AI aligned {len(aligned)} lines for '{os.path.basename(audio_path)}'")
-    except Exception as gemini_err:
-        log.warning(f"[Lyric Alignment] Gemini alignment step skipped/failed: {gemini_err}")
-
-    # --- Tier 1 & 2: Local Acoustic / CTC Alignment Fallback ---
-    if not aligned:
-        if get_cached_vocals_path(audio_path):
-            report_progress(45, "Matching every word to the singer's voice...")
-        else:
-            report_progress(35, "Separating the voice from the music (first time for this song)...")
-
-        aligned = force_align_lyrics_to_audio(texts, audio_path, duration)
-        word_aligned = all("confidence" in line for line in (aligned or []))
-        source = "ctc_word_alignment" if word_aligned else "acoustic_estimate"
+    if source != "ctc_word_alignment":
+        gemini_cues = _align_with_gemini(texts, audio_path, duration, report_progress)
+        if gemini_cues:
+            aligned, source = gemini_cues, "gemini_multimodal_alignment"
 
     if not aligned or [line.get("text") for line in aligned] != texts:
         raise AlignmentError(
@@ -212,24 +187,36 @@ def align_lyrics_to_audio(
         line["line_id"] = original.get("line_id", line.get("line_id", 0))
         if "confidence" in measured:
             line["confidence"] = measured["confidence"]
-        elif source == "gemini_multimodal_alignment":
-            line["confidence"] = 0.95
 
-    word_aligned = (
-        all(line.get("confidence", 0) >= LOW_LINE_CONFIDENCE for line in verified)
-        or source == "gemini_multimodal_alignment"
-    )
-    if not word_aligned and len(detect_vocal_segments(audio_path)) < 2:
+    word_aligned = source == "ctc_word_alignment"
+    if source == "acoustic_estimate" and len(detect_vocal_segments(audio_path)) < 2:
         raise AlignmentError(status_code=422, detail="No reliable singing phrases detected; lyrics were not replaced")
 
     report.pop("confidence", None)
-    if source == "gemini_multimodal_alignment":
-        report["status"] = "AI Multimodal sync verified with singer acoustics"
-    elif word_aligned:
-        report["status"] = "Timestamp structure checked"
-    else:
-        report["status"] = "Timestamp structure checked; singing accuracy requires playback review"
+    report["status"] = ("Timestamp structure checked" if word_aligned
+                        else "Timestamp structure checked; singing accuracy requires playback review")
     return verified, report, source
+
+
+def _align_with_gemini(texts, audio_path, duration, report_progress):
+    """Gemini's line times for `texts`, or None (no key, no answer, or a different line count)."""
+    try:
+        from backend.khmer_lyric_matcher import get_gemini_api_key, align_lyrics_with_gemini_multimodal
+        if not get_gemini_api_key():
+            return None
+        base = os.path.splitext(os.path.basename(audio_path))[0]
+        title, _, artist = (p.strip() for p in base.partition(" - "))
+        report_progress(60, f"Word aligner could not time these lines; asking Gemini to listen ({len(texts)} lines)...")
+        cues = align_lyrics_with_gemini_multimodal(
+            audio_path, texts, title=title, artist=artist, total_duration=duration, progress_callback=report_progress,
+            local_fallback=False,  # the local aligner already ran and could not time these lines
+        )
+        if cues and len(cues) == len(texts):
+            log.info(f"[Lyric Alignment] Gemini timed {len(cues)} lines for '{os.path.basename(audio_path)}' (rough timing)")
+            return cues
+    except Exception as e:
+        log.warning(f"[Lyric Alignment] Gemini alignment skipped: {e}")
+    return None
 
 
 def unsure_line_indexes(lines: List[Dict[str, Any]]) -> List[int]:

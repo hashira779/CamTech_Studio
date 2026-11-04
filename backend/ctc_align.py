@@ -475,8 +475,10 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # A 3-minute song aligns in ~25 s on the GPU; anything near these limits is a hung worker
 # or a busy model budget, and the studio is better off keeping its acoustic sync.
 _WORKER_TIMEOUT_S = 300.0
-# The CPU path takes about 0.6x the song's length (127 s for a 3.5 min song).
-_CPU_TIMEOUT_S = 120.0
+# The CPU path takes about 0.5-0.7x the song's length (98 s for a 5.4 min song on ONNX, more while
+# other programs are busy). A limit near that stops good alignments half way (120 s did: songs fell
+# back to rough timing), so this only catches a hung worker.
+_CPU_TIMEOUT_S = 900.0
 _LOCK_WAIT_S = 120.0
 
 # Remembers when the CTC subprocess has crashed with an access violation (0xc0000005).
@@ -528,8 +530,10 @@ def ctc_align_lyrics(
     }
     result = _run_worker(job)
     aligned = result.get("lines") if result else None
-    if aligned is None:
-        log.info("[CTC Align] Word aligner yielded low acoustic match on this audio; keeping acoustic sync")
+    if result is None:
+        log.warning(f"[CTC Align] word aligner did not run ({LAST_SKIP_REASON or 'see above'}); keeping acoustic sync")
+    elif aligned is None:
+        log.info("[CTC Align] the lyrics barely match what is sung; keeping acoustic sync")
     return aligned
 
 
@@ -630,6 +634,10 @@ def _run_worker(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         except TimeoutError as busy:
             log.warning(f"[CTC Align] {busy}; keeping acoustic sync")
             return None
+    except subprocess.TimeoutExpired:
+        LAST_SKIP_REASON = "The word aligner took too long (the computer may be busy). Close big programs and align again."
+        log.warning(f"[CTC Align] {LAST_SKIP_REASON}")
+        return None
     except Exception as e:
         log.warning(f"[CTC Align] aligner process failed: {e}")
         return None

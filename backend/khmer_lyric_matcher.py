@@ -385,9 +385,14 @@ def align_lyrics_with_gemini_multimodal(
     title: str = "",
     artist: str = "",
     total_duration: float = 0.0,
-    progress_callback=None
+    progress_callback=None,
+    local_fallback: bool = True,
 ) -> Optional[List[Dict[str, Any]]]:
     """
+    With local_fallback=False it returns None when Gemini gives no answer, instead of the local
+    aligner's times (a caller that already ran the local aligner must not get its result back
+    labelled as Gemini's).
+
     Multimodal AI Audio Alignment Engine:
     Listens directly to the audio recording using Gemini AI to detect the singer's vocal phrasing.
     Eliminates fragile DSP heuristics (bandpass filters, energy gates) that fail across diverse music genres.
@@ -608,6 +613,8 @@ Example:
             continue
 
     # Dynamic failover to local acoustic alignment if cloud AI is unavailable, rate-limited (429), or 503
+    if not local_fallback:
+        return None
     try:
         if progress_callback:
             progress_callback(60, f"⚡ Cloud AI busy — aligning {len(cue_items)} lines via fast local acoustic engine...")

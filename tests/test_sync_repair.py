@@ -143,6 +143,16 @@ def run():
     check(all(w["start"] < 16.5 for w in ws[:4]) and all(w["start"] >= 19.0 for w in ws[4:]),
           "its first half is timed on the first phrase and its second half on the second")
 
+    # Old recordings: the aligner is only fairly sure of most lines (0.3-0.45), and the voice
+    # detector cuts the echoing singing into back-to-back pieces. A fairly sure line is an anchor:
+    # the refit moves only the lost line next to it, never the whole stretch onto those pieces.
+    chopped = [(10.0, 12.2), (12.2, 14.1), (14.1, 16.4), (16.4, 18.0), (18.0, 20.3), (20.3, 23.0), (24.0, 27.0)]
+    lines = [line("intro", 10.0, 12.0, 0.8), line("fairly sure", 13.0, 17.0, 0.35), line("lost", 23.05, 23.95, 0.1),
+             line("after", 24.0, 27.0, 0.8)]  # "lost" sits on the one real pause, which triggers the refit
+    before = copy.deepcopy(lines)
+    refit_to_voice(lines, chopped)
+    check(lines[1] == before[1], "a line the aligner was fairly sure of (0.35) is never moved")
+
     print("instrumental breaks")
     voice = [(10.0, 20.0), (48.0, 60.0)]
     lines = [line("last of verse", 17.0, 47.5, 0.3), line("next verse", 48.2, 51.0, 0.8)]

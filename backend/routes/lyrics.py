@@ -221,7 +221,7 @@ def ai_fix_subtitles_api(req: SubtitleAIFixRequest):
 
 def _timing_note(source: str) -> str:
     """Why the word aligner was not used, for the studio to show next to a rough result."""
-    if source in ("ctc_word_alignment", "gemini_multimodal_alignment"):
+    if source == "ctc_word_alignment":
         return ""
     from backend import ctc_align
     return ctc_align.LAST_SKIP_REASON

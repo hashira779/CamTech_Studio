@@ -232,8 +232,13 @@ def end_lines_at_breaks(lines: List[Line], vocal_segments: Optional[List[Tuple[f
 # had less than 60% of its span voiced. A line below that sits mostly on silence and is misplaced
 # (measured case: a borrowed "ទៅណាមកណា ទៅណាមកណា" landing 2 s late, on 22% voice).
 MIN_VOICED = 0.6
-# Lines at or above this confidence are anchors the refit never moves.
-ANCHOR = 0.5
+# Lines at or above this confidence are anchors the refit never moves. At 0.5 nearly every line of
+# an old recording was movable, and the refit re-spread whole stretches over the voice detector's
+# pieces: a duet (ថៅកែត្បូងណាកូន) went 2-3 s early, while the aligner alone had lines 5, 7, 9 and 13
+# within 0.5 s of where Gemini heard them. At 0.3 those lines stay and only lost ones move:
+# repeated-chorus pairs more than 1 s off went 22 -> 14 of 63 over that duet and a Vietnamese song
+# whose ending the refit does fix (it stays at 11/48; a 6 s move cap there made it 18/48).
+ANCHOR = 0.3
 
 
 def _voiced(segs: List[Tuple[float, float]], a: float, b: float) -> float:
