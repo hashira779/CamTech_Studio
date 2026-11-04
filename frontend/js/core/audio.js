@@ -125,3 +125,35 @@ export function getRecordStream() {
     return null;
   }
 }
+
+// What you hear lags the player's clock: the audio engine and the output device (much more
+// on Bluetooth headphones, 150-300 ms) delay the sound. The preview subtracts this so a lyric
+// lights up when its word reaches your ears. Exports use exact song time and never use it.
+const EXTRA_DELAY_KEY = 'vida_extra_sound_delay_ms';
+const MAX_EXTRA_DELAY_MS = 600;
+
+/** The delay the browser reports for its own audio path, in seconds (0 when unknown). */
+export function reportedSoundDelay() {
+  if (!audioCtx || audioCtx.state !== 'running') return 0;
+  const d = (Number(audioCtx.outputLatency) || 0) + (Number(audioCtx.baseLatency) || 0);
+  return d > 0 && d < 1 ? d : 0;
+}
+
+/** The user's own correction on top, in ms (devices often report less than they add). */
+export function getExtraSoundDelayMs() {
+  try {
+    const v = Number(localStorage.getItem(EXTRA_DELAY_KEY));
+    return Number.isFinite(v) ? Math.max(-MAX_EXTRA_DELAY_MS, Math.min(MAX_EXTRA_DELAY_MS, v)) : 0;
+  } catch (_) { return 0; }
+}
+
+export function setExtraSoundDelayMs(ms) {
+  const v = Math.max(-MAX_EXTRA_DELAY_MS, Math.min(MAX_EXTRA_DELAY_MS, Math.round(ms)));
+  try { localStorage.setItem(EXTRA_DELAY_KEY, String(v)); } catch (_) {}
+  return v;
+}
+
+/** Seconds between the player's clock and the sound you hear right now. */
+export function soundDelaySeconds() {
+  return Math.max(0, reportedSoundDelay() + getExtraSoundDelayMs() / 1000);
+}

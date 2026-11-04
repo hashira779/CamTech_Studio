@@ -1,5 +1,5 @@
 import { state, PALETTES } from './core/state.js';
-import { initAudioContext, updateVolume, updateEq } from './core/audio.js';
+import { initAudioContext, updateVolume, updateEq, soundDelaySeconds } from './core/audio.js';
 import { initVisualizer, startVisualizer, setPreviewSize, getPreviewSize } from './core/visualizer.js';
 import { ensureAudioFeatures } from './core/audio_features.js';
 import { KHMER_TEMPLATES, KHMER_SINGERS_60S_70S } from './core/khmer_templates.js';
@@ -13,6 +13,8 @@ import { initTapSync } from './features/tap_sync.js';
 import { initLineTiming } from './features/line_timing.js';
 import { applySyncResult, initSyncKeep } from './features/sync_keep.js';
 import { cacheLyrics, saveLyrics, pickNewer } from './core/lyrics_store.js';
+import { initExportDialog, openExportDialog } from './ui/export_dialog.js';
+import { initSoundDelay } from './features/sound_delay.js';
 import {
   initTranslationTrack,
   loadTranslationForSong,
@@ -145,7 +147,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.__VIDA_SERVER_PATH = cachedServerPath;
     if (restoreTitle) {
       const titleEl = document.querySelector('.project-title');
-      if (titleEl) titleEl.textContent = `Project: ${restoreTitle}${restoreArtist ? ' — ' + restoreArtist : ''}`;
+      if (titleEl) titleEl.textContent = `${restoreTitle}${restoreArtist ? ' — ' + restoreArtist : ''}`;
     }
   }
 
@@ -724,7 +726,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
     },
-    { id: 'menu-act-render-video', action: () => { const b = document.getElementById('btn-export'); if (b) b.click(); } },
+    { id: 'menu-act-render-video', action: () => openExportDialog() },
     { id: 'menu-act-yt-details', action: () => openYouTubeDetailsModal() },
     { id: 'menu-act-khmer-templates', action: () => { const b = document.getElementById('btn-open-khmer-templates'); if (b) b.click(); } },
     { id: 'menu-act-shortcuts', action: () => {
@@ -1146,7 +1148,7 @@ document.addEventListener('DOMContentLoaded', () => {
     inputSongTitle.addEventListener('input', (e) => {
       state.songTitle = e.target.value;
       const titleEl = document.querySelector('.project-title');
-      if (titleEl) titleEl.textContent = `Project: ${state.songTitle}${state.artistName ? ' — ' + state.artistName : ''}`;
+      if (titleEl) titleEl.textContent = `${state.songTitle}${state.artistName ? ' — ' + state.artistName : ''}`;
     });
   }
 
@@ -1155,7 +1157,7 @@ document.addEventListener('DOMContentLoaded', () => {
       state.songTitle = '';
       inputSongTitle.value = '';
       const titleEl = document.querySelector('.project-title');
-      if (titleEl) titleEl.textContent = `Project: ${state.artistName || 'VIDA'}`;
+      if (titleEl) titleEl.textContent = `${state.artistName || 'VIDA'}`;
       showToast('Song Title', 'Title deleted/cleared', 'info', 1500);
     });
   }
@@ -1165,7 +1167,7 @@ document.addEventListener('DOMContentLoaded', () => {
     inputArtistName.addEventListener('input', (e) => {
       state.artistName = e.target.value;
       const titleEl = document.querySelector('.project-title');
-      if (titleEl) titleEl.textContent = `Project: ${state.songTitle || 'VIDA'}${state.artistName ? ' — ' + state.artistName : ''}`;
+      if (titleEl) titleEl.textContent = `${state.songTitle || 'VIDA'}${state.artistName ? ' — ' + state.artistName : ''}`;
     });
   }
 
@@ -1174,7 +1176,7 @@ document.addEventListener('DOMContentLoaded', () => {
       state.artistName = '';
       inputArtistName.value = '';
       const titleEl = document.querySelector('.project-title');
-      if (titleEl) titleEl.textContent = `Project: ${state.songTitle || 'VIDA'}`;
+      if (titleEl) titleEl.textContent = `${state.songTitle || 'VIDA'}`;
       showToast('Singer / Artist', 'Singer deleted/cleared', 'info', 1500);
     });
   }
@@ -1636,11 +1638,11 @@ document.addEventListener('DOMContentLoaded', () => {
       teleprompterVisible = !teleprompterVisible;
       if (teleprompterVisible) {
         teleprompterEl.style.display = 'flex';
-        btnToggleTeleprompter.textContent = 'Hide';
+        btnToggleTeleprompter.textContent = 'Hide list';
         btnToggleTeleprompter.style.color = 'var(--text-muted)';
       } else {
         teleprompterEl.style.display = 'none';
-        btnToggleTeleprompter.textContent = 'Show';
+        btnToggleTeleprompter.textContent = 'Show list';
         btnToggleTeleprompter.style.color = 'var(--accent)';
       }
     });
@@ -1676,10 +1678,10 @@ document.addEventListener('DOMContentLoaded', () => {
           if (kept) await saveTimings();
           showToast(
             'Lyric Timing Checked',
-            (data.source === 'ctc_word_alignment' || data.source === 'gemini_multimodal_alignment'
+            (data.source === 'ctc_word_alignment'
               ? `Aligned ${data.lines_count} lines (${data.words_count || 0} words) to singer audio. Review playback.`
               : 'Timing structure checked; estimated singing timing still needs playback review.') + (kept ? ` Kept your own timing on ${kept} line${kept > 1 ? 's' : ''}.` : ''),
-            (data.source === 'ctc_word_alignment' || data.source === 'gemini_multimodal_alignment') ? 'success' : 'warning',
+            data.source === 'ctc_word_alignment' ? 'success' : 'warning',
             3500
           );
         } else {
@@ -1689,7 +1691,7 @@ document.addEventListener('DOMContentLoaded', () => {
         console.error('Lyrics verification error:', err);
         showToast('Verification Error', err.message, 'error', 3000);
       } finally {
-        clearButtonLoading(btnVerifyLyrics, 'Double-Check');
+        clearButtonLoading(btnVerifyLyrics, 'Double-check timing');
         setTimeout(() => setGlobalProgress(100, false, ''), 1000);
       }
     });
@@ -1775,7 +1777,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (kept) await saveTimings();
           setUnlistedSinging(data.unlisted, state.lyrics.length);
           setTimingSource(data.source, state.lyrics.length, data.timing_note);
-          const wordAligned = data.source === 'ctc_word_alignment' || data.source === 'gemini_multimodal_alignment';
+          const wordAligned = data.source === 'ctc_word_alignment';
           showToast(
             wordAligned ? 'Singer Timing Aligned' : 'Estimated Vocal Timing',
             wordAligned
@@ -1791,7 +1793,7 @@ document.addEventListener('DOMContentLoaded', () => {
         console.error('Lyric timing sync error:', err);
         showToast('Sync Error', err.message, 'error', 3000);
       } finally {
-        clearButtonLoading(btnSyncVocalTiming, 'Re-Sync to Music');
+        clearButtonLoading(btnSyncVocalTiming, 'Sync to singer');
         setTimeout(() => setGlobalProgress(100, false, ''), 1000);
       }
     });
@@ -2022,6 +2024,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initTapSync({ renderLyrics: redrawLyrics, save: saveTimings });
   initLineTiming({ renderLyrics: redrawLyrics, save: saveTimings });
   initSyncKeep({ renderLyrics: redrawLyrics, save: saveTimings, onRestore: (before) => remapTranslationToLyrics(before) });
+  initExportDialog();
+  initSoundDelay();
 
   // Clear Lyrics Button
   const btnClearLyrics = document.getElementById('btn-clear-lyrics');
@@ -2335,7 +2339,7 @@ document.addEventListener('DOMContentLoaded', () => {
         timecodeEl.textContent = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}:${f.toString().padStart(2, '0')}`;
       }
 
-      updateTeleprompterHighlight(t);
+      updateTeleprompterHighlight(Math.max(0, t - (audioPlayer.paused ? 0 : soundDelaySeconds())));
     });
   }
 
@@ -2425,7 +2429,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     const titleEl = document.querySelector('.project-title');
     if (titleEl) {
-      titleEl.textContent = `Project: ${state.songTitle}${artist ? ' — ' + artist : ''}`;
+      titleEl.textContent = `${state.songTitle}${artist ? ' — ' + artist : ''}`;
     }
     syncTitleInputs();
 
@@ -3329,7 +3333,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (state.artistName) localStorage.setItem('vida_artist_name', state.artistName);
           if (state.audioUrl) localStorage.setItem('vida_audio_src', state.audioUrl);
         } catch(e) {}
-        const sources = { subtitle: 'Captions', 'retrieved-timing': 'Retrieved Captions', gemini_multimodal_alignment: 'Gemini AI Multimodal Sync', ctc_word_alignment: 'Singer Word Alignment', acoustic_estimate: 'Acoustic Estimates' };
+        const sources = { subtitle: 'Captions', 'retrieved-timing': 'Retrieved Captions', gemini_multimodal_alignment: 'Gemini (rough timing)', ctc_word_alignment: 'Singer Word Alignment', acoustic_estimate: 'Acoustic Estimates' };
         const src = sources[data.source] || 'Whisper AI';
         const langTag = data.detected_language ? ` [${data.detected_language.toUpperCase()}]` : '';
         showToast('Lyrics Ready', `${data.count} lines from ${src}${langTag}. Review singing timing in playback.`, data.source === 'acoustic_estimate' ? 'warning' : 'success', 6000);

@@ -44,7 +44,9 @@
             <button class="menu-action-btn" id="menu-act-import-sub">Import Subtitle (LRC/SRT)...</button>
             <button class="menu-action-btn" id="menu-act-open-library">Browse Media Pool Library...</button>
             <div class="menu-divider"></div>
-            <button class="menu-action-btn menu-highlight-btn" id="menu-act-export-capcut">Export CapCut Perfect SRT</button>
+            <button class="menu-action-btn menu-highlight-btn" id="menu-act-render-video">Export…</button>
+            <button class="menu-action-btn" id="menu-act-export-capcut">Export CapCut SRT</button>
+            <button class="menu-action-btn" id="menu-act-yt-details">YouTube upload details…</button>
             <button class="menu-action-btn" id="menu-act-load-demo">Load Synth Demo Track</button>
           </div>
         </div>
@@ -63,7 +65,7 @@
         </div>
 
         <div class="nav-menu-item" id="menu-ai">
-          <button class="menu-trigger-btn">AI Models ▾</button>
+          <button class="menu-trigger-btn">AI ▾</button>
           <div class="menu-dropdown-content">
             <button class="menu-action-btn" id="menu-act-ai-gemini">Gemini Cloud AI (Fast-Path)</button>
             <button class="menu-action-btn" id="menu-act-ai-whisper">Whisper Large-v3 Turbo</button>
@@ -71,14 +73,6 @@
             <div class="menu-divider"></div>
             <button class="menu-action-btn" id="menu-act-gemini-key" style="color: #38bdf8;">🔑 Gemini API Key Settings...</button>
             <button class="menu-action-btn" id="menu-act-toggle-demucs">Toggle Demucs Vocal Isolation</button>
-          </div>
-        </div>
-
-        <div class="nav-menu-item" id="menu-render">
-          <button class="menu-trigger-btn">Render ▾</button>
-          <div class="menu-dropdown-content">
-            <button class="menu-action-btn menu-highlight-btn" id="menu-act-render-video">Export Video Render</button>
-            <button class="menu-action-btn" id="menu-act-yt-details">YouTube Auto-Post Details...</button>
           </div>
         </div>
 
@@ -96,7 +90,7 @@
     <div class="header-center">
       <div class="project-title-capsule">
         <span class="project-title">Project: Cyber Horizon - 60 FPS Studio</span>
-        <span class="project-format-badge">1080p • 60 FPS</span>
+        <span class="project-format-badge" hidden>1080p • 60 FPS</span>
       </div>
       <!-- Live Studio Activity Indicator in Header -->
       <div id="header-progress-capsule" class="header-progress-capsule" style="display: none;">
@@ -156,40 +150,16 @@
       <button id="btn-toggle-right-panel" class="panel-toggle-btn active" title="Toggle Inspector Panel (Wide View)" aria-label="Toggle Inspector panel">
         <span aria-hidden="true">⊟</span> <span class="ui-hide-lg">Inspector</span>
       </button>
-      <div class="status-indicator ui-hide-md">
+      <div class="status-indicator ui-hide-md" hidden>
         <span class="dot active"></span> Local LLM: Ready
       </div>
 
-      <!-- YouTube publish cluster -->
-      <div class="ui-hgroup" id="yt-cluster">
-        <label class="ui-hlabel" title="Automatically upload the rendered video to your YouTube channel">
-          <input type="checkbox" id="check-youtube-autopost">
-          <span class="ui-hide-lg">Auto-Post to YouTube</span>
-          <span class="ui-only-sm">YouTube</span>
-        </label>
-        <select id="select-youtube-privacy" class="prop-select ui-select--tight" title="YouTube video visibility">
-          <option value="public" selected>Public</option>
-          <option value="unlisted">Unlisted</option>
-          <option value="private">Private</option>
-        </select>
-        <button id="btn-open-yt-modal" class="ui-btn ui-btn--sm" title="Preview & customize the YouTube title and description with lyrics & tags" aria-label="YouTube video details"><span aria-hidden="true">⚙</span><span class="ui-hide-sm ui-hide-lg"> Details</span></button>
-        <button id="btn-youtube-connect" class="ui-btn ui-btn--sm ui-btn--bad" title="Connect or authorize your YouTube channel">
-          <span id="yt-connect-icon">🔴</span>
-          <span id="yt-connect-text">Connect YT</span>
-        </button>
-      </div>
-
-      <!-- Export Speed & Quality Presets -->
-      <select id="select-export-preset" class="prop-select ui-select--tight" title="Export speed & quality preset">
-        <option value="720p@30" selected>720p · 30 FPS (Turbo 20x)</option>
-        <option value="1080p@30">1080p · 30 FPS (Fast 6x)</option>
-        <option value="1080p@60">1080p · 60 FPS (Ultra Smooth)</option>
-        <option value="480p@30">480p · 30 FPS (Ultra 40x Draft)</option>
-      </select>
-
-      <button class="btn-primary ui-btn ui-btn--primary" id="btn-export">
-        <span>Export Video</span>
+      <button class="ui-btn ui-btn--primary hdr-export" id="btn-open-export" aria-haspopup="dialog">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+        <span>Export</span>
       </button>
+
+
     </div>
 
     <!-- Global Studio Activity Progress Line -->
@@ -534,20 +504,44 @@
             <summary>Lyric lines
               <span class="ui-spacer"></span>
               <span id="lyrics-count-badge" class="ui-chip ui-chip--info">0 Lines</span>
-              <span id="lyrics-mode-badge" class="ui-chip" title="What the stage and export actually paint">Original only</span>
+              <span id="lyrics-mode-badge" class="ui-chip" hidden title="What the stage and export actually paint">Original only</span>
               <span id="studio-engine-chip" class="ui-chip ui-chip--warn" style="display: none;">Energy sync only</span>
               <span id="lyrics-verified-badge" class="ui-chip ui-chip--warn" style="display: none;">Timing Checked</span>
             </summary>
             <div class="ui-sec-body">
-              <div class="ui-row ui-row--split">
-                <button id="btn-paste-align-lyrics" class="ui-btn ui-btn--go" title="Paste the song's real lyrics and match every word to the singer">Paste &amp; Align</button>
-                <div class="ui-row">
-                  <button id="btn-undo-sync" class="ui-btn ui-btn--sm" hidden title="Bring back the lyrics as they were before the last sync (press again to redo)">↶ Undo sync</button>
-                  <button id="btn-tap-sync" class="ui-btn ui-btn--sm" title="Play the song and press Enter the moment each line starts. Best for songs the aligner cannot hear well.">✋ Tap sync</button>
-                  <button id="btn-fullscreen-teleprompter" class="ui-btn ui-btn--sm" title="Open the teleprompter full screen">Full</button>
-                  <button id="btn-toggle-teleprompter" class="ui-btn ui-btn--sm" title="Hide or show the lyric list">Hide</button>
-                  <button id="btn-clear-lyrics" class="ui-btn ui-btn--sm ui-btn--ghost" title="Remove the loaded lyric lines from the panel">Clear</button>
-                </div>
+              <div class="lyr-actions">
+                <button id="btn-sync-vocal-timing" class="ui-btn ui-btn--primary lyr-main" title="Measure every line and word start against the selected singer audio and rewrite the timestamps. The lyric text you loaded stays exactly as it is.">Sync to singer</button>
+                <button id="btn-paste-align-lyrics" class="ui-btn" title="Paste the song's real lyrics and match every word to the singer">Paste lyrics</button>
+                <details class="ui-more" id="lyrics-more">
+                  <summary class="ui-btn ui-more-btn" aria-label="More lyric actions" title="More lyric actions">⋯</summary>
+                  <div class="ui-more-menu">
+                    <span class="ui-more-hd">Timing</span>
+                    <button id="btn-tap-sync" class="ui-more-item" title="Play the song and press Enter the moment each line starts. Best for songs the aligner cannot hear well.">✋ Tap sync</button>
+                    <button id="btn-undo-sync" class="ui-more-item" hidden title="Bring back the lyrics as they were before the last sync (press again to redo)">↶ Undo sync</button>
+                    <button id="btn-verify-lyrics" class="ui-more-item" title="Re-check the timestamps against the singer audio. If the check cannot be done honestly, it refuses instead of guessing.">Double-check timing</button>
+                    <div class="ui-more-row">
+                      <span class="ui-more-lab">Move all</span>
+                      <button id="btn-show-earlier-500" class="ui-more-item" title="Appear 0.5s earlier before the singer starts singing">−0.5s</button>
+                      <button id="btn-show-earlier-100" class="ui-more-item" title="Fine-tune lead-in: appear 0.1s earlier">−0.1s</button>
+                      <button id="btn-show-later-500" class="ui-more-item" title="Delay lyrics 0.5s later">+0.5s</button>
+                    </div>
+                    <div class="ui-more-row" title="If the words light up before you hear them (common with Bluetooth headphones), press + until they land on the voice. Only the preview changes; exports are not affected.">
+                      <span class="ui-more-lab">Sound delay</span>
+                      <button id="btn-sound-delay-less" class="ui-more-item" data-keep-open aria-label="Show lyrics 25 ms earlier">−</button>
+                      <span id="sound-delay-value" class="ui-more-val" aria-live="polite">auto</span>
+                      <button id="btn-sound-delay-more" class="ui-more-item" data-keep-open aria-label="Show lyrics 25 ms later">+</button>
+                    </div>
+                    <span class="ui-more-hd">Words</span>
+                    <button id="btn-autofix-lyrics" class="ui-more-item" title="Auto-fix phonetic and spelling mistakes in words in place without changing any line structure or timing">Fix Words</button>
+                    <button id="btn-fix-khmer-lyrics" class="ui-more-item" title="AI-powered native Khmer refinement — rewrites translated Khmer lyrics into natural, singable, native Khmer while preserving timestamps">Fix Khmer</button>
+                    <button id="btn-reload-subtitles" class="ui-more-item" title="Reload full authentic subtitles from server disk file (.srt / .lrc)">Reload from File</button>
+                    <button id="btn-open-srt-editor" class="ui-more-item" title="Open full SRT Subtitle Editor — edit timing, text, add/delete cues, and export to SRT/VTT/LRC">Subtitle editor…</button>
+                    <span class="ui-more-hd">List</span>
+                    <button id="btn-fullscreen-teleprompter" class="ui-more-item" title="Open the teleprompter full screen">Full screen</button>
+                    <button id="btn-toggle-teleprompter" class="ui-more-item" title="Hide or show the lyric list">Hide list</button>
+                    <button id="btn-clear-lyrics" class="ui-more-item ui-more-item--bad" title="Remove the loaded lyric lines from the panel">Clear all lines</button>
+                  </div>
+                </details>
               </div>
 
               <div id="tap-sync-bar" class="tap-bar" hidden>
@@ -571,63 +565,6 @@
                 <div class="teleprompter-empty">No lyrics loaded yet</div>
               </div>
 
-              <hr class="ui-sep">
-
-              <div class="ui-field">
-                <span class="ui-lab">Lyric quality</span>
-                <div class="ui-acts">
-                  <button id="btn-autofix-lyrics" class="ui-btn ui-btn--warn" title="Auto-fix phonetic and spelling mistakes in words in place without changing any line structure or timing">Fix Words</button>
-                  <button id="btn-fix-khmer-lyrics" class="ui-btn ui-btn--ai" title="AI-powered native Khmer refinement — rewrites translated Khmer lyrics into natural, singable, native Khmer while preserving timestamps">Fix Khmer</button>
-                  <button id="btn-reload-subtitles" class="ui-btn ui-btn--primary" title="Reload full authentic subtitles from server disk file (.srt / .lrc)">Reload from File</button>
-                  <button id="btn-sync-vocal-timing" class="ui-btn ui-btn--go" title="Measure every line and word start against the selected singer audio and rewrite the timestamps. The lyric text you loaded stays exactly as it is.">Re-Sync to Music</button>
-                  <button id="btn-verify-lyrics" class="ui-btn ui-btn--go" title="Re-check the timestamps against the singer audio. If the check cannot be done honestly, it refuses instead of guessing.">Double-Check</button>
-                </div>
-              </div>
-
-              <div class="ui-field">
-                <span class="ui-lab">Line timing</span>
-                <div class="ui-acts ui-acts--3">
-                  <button id="btn-show-earlier-500" class="ui-btn ui-btn--sm" title="Appear 0.5s earlier before the singer starts singing">Earlier 0.5s</button>
-                  <button id="btn-show-earlier-100" class="ui-btn ui-btn--sm" title="Fine-tune lead-in: appear 0.1s earlier">Earlier 0.1s</button>
-                  <button id="btn-show-later-500" class="ui-btn ui-btn--sm" title="Delay lyrics 0.5s later">Later 0.5s</button>
-                </div>
-                <p class="ui-hint">Timing shifts move when a line appears only — the original .srt text stays as it is.</p>
-              </div>
-
-              <hr class="ui-sep">
-
-              <div class="ui-field">
-                <span class="ui-lab">Edit &amp; export</span>
-                <button id="btn-open-srt-editor" class="ui-btn ui-btn--block" title="Open full SRT Subtitle Editor — edit timing, text, add/delete cues, and export to SRT/VTT/LRC"><span>SRT Editor</span></button>
-                <div class="ui-row">
-                  <button id="btn-quick-export-capcut" class="ui-btn ui-btn--primary" style="flex: 1 1 auto;" title="Instant 1-Click Export: generate perfect SRT for CapCut with 100% voice sync">CapCut SRT</button>
-                  <div id="export-sub-dropdown-wrapper" class="ui-ddw">
-                    <button id="btn-export-subtitles" class="ui-btn" title="Export subtitles as SRT, VTT, LRC, or plain text">Export ▾</button>
-                    <div id="export-sub-dropdown" class="ui-dd" style="display: none;">
-                      <div class="ui-dd-hdr">Dual Tracks (2 SRTs)</div>
-                      <button class="export-sub-option ui-dd-item ui-dd-item--feature" data-format="both_srts" title="Download 2 separate SRT files (Original + Second) at once">⚡ Export 2 SRTs (Original &amp; Second)</button>
-                      <button class="export-sub-option ui-dd-item" data-format="both_capcut" title="Download 2 CapCut-optimized SRT files (Original + Second)">🎬 CapCut 2 SRTs (Original &amp; Second)</button>
-                      <button class="export-sub-option ui-dd-item" data-format="orig_srt" title="Export Original language SRT only">1️⃣ Original SRT only (.srt)</button>
-                      <button class="export-sub-option ui-dd-item" data-format="second_srt" title="Export Second / Translated language SRT only">2️⃣ Second (Translated) SRT only (.srt)</button>
-                      <button class="export-sub-option ui-dd-item" data-format="bilingual" title="Export stacked bilingual SRT (both lines in single cue)">🔤 Bilingual Dual-Line (.srt)</button>
-                      <div class="ui-dd-sep"></div>
-                      <div class="ui-dd-hdr">Standard Formats</div>
-                      <button class="export-sub-option ui-dd-item ui-dd-item--feature" data-format="capcut" title="Export 100% voice-synced SRT optimized specifically for CapCut video editor">CapCut Perfect (.srt)</button>
-                      <button class="export-sub-option ui-dd-item" data-format="srt" title="SubRip Subtitle (.srt) — universal format for YouTube, VLC, Premiere">SubRip (.srt)</button>
-                      <button class="export-sub-option ui-dd-item" data-format="vtt" title="WebVTT (.vtt) — HTML5 video, web players, modern browsers">WebVTT (.vtt)</button>
-                      <button class="export-sub-option ui-dd-item" data-format="lrc" title="LRC lyrics format (.lrc) — music players, karaoke apps">LRC Lyrics (.lrc)</button>
-                      <div class="ui-dd-sep"></div>
-                      <button class="export-sub-option ui-dd-item" data-format="txt" title="Plain text (.txt) — lyrics only, no timestamps">Plain Text (.txt)</button>
-                      <button class="export-sub-option ui-dd-item" data-format="ass" title="Advanced SubStation Alpha (.ass) — styled subtitles for video editors">SSA/ASS (.ass)</button>
-                    </div>
-                  </div>
-                </div>
-                <div class="ui-row" style="margin-top: 6px;">
-                  <button id="btn-export-two-srts" class="ui-btn ui-btn--ai ui-btn--block" title="⚡ 1-Click Dual Export: Download 2 separate SRT files (1 Original SRT + 1 Second/Translated SRT) for CapCut / Premiere">
-                    <span>⚡ Export 2 SRTs (Original &amp; Second)</span>
-                  </button>
-                </div>
-              </div>
             </div>
           </details>
 
@@ -1164,6 +1101,89 @@
   </div>
 
   <!-- Modal: Paste & Align Original Lyrics -->
+  <!-- Export: the video (the same frames as the preview) and the subtitle files, in one place -->
+  <div id="export-dialog" class="ui-modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="export-dialog-title">
+    <div class="ui-modal-card ui-modal-card--export">
+      <div class="ui-modal-hd">
+        <div class="ui-modal-titlerow">
+          <div>
+            <h2 id="export-dialog-title" class="ui-modal-name">Export</h2>
+            <span class="ui-modal-sub">The video is drawn from the same frames as the preview.</span>
+          </div>
+        </div>
+        <button id="btn-close-export-dialog" class="ui-btn ui-btn--ghost ui-modal-x" aria-label="Close">✕</button>
+      </div>
+      <div class="ui-modal-body">
+        <section class="exp-sec" aria-labelledby="exp-video-hd">
+          <h3 id="exp-video-hd" class="exp-hd">Video</h3>
+          <label class="ui-field">
+            <span class="ui-lab">Quality</span>
+            <select id="select-export-preset" class="prop-select ui-select--tight" title="Export speed & quality preset">
+        <option value="720p@30" selected>720p · 30 FPS (Turbo 20x)</option>
+        <option value="1080p@30">1080p · 30 FPS (Fast 6x)</option>
+        <option value="1080p@60">1080p · 60 FPS (Ultra Smooth)</option>
+        <option value="480p@30">480p · 30 FPS (Ultra 40x Draft)</option>
+      </select>
+          </label>
+          <div class="ui-field">
+            <span class="ui-lab">YouTube</span>
+            <div class="ui-hgroup" id="yt-cluster">
+        <label class="ui-hlabel" title="Automatically upload the rendered video to your YouTube channel">
+          <input type="checkbox" id="check-youtube-autopost">
+          <span>Upload when the video is done</span>
+        </label>
+        <select id="select-youtube-privacy" class="prop-select ui-select--tight" title="YouTube video visibility">
+          <option value="public" selected>Public</option>
+          <option value="unlisted">Unlisted</option>
+          <option value="private">Private</option>
+        </select>
+        <button id="btn-open-yt-modal" class="ui-btn ui-btn--sm" title="Preview & customize the YouTube title and description with lyrics & tags" aria-label="YouTube video details"><span aria-hidden="true">⚙</span><span> Details</span></button>
+        <button id="btn-youtube-connect" class="ui-btn ui-btn--sm ui-btn--bad" title="Connect or authorize your YouTube channel">
+          <span id="yt-connect-icon">🔴</span>
+          <span id="yt-connect-text">Connect YT</span>
+        </button>
+      </div>
+          </div>
+          <button class="ui-btn ui-btn--primary exp-go" id="btn-export">
+        <span>Export video</span>
+      </button>
+        </section>
+        <section class="exp-sec" aria-labelledby="exp-sub-hd">
+          <h3 id="exp-sub-hd" class="exp-hd">Subtitle files</h3>
+          <p class="ui-hint">The lyric lines with your timing, for CapCut, Premiere or YouTube.</p>
+                <div class="ui-row">
+                  <button id="btn-quick-export-capcut" class="ui-btn ui-btn--primary" style="flex: 1 1 auto;" title="Instant 1-Click Export: generate perfect SRT for CapCut with 100% voice sync">CapCut SRT</button>
+                  <div id="export-sub-dropdown-wrapper" class="ui-ddw">
+                    <button id="btn-export-subtitles" class="ui-btn" title="Export subtitles as SRT, VTT, LRC, or plain text">Export ▾</button>
+                    <div id="export-sub-dropdown" class="ui-dd" style="display: none;">
+                      <div class="ui-dd-hdr">Dual Tracks (2 SRTs)</div>
+                      <button class="export-sub-option ui-dd-item ui-dd-item--feature" data-format="both_srts" title="Download 2 separate SRT files (Original + Second) at once">⚡ Export 2 SRTs (Original &amp; Second)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="both_capcut" title="Download 2 CapCut-optimized SRT files (Original + Second)">🎬 CapCut 2 SRTs (Original &amp; Second)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="orig_srt" title="Export Original language SRT only">1️⃣ Original SRT only (.srt)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="second_srt" title="Export Second / Translated language SRT only">2️⃣ Second (Translated) SRT only (.srt)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="bilingual" title="Export stacked bilingual SRT (both lines in single cue)">🔤 Bilingual Dual-Line (.srt)</button>
+                      <div class="ui-dd-sep"></div>
+                      <div class="ui-dd-hdr">Standard Formats</div>
+                      <button class="export-sub-option ui-dd-item ui-dd-item--feature" data-format="capcut" title="Export 100% voice-synced SRT optimized specifically for CapCut video editor">CapCut Perfect (.srt)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="srt" title="SubRip Subtitle (.srt) — universal format for YouTube, VLC, Premiere">SubRip (.srt)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="vtt" title="WebVTT (.vtt) — HTML5 video, web players, modern browsers">WebVTT (.vtt)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="lrc" title="LRC lyrics format (.lrc) — music players, karaoke apps">LRC Lyrics (.lrc)</button>
+                      <div class="ui-dd-sep"></div>
+                      <button class="export-sub-option ui-dd-item" data-format="txt" title="Plain text (.txt) — lyrics only, no timestamps">Plain Text (.txt)</button>
+                      <button class="export-sub-option ui-dd-item" data-format="ass" title="Advanced SubStation Alpha (.ass) — styled subtitles for video editors">SSA/ASS (.ass)</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="ui-row" style="margin-top: 6px;">
+                  <button id="btn-export-two-srts" class="ui-btn ui-btn--ai ui-btn--block" title="⚡ 1-Click Dual Export: Download 2 separate SRT files (1 Original SRT + 1 Second/Translated SRT) for CapCut / Premiere">
+                    <span>⚡ Export 2 SRTs (Original &amp; Second)</span>
+                  </button>
+                </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
   <div id="align-lyrics-modal" class="ui-modal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="align-modal-title">
     <div class="ui-modal-card ui-modal-card--align">
       <div class="ui-modal-hd">

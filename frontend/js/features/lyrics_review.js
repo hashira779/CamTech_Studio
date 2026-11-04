@@ -13,7 +13,7 @@ let roughTiming = { on: false, lineCount: -1, note: '' };
 
 /** Remembers how the last alignment was timed; a rough estimate is announced in the bar, with why. */
 export function setTimingSource(source, lineCount, note = '') {
-  roughTiming = { on: Boolean(source) && source !== 'ctc_word_alignment' && source !== 'gemini_multimodal_alignment', lineCount, note: note || '' };
+  roughTiming = { on: Boolean(source) && source !== 'ctc_word_alignment', lineCount, note: note || '' };
   updateLyricsReview();
 }
 

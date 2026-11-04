@@ -6,6 +6,7 @@ import { cachedFill } from '../themes/fill_cache.js';
 import { updateLyricState, drawLyrics } from './lyrics.js?v=20261012-v2';
 import { getCameraShakeOffset, renderPostVFX, resetVFX } from '../plugins/vfx_engine.js';
 import { evaluateDirectorRules, resetDirector } from '../plugins/director_rules.js';
+import { soundDelaySeconds } from './audio.js';
 
 let canvas = null;
 let ctx = null;
@@ -376,7 +377,9 @@ function renderFrame(ts) {
     lastFrameTs = ts;
 
     const audioPlayer = document.getElementById("audio-player");
-    const t = audioPlayer ? audioPlayer.currentTime : 0;
+    // While playing, draw the moment you hear, not where the player's clock already is.
+    const playing = audioPlayer && !audioPlayer.paused;
+    const t = audioPlayer ? Math.max(0, audioPlayer.currentTime - (playing ? soundDelaySeconds() : 0)) : 0;
     if (!hasFeatures() && ctx) {
       // Features not decoded yet (first load): draw a silent frame rather than stale spectrum
     }

@@ -1474,3 +1474,85 @@ body.daw-theme { grid-template-columns: minmax(0, 1fr); }
     transition: none !important;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Calmer studio: one Export button in the header (its options live in the Export
+   dialog), and a Lyrics tab with one main action, Paste, and a "⋯" menu for the rest.
+   --------------------------------------------------------------------------- */
+.hdr-export { min-height: 34px; padding: 0 16px; font-size: var(--ui-fs-lg); gap: 7px; }
+
+.lyr-actions { display: flex; align-items: stretch; gap: var(--ui-gap); margin-bottom: 8px; }
+.lyr-actions > .ui-btn { min-height: 34px; font-size: var(--ui-fs-md); }
+.lyr-main { flex: 1 1 auto; }
+
+.ui-more { position: relative; flex: 0 0 auto; }
+.ui-more > summary { list-style: none; }
+.ui-more > summary::-webkit-details-marker { display: none; }
+.ui-more-btn { min-height: 34px; width: 38px; padding: 0; font-size: 16px; letter-spacing: 1px; }
+.ui-more[open] > .ui-more-btn { background: var(--ui-surface-2); color: var(--text-main); }
+.ui-more-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 10001;
+  width: 230px;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-radius: var(--ui-r-md);
+  border: 1px solid var(--border-color);
+  background: #0b0f18;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.7);
+  isolation: isolate;
+}
+.ui-more-hd {
+  padding: 8px 8px 4px;
+  font-size: var(--ui-fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8b95a5;
+}
+.ui-more-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--ui-r-sm);
+  background: transparent;
+  color: #e2e8f0;
+  font-family: inherit;
+  font-size: var(--ui-fs-md);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.ui-more-item:hover, .ui-more-item:focus-visible { background: var(--ui-surface-2); outline: none; }
+.ui-more-item[hidden] { display: none; }
+.ui-more-item--bad { color: var(--ui-bad); }
+.ui-more-row { display: flex; align-items: center; gap: 2px; padding-left: 10px; }
+.ui-more-row .ui-more-item { width: auto; flex: 1 1 0; justify-content: center; padding: 0 4px; font-variant-numeric: tabular-nums; }
+.ui-more-lab { flex: 0 0 auto; margin-right: 4px; font-size: var(--ui-fs-md); color: #9aa4b2; }
+
+.ui-modal-card--export { max-width: 520px; }
+.exp-sec { display: flex; flex-direction: column; gap: 10px; }
+.exp-sec + .exp-sec { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--ui-line); }
+.exp-hd { margin: 0; font-size: var(--ui-fs-lg); font-weight: 700; color: var(--text-main, #e2e8f0); }
+.exp-sec .prop-select { width: 100%; min-height: 34px; }
+.exp-sec .ui-hgroup { flex-wrap: wrap; padding: 8px 10px; }
+.exp-go { min-height: 40px; font-size: var(--ui-fs-lg); }
+/* Sections clip their contents for the rounded corners; the lyrics section must not clip its ⋯ menu. */
+.ui-sec:has(> .ui-sec-body .ui-more) { overflow: visible; }
+/* One main button in the Export dialog: the subtitle exports are secondary. */
+.exp-sec .ui-btn--primary:not(.exp-go),
+.exp-sec .ui-btn--ai { background: var(--ui-surface); border-color: var(--border-color); color: #e2e8f0; }
+.exp-sec .ui-btn--primary:not(.exp-go):hover,
+.exp-sec .ui-btn--ai:hover { background: var(--ui-surface-2); color: #fff; }
+/* "Timing checked" repeated what the review bar under the buttons already says. */
+#lyrics-verified-badge { display: none !important; }
+.ui-more-val { flex: 0 0 auto; min-width: 64px; text-align: center; font-size: var(--ui-fs-md); color: #e2e8f0; font-variant-numeric: tabular-nums; }
