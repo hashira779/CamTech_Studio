@@ -15,6 +15,7 @@ import { applySyncResult, initSyncKeep } from './features/sync_keep.js';
 import { cacheLyrics, saveLyrics, pickNewer } from './core/lyrics_store.js';
 import { initExportDialog, openExportDialog } from './ui/export_dialog.js';
 import { initSoundDelay } from './features/sound_delay.js';
+import { initSendCapCut } from './features/send_capcut.js';
 import {
   initTranslationTrack,
   loadTranslationForSong,
@@ -1675,7 +1676,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const kept = applySyncResult(data.lyrics);
           cacheLyrics(state.lyrics);
           renderLyricsTeleprompter(state.lyrics, true);
-          if (kept) await saveTimings();
+          await saveTimings(); // always: reopening the song must give this sync back
           showToast(
             'Lyric Timing Checked',
             (data.source === 'ctc_word_alignment'
@@ -1774,7 +1775,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const kept = applySyncResult(data.lyrics);
           cacheLyrics(state.lyrics);
           renderLyricsTeleprompter(state.lyrics, true);
-          if (kept) await saveTimings();
+          await saveTimings(); // always: reopening the song must give this sync back
           setUnlistedSinging(data.unlisted, state.lyrics.length);
           setTimingSource(data.source, state.lyrics.length, data.timing_note);
           const wordAligned = data.source === 'ctc_word_alignment';
@@ -2026,6 +2027,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initSyncKeep({ renderLyrics: redrawLyrics, save: saveTimings, onRestore: (before) => remapTranslationToLyrics(before) });
   initExportDialog();
   initSoundDelay();
+  initSendCapCut();
 
   // Clear Lyrics Button
   const btnClearLyrics = document.getElementById('btn-clear-lyrics');
@@ -3325,7 +3327,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const kept = applySyncResult(data.lyrics);
         renderLyricsTeleprompter(state.lyrics);
-        if (kept) await saveTimings();
+        await saveTimings(); // always: reopening the song must give this sync back
         try {
           cacheLyrics(state.lyrics);
           if (state.audioServerPath) localStorage.setItem('vida_audio_server_path', state.audioServerPath);

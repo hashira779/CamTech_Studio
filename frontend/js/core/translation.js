@@ -400,7 +400,9 @@ async function translateViaAI(texts, onProgress) {
   // ~44s, and Khmer may then run a second rewrite pass — so Khmer gets smaller batches and a
   // budget that survives both calls instead of aborting a translation that is still going well.
   const isKhmer = /khmer|ខ្មែរ|km/i.test(String(targetLangName() || ''));
-  const BATCH_SIZE = isKhmer ? 12 : 25;
+  // English and other targets get the whole song in one request (up to 80 lines): a song split
+  // in two loses its context, and the meaning of a line often depends on the lines around it.
+  const BATCH_SIZE = isKhmer ? 12 : 80;
   const TIMEOUT_MS = isKhmer ? 600000 : 180000;
   if (texts.length <= BATCH_SIZE) {
     if (onProgress) onProgress(25);
@@ -803,6 +805,40 @@ function createButtonProgress(btn, baseLabel = 'Translating') {
       btn.textContent = origText;
     }
   };
+}
+
+/**
+ * Send to CapCut needs the second line in `lang` (English): the track saved for this song when
+ * there is one, otherwise a fresh translation. Switches the track to that language. Resolves true
+ * when the track is ready, false when translating failed (the toast says why).
+ */
+export async function ensureTranslation(lang = 'en') {
+  if (!(state.lyrics || []).length) return false;
+  if (state.translation.lang === lang && hasValidTranslation()) return true;
+  if (state.translation.lang !== lang) {
+    state.translation.lang = lang;
+    dropStaleTrack();
+    const sel = document.getElementById('select-translation-lang');
+    if (sel) sel.value = lang;
+    saveProjectSession();
+  }
+  const key = getAudioKey();
+  try {
+    const res = await fetch(`/api/lyrics/translation?audio_path=${encodeURIComponent(key)}&lang=${encodeURIComponent(lang)}`);
+    const data = await res.json().catch(() => ({}));
+    const cues = Array.isArray(data.cues) ? data.cues : null;
+    if (cues && cues.length) {
+      state.translation.lines = buildLines(mapCuesOntoLyrics(cues));
+      state.translation.loaded = translationCount() > 0;
+      setTrackOwner();
+    }
+  } catch (_) { /* no saved track: translate below */ }
+  if (hasValidTranslation()) {
+    syncUI();
+    notifyTranslationChanged();
+    return true;
+  }
+  return translateAll(null, { preferBilingual: true });
 }
 
 // ============ Actions ============

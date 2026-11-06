@@ -1556,3 +1556,6 @@ body.daw-theme { grid-template-columns: minmax(0, 1fr); }
 /* "Timing checked" repeated what the review bar under the buttons already says. */
 #lyrics-verified-badge { display: none !important; }
 .ui-more-val { flex: 0 0 auto; min-width: 64px; text-align: center; font-size: var(--ui-fs-md); color: #e2e8f0; font-variant-numeric: tabular-nums; }
+.exp-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ui-hint--bad { color: var(--ui-warn); }
+.exp-sec .prop-input { width: 100%; min-height: 34px; box-sizing: border-box; padding: 0 10px; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--border-color); border-radius: var(--ui-r-sm); color: var(--text-main, #e2e8f0); }

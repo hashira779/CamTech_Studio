@@ -22,6 +22,8 @@ from backend.paths import find_audio_file_or_latest
 from backend.progress import transcribe_progress, update_transcribe_progress
 from backend.services.lyric_alignment import (
     align_lyrics_to_audio,
+    load_full_lyrics,
+    save_full_lyrics,
     parse_reference_lyrics,
     require_audio_file,
     save_aligned_subtitles,
@@ -105,7 +107,15 @@ def get_subtitles_api(audio_path: Optional[str] = None):
     if not audio_p:
         return not_found
     sub_path = find_matching_subtitles(audio_p)
-    if not sub_path or not os.path.exists(sub_path):
+    has_sub = bool(sub_path and os.path.exists(sub_path))
+    # The full copy of the last sync (word timings, unsure marks, hand-set lines) wins unless a
+    # subtitle file was changed after it.
+    full = load_full_lyrics(audio_p, os.path.getmtime(sub_path) if has_sub else 0.0)
+    if full:
+        lines, mtime = full
+        return {"status": "success", "file": os.path.splitext(audio_p)[0] + ".vida.json", "count": len(lines),
+                "lyrics": lines, "modified": mtime}
+    if not has_sub:
         return not_found
     lyrics = parse_subtitle_file(sub_path)
     # When the file was last saved, so the studio can tell whether its browser copy is newer.
@@ -127,6 +137,7 @@ async def save_subtitles_api(req: SubtitleSaveRequest):
         for ext in (".srt", ".km.srt"):
             with open(f"{base}{ext}", "w", encoding="utf-8") as f:
                 f.write(srt)
+        save_full_lyrics(req.lyrics_data, audio_p)
     except Exception as e:
         log.error(f"[Subtitles] Save failed for {os.path.basename(base)}: {e}")
         return {"status": "error", "detail": str(e)}
@@ -293,6 +304,53 @@ def relisten_api(req: RelistenRequest):
     if not aligned or len(aligned) != len(lines):
         return {"status": "unavailable", "detail": ctc_align.LAST_SKIP_REASON or "The aligner could not hear these lines."}
     return {"status": "success", "lines": aligned}
+
+
+class CapCutLine(BaseModel):
+    start: float
+    end: float
+    text: str
+
+
+class CapCutSendRequest(BaseModel):
+    audio_path: Optional[str] = None
+    title: str = ""
+    singer: str = ""
+    template: Optional[str] = None
+    lines: List[CapCutLine]
+    second_lines: List[CapCutLine] = []
+
+
+@router.get("/api/capcut/templates")
+def capcut_templates_api():
+    """The user's CapCut projects that can serve as the design for a new song, newest first."""
+    from backend import capcut_export
+    return {"found": bool(capcut_export.drafts_root()), "running": capcut_export.capcut_running(),
+            "templates": [{"name": t["name"]} for t in capcut_export.list_templates()]}
+
+
+@router.post("/api/capcut/send")
+def capcut_send_api(req: CapCutSendRequest):
+    """
+    A new CapCut project from the chosen template with this song: audio, title, singer, the lyric
+    lines as captions (and the translation as the second caption track), trimmed to the song.
+    """
+    from backend import capcut_export
+    audio_p = require_audio_file(req.audio_path)
+    try:
+        import soundfile
+        duration = float(soundfile.info(audio_p).duration)
+    except Exception:
+        duration = max((l.end for l in req.lines), default=0.0)
+    try:
+        made = capcut_export.create_project(
+            req.template, audio_p, duration, req.title, req.singer,
+            [[l.dict() for l in req.lines], [l.dict() for l in req.second_lines]],
+        )
+    except capcut_export.CapCutError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    log.info(f"[CapCut] Made '{made['name']}' from template '{made['template']}' ({made['length_s']}s)")
+    return {"status": "success", **made}
 
 
 class PasteCheckRequest(BaseModel):

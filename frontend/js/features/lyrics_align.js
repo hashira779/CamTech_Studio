@@ -187,7 +187,7 @@ export function initLyricsAlign({ setGlobalProgress, renderLyrics, save = async 
       const hadTranslation = (state.translation?.lines || []).some((l) => (l?.text || '').trim());
       const untranslated = hadTranslation ? await remapTranslationToLyrics(oldLyrics) : 0;
       renderLyrics(state.lyrics);
-      if (kept) await save();
+      await save(); // always, with the re-matched translation: reopening gives this sync back
       setUnlistedSinging(data.unlisted, state.lyrics.length);
       setTimingSource(data.source, state.lyrics.length, data.timing_note);
       const { title, detail, type } = summarize(data, elapsed());

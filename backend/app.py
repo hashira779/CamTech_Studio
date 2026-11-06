@@ -169,6 +169,14 @@ async def _on_startup():
     import threading
     threading.Thread(target=_warm_khmer_tokenizer, name="warm-khmer-nltk", daemon=True).start()
 
+    # A CapCut project sent while CapCut was open is listed once CapCut closes, also after a restart.
+    try:
+        from backend import capcut_export
+        capcut_export.register_pending()
+        capcut_export.watch_pending()
+    except Exception:
+        pass
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -900,6 +908,17 @@ def translate_lyrics_lines_api(req: TranslateLinesRequest):
     lines = [str(l) for l in (req.lines or [])]
     if not lines:
         return {"status": "success", "lines": []}
+    # Khmer -> English: reuse the user's own English for known lines, translate the rest with the
+    # whole song as context, then check every new line's meaning (backend/services/lyric_translation.py).
+    from backend.services.lyric_translation import is_mostly_khmer, translate_khmer_to_english
+    if str(req.target_lang or "English").strip().lower() in ("english", "en") and is_mostly_khmer(lines):
+        out, stats = translate_khmer_to_english(lines, title=req.song_title or "", artist=req.artist or "")
+        if not any(out):
+            notice = _gemini_service_notice()
+            return {"status": "error", "detail": f"Translation failed{': ' + notice if notice else ''}. Try again in a moment."}
+        return {"status": "success", "lines": [o or "" for o in out], "target_lang": req.target_lang,
+                "reused": stats["reused"], "translated": stats["translated"], "corrected": stats["corrected"],
+                "service_notice": _gemini_service_notice()}
     try:
         payload = [{"line_id": i, "text": t} for i, t in enumerate(lines)]
         translated = llm_engine.translate_lyrics_data(

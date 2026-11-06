@@ -5,6 +5,7 @@ Every studio entry point that syncs lyrics (transcribe, verify, AI fix, paste-an
 goes through align_lyrics_to_audio, so they all measure timing the same way.
 """
 
+import json
 import logging
 import math
 import os
@@ -253,3 +254,43 @@ def save_aligned_subtitles(lyrics: List[Dict[str, Any]], audio_path: str, force_
                 continue
         with open(srt_path, "w", encoding="utf-8") as f:
             f.write(srt_content)
+    save_full_lyrics(lyrics, audio_path)
+
+
+# .srt and .lrc keep only each line's text and times. Word timings, how sure the aligner was and
+# which lines the user timed by hand are kept here, next to the song, so reopening it gives back
+# exactly the last sync, in any browser.
+FULL_SUFFIX = ".vida.json"
+
+
+def save_full_lyrics(lyrics: List[Dict[str, Any]], audio_path: str) -> None:
+    path = os.path.splitext(audio_path)[0] + FULL_SUFFIX
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"version": 1, "lines": lyrics}, f, ensure_ascii=False)
+        os.replace(tmp, path)
+    except OSError as e:
+        log.warning(f"[Lyrics] Could not save {os.path.basename(path)}: {e}")
+
+
+def load_full_lyrics(audio_path: str, not_older_than: float = 0.0) -> Optional[Tuple[List[Dict[str, Any]], float]]:
+    """
+    The lines saved by save_full_lyrics, with the file's time, or None. A subtitle file changed
+    after it (edited in another program) is newer work, so then this returns None.
+    """
+    path = os.path.splitext(audio_path)[0] + FULL_SUFFIX
+    if not os.path.isfile(path):
+        return None
+    mtime = os.path.getmtime(path)
+    if mtime + 2.0 < not_older_than:
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = json.load(f).get("lines")
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not isinstance(lines, list) or not lines or not all(
+            isinstance(l, dict) and str(l.get("text", "")).strip() and isinstance(l.get("start"), (int, float)) for l in lines):
+        return None
+    return lines, mtime
