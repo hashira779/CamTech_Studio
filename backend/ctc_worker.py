@@ -6,6 +6,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from backend.cpu_budget import apply_to_process
+
+apply_to_process()  # one thread per physical core for the aligner
+
 from backend.ctc_align import MIN_CONFIDENCE, _ctc_align_lyrics_inproc
 
 

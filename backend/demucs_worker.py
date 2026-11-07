@@ -5,6 +5,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from backend.cpu_budget import apply_to_process
+
+apply_to_process()  # before torch loads: one thread per physical core
+
 from backend.vocal_separator import _PROGRESS_PREFIX, _separate_inproc
 
 

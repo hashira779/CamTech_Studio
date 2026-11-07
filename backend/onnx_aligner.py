@@ -57,7 +57,12 @@ def _session():
             import onnxruntime as ort
             opts = ort.SessionOptions()
             opts.log_severity_level = 3
-            opts.intra_op_num_threads = min(8, os.cpu_count() or 4)
+            try:
+                from backend.cpu_budget import compute_threads
+            except ImportError:
+                from cpu_budget import compute_threads
+            # One thread per physical core: on an 8-core CPU, 12 threads were no faster and 13 slower.
+            opts.intra_op_num_threads = compute_threads()
             # Without the memory pool the model peaks 0.6 GB lower (2.7 -> 2.1 GB, measured).
             opts.enable_cpu_mem_arena = False
             _SESSION = ort.InferenceSession(MODEL_PATH, opts, providers=["CPUExecutionProvider"])

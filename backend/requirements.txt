@@ -26,3 +26,4 @@ onnx
 torch
 torchaudio
 demucs
+psutil

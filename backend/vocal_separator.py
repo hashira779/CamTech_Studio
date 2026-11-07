@@ -203,6 +203,13 @@ def _separate_inproc(
         os.environ["HF_HUB_OFFLINE"] = "1"
 
     try:
+        # One thread per physical core, one job: measured fastest on an 8-core CPU (backend/cpu_budget.py).
+        try:
+            from backend.cpu_budget import compute_threads
+        except ImportError:
+            from cpu_budget import compute_threads
+        threads = compute_threads()
+        torch.set_num_threads(threads)
         # Build Demucs separator (retry with offline mode if network check times out)
         try:
             separator = demucs_api.Separator(
@@ -211,7 +218,7 @@ def _separate_inproc(
                 shifts=1,      # 1 shift for maximum speed on CPU
                 overlap=0.25,
                 segment=7.8,
-                jobs=min(4, os.cpu_count() or 1),
+                jobs=0,
                 progress=False
             )
         except Exception as load_err:
@@ -223,7 +230,7 @@ def _separate_inproc(
                 shifts=1,
                 overlap=0.25,
                 segment=7.8,
-                jobs=min(4, os.cpu_count() or 1),
+                jobs=0,
                 progress=False
             )
 

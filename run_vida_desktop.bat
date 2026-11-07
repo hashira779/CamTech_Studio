@@ -13,7 +13,7 @@ cd /d "%BASE_DIR%"
 
 set HF_HUB_DISABLE_SYMLINKS_WARNING=1
 set KMP_DUPLICATE_LIB_OK=TRUE
-set OMP_NUM_THREADS=4
+:: Thread counts for the heavy steps are set per worker (backend/cpu_budget.py).
 set PYTHONUNBUFFERED=1
 
 set PYTHON_EXE=%BASE_DIR%venv\Scripts\python.exe
