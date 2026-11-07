@@ -322,9 +322,68 @@ def refit_to_voice(lines: List[Line], vocal_segments: Optional[List[Tuple[float,
     return fixed
 
 
+# One sung line has no long silence or solo inside it. A word found this far after the word before
+# it was latched onto something else: on កំពង់ធំជំរុំចិត្ត the closing "អើយ" of a line landed 23 s
+# later, after the solo, and the caption stayed on screen through the whole solo.
+MAX_WORD_GAP_S = 4.0
+# How long a word pulled back keeps at most (a held "អើយ" is sung long, but not for seconds on end).
+PULLED_WORD_S = 1.2
+# No sung word lasts longer than this. A first word stretched past it lies over the music before the
+# line (ថ្នមចិត្ត: "ថ្នម" spanned 92-112 s, the line is sung 112-127 s); a last word past it lies over
+# the music after it. A held note up to this long is left as sung.
+MAX_WORD_S = 6.0
+
+
+def close_word_gaps(lines: List[Line]) -> int:
+    """
+    Words after a long gap inside a line are moved to right after the word before them, and the
+    line ends there; a first or last word stretched over the music around its line is shortened to
+    the singing. So a caption is not up through a solo, an intro or the ending music.
+    """
+    fixed = 0
+    for li, line in enumerate(lines):
+        words = line.get("words") or []
+        trimmed = bool(words) and _trim_stretched_ends(lines, li)
+        cut = next((k for k in range(1, len(words)) if words[k]["start"] - words[k - 1]["end"] > MAX_WORD_GAP_S), None)
+        if cut is None:
+            fixed += trimmed
+            continue
+        nxt = lines[li + 1]["start"] if li + 1 < len(lines) else None
+        t = words[cut - 1]["end"]
+        for w in words[cut:]:
+            dur = min(max(0.1, w["end"] - w["start"]), PULLED_WORD_S)
+            w["start"], w["end"] = round(t, 2), round(t + dur, 2)
+            t += dur
+        end = t + LINGER_S if nxt is None else min(t + LINGER_S, nxt - 0.05)
+        line["end"] = round(max(end, words[-1]["end"]), 2)
+        fixed += 1
+    if fixed:
+        log.info(f"[Sync Repair] {fixed} lines had a stray or stretched word; shortened to their singing")
+    return fixed
+
+
+def _trim_stretched_ends(lines: List[Line], li: int) -> bool:
+    line, words = lines[li], lines[li]["words"]
+    changed = False
+    first = words[0]
+    if first["end"] - first["start"] > MAX_WORD_S:
+        first["start"] = round(first["end"] - PULLED_WORD_S, 2)
+        line["start"] = first["start"]
+        changed = True
+    last = words[-1]
+    if last["end"] - last["start"] > MAX_WORD_S:
+        last["end"] = round(last["start"] + MAX_WORD_S, 2)
+        nxt = lines[li + 1]["start"] if li + 1 < len(lines) else None
+        end = last["end"] + LINGER_S
+        line["end"] = round(end if nxt is None else max(last["end"], min(end, nxt - 0.05)), 2)
+        changed = True
+    return changed
+
+
 def repair_sync(lines: List[Line], vocal_segments: Optional[List[Tuple[float, float]]]) -> Dict[str, int]:
     """Runs every repair in order; returns how many lines each one changed."""
     from_repeats = repair_from_repeats(lines)
     on_voice = refit_to_voice(lines, vocal_segments)
+    word_gaps = close_word_gaps(lines)
     at_breaks = end_lines_at_breaks(lines, vocal_segments)
-    return {"from_repeats": from_repeats, "refit_to_voice": on_voice, "ended_at_breaks": at_breaks}
+    return {"from_repeats": from_repeats, "refit_to_voice": on_voice, "word_gaps": word_gaps, "ended_at_breaks": at_breaks}

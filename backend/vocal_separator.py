@@ -122,8 +122,15 @@ def _separate_in_child(
     os.remove(out_path)
     cmd = [sys.executable, "-m", "backend.demucs_worker", audio_path, out_path,
            vocals_out, accompaniment_out, model_name, device]
+    def work():
+        # A separation of this song may have finished while this one waited for its turn
+        # (the one VIDA starts when a song is loaded).
+        if os.path.isfile(vocals_out) and os.path.getsize(vocals_out) > 10000:
+            return {"vocals": vocals_out, "accompaniment": accompaniment_out, "cached": True}
+        return _spawn_separator(cmd, out_path, audio_path, progress_callback)
+
     try:
-        return run_locked(lambda: _spawn_separator(cmd, out_path, audio_path, progress_callback))
+        return run_locked(work)
     except TimeoutError as busy:
         print(f"[Demucs] {busy}. Falling back to the original audio.")
         return {"vocals": audio_path, "accompaniment": "", "error": str(busy)}

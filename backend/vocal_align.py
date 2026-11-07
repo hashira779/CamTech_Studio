@@ -615,7 +615,12 @@ def _assign_lines_to_phrases(
 
 
 def _ensure_vocal_stem(audio_path: str) -> None:
-    """Isolates vocals with Demucs before alignment when a CUDA GPU is available (CPU is too slow)."""
+    """
+    Isolates the voice with Demucs before alignment, once per song (cached in uploads/stems). On the
+    GPU when there is one, else on the CPU: about 5 min for a 3 min song, but the aligner then hears
+    the singer instead of the band (an old duet went from 29 to 16 unsure lines of 45). Without a
+    GPU this step used to be skipped, so every song was aligned on the full mix.
+    """
     if not audio_path or not os.path.exists(audio_path) or get_cached_vocals_path(audio_path):
         return
     try:
@@ -623,9 +628,9 @@ def _ensure_vocal_stem(audio_path: str) -> None:
             from backend.vocal_separator import separate_vocals_demucs, cuda_available, missing_dependency
         except ImportError:
             from vocal_separator import separate_vocals_demucs, cuda_available, missing_dependency
-        if missing_dependency() or not cuda_available():
+        if missing_dependency():
             return
-        separate_vocals_demucs(audio_path, device="cuda")
+        separate_vocals_demucs(audio_path, device="cuda" if cuda_available() else "cpu")
     except Exception as e:
         log.info(f"[Force Align] Vocal stem unavailable, aligning on full mix: {e}")
 

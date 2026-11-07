@@ -390,6 +390,7 @@ def _ctc_align_lyrics_inproc(
     log.info(f"[CTC Align] ✅ Word-aligned {len(aligned)} lines to the singer (confidence {confidence:.2f}, "
              f"{repaired} unclear lines re-spaced on sung phrases, {fixes['from_repeats']} timed from a repeat, "
              f"{fixes['refit_to_voice']} moved off silence onto the singing, "
+             f"{fixes['word_gaps']} with a stray word pulled back, "
              f"{fixes['ended_at_breaks']} ended at an instrumental break)")
     return aligned
 

@@ -146,6 +146,11 @@ document.addEventListener('DOMContentLoaded', () => {
   if (cachedServerPath) {
     state.audioServerPath = cachedServerPath;
     window.__VIDA_SERVER_PATH = cachedServerPath;
+    // The restored song gets its voice separated in the background too (once per song).
+    fetch('/api/vocals/prepare', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audio_path: cachedServerPath }),
+    }).catch(() => {});
     if (restoreTitle) {
       const titleEl = document.querySelector('.project-title');
       if (titleEl) titleEl.textContent = `${restoreTitle}${restoreArtist ? ' — ' + restoreArtist : ''}`;
@@ -2405,6 +2410,14 @@ document.addEventListener('DOMContentLoaded', () => {
     fetch('/api/ai/chat/clear', { method: 'POST' }).catch(() => {});
     renderLyricsTeleprompter(state.lyrics); // also starts the translation-track load
     window.__VIDA_SERVER_PATH = serverPath || '';
+    // Separate the voice from the music now, while the user finds the lyrics: on the CPU it takes
+    // minutes the first time, and Paste & Align then starts with it done.
+    if (serverPath) {
+      fetch('/api/vocals/prepare', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio_path: serverPath }),
+      }).catch(() => {});
+    }
 
     // Cache in sessionStorage for hot-reload persistence
     try {

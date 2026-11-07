@@ -14,7 +14,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from backend.sync_repair import end_lines_at_breaks, refit_to_voice, repair_from_repeats
+from backend.sync_repair import close_word_gaps, end_lines_at_breaks, refit_to_voice, repair_from_repeats
 
 PASS, FAIL = [], []
 
@@ -152,6 +152,39 @@ def run():
     before = copy.deepcopy(lines)
     refit_to_voice(lines, chopped)
     check(lines[1] == before[1], "a line the aligner was fairly sure of (0.35) is never moved")
+
+    print("a stray word far after its line")
+    # កំពង់ធំជំរុំចិត្ត: "រូបពៅឲខ្ញុំ ជាគូ" sung at 130-136 s, its closing "អើយ" found at 159 s after
+    # the solo, so the caption stayed up through the whole solo.
+    stray = {"text": "រូបពៅឲខ្ញុំ ជាគូអើយ", "start": 129.98, "end": 170.85, "confidence": 0.63, "words": [
+        {"word": "រូប", "start": 129.98, "end": 130.9}, {"word": "ពៅ", "start": 130.9, "end": 131.38},
+        {"word": "ឲ", "start": 131.38, "end": 132.66}, {"word": "ខ្ញុំ", "start": 132.66, "end": 134.2},
+        {"word": "ជា", "start": 134.26, "end": 134.78}, {"word": "គូ", "start": 134.78, "end": 136.26},
+        {"word": "អើយ", "start": 159.14, "end": 170.85}]}
+    lines = [stray, line("next", 170.9, 175.2, 0.7)]
+    n = close_word_gaps(lines)
+    w = lines[0]["words"]
+    check(n == 1 and w[-1]["start"] == 136.26 and w[-1]["end"] <= 137.5,
+          "the stray word moves to right after the word before it")
+    check(lines[0]["end"] < 138.0, "the line ends with its singing instead of through the solo")
+    check(lines[1]["start"] == 170.9, "the next line is untouched")
+    held = line("held note", 10.0, 16.0, 0.7)
+    held["words"][-1]["end"] = 16.0  # one long held word, no gap
+    check(close_word_gaps([held]) == 0, "a long held word is not a gap")
+
+    # ថ្នមចិត្ត: the first word "ថ្នម" stretched over the music before its line (92-112 s).
+    stretched = {"text": "ថ្នម អើយថ្នម ឱ្យស្រីឆ្លើយ", "start": 92.38, "end": 126.61, "confidence": 0.42, "words": [
+        {"word": "ថ្នម", "start": 92.38, "end": 112.04}, {"word": "អើយ", "start": 112.04, "end": 118.94},
+        {"word": "ថ្នម", "start": 118.94, "end": 121.86}, {"word": "ឱ្យ", "start": 121.86, "end": 125.12},
+        {"word": "ស្រី", "start": 125.12, "end": 125.48}, {"word": "ឆ្លើយ", "start": 125.48, "end": 126.61}]}
+    lines = [line("before", 82.6, 87.4, 0.5), stretched, line("after", 129.1, 136.2, 0.6)]
+    check(close_word_gaps(lines) == 1 and abs(lines[1]["start"] - 110.84) < 0.01,
+          "a first word stretched over the music before its line starts the line where it is sung")
+    check(lines[1]["words"][1]["start"] == 112.04 and lines[1]["end"] == 126.61, "the rest of the line is unchanged")
+    long_end = line("long end", 50.0, 70.0, 0.6)
+    long_end["words"][-1]["start"], long_end["words"][-1]["end"] = 55.0, 70.0
+    close_word_gaps([long_end])
+    check(long_end["words"][-1]["end"] == 61.0 and long_end["end"] <= 61.5, "a last word held past 6 s is cut at 6 s")
 
     print("instrumental breaks")
     voice = [(10.0, 20.0), (48.0, 60.0)]

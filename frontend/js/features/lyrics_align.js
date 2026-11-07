@@ -137,6 +137,39 @@ export function initLyricsAlign({ setGlobalProgress, renderLyrics, save = async 
     updateLineCount();
     pasteCheck.check();
     setTimeout(() => input.focus(), 100);
+    if (!input.value.trim()) fillDraft();
+  };
+
+  // An empty box starts from the lyrics this song had before: the ones the user pasted ("yours"),
+  // else a saved or fresh Gemini transcription, marked as a draft to check.
+  const draftNote = byId('align-draft-note');
+  const showDraftNote = (text, warn) => {
+    if (!draftNote) return;
+    draftNote.hidden = !text;
+    draftNote.textContent = text || '';
+    draftNote.classList.toggle('ui-hint--bad', Boolean(warn));
+  };
+  const fillDraft = async () => {
+    const song = currentAudioPath();
+    if (!song) return;
+    showDraftNote('Looking for this song’s lyrics…');
+    try {
+      const data = await (await fetch(`/api/lyrics/draft?audio_path=${encodeURIComponent(song)}`)).json();
+      if (currentAudioPath() !== song || input.value.trim()) return; // song changed or the user typed meanwhile
+      if (data.status !== 'success' || !data.lines?.length) {
+        showDraftNote('No saved lyrics for this song yet. Paste them here; VIDA remembers them for next time.');
+        return;
+      }
+      input.value = data.lines.join('\n');
+      input.dispatchEvent(new Event('input'));
+      pasteCheck.check();
+      showDraftNote(data.source === 'yours'
+        ? 'Your lyrics from last time. Align as they are, or edit first.'
+        : 'Draft from AI listening to the song: about 1 letter in 7 may be wrong. Check it, or paste the real lyrics over it.',
+        data.source !== 'yours');
+    } catch (_) {
+      showDraftNote('');
+    }
   };
 
   // Closing never cancels: a running alignment keeps its header progress and reports when done.

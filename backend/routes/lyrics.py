@@ -306,6 +306,42 @@ def relisten_api(req: RelistenRequest):
     return {"status": "success", "lines": aligned}
 
 
+class PrepareVocalsRequest(BaseModel):
+    audio_path: Optional[str] = None
+
+
+_PREPARING: set = set()
+
+
+@router.post("/api/vocals/prepare")
+def prepare_vocals_api(req: PrepareVocalsRequest):
+    """
+    Starts separating the song's voice from the music in the background, once per song, so Paste &
+    Align finds it done. Returns at once; the alignment waits for it if it is still running.
+    """
+    import threading
+    from backend.vocal_align import _ensure_vocal_stem, get_cached_vocals_path
+    try:
+        audio_p = require_audio_file(req.audio_path)
+    except HTTPException:
+        return {"status": "skipped"}
+    if get_cached_vocals_path(audio_p):
+        return {"status": "ready"}
+    if audio_p in _PREPARING:
+        return {"status": "running"}
+    _PREPARING.add(audio_p)
+
+    def run():
+        try:
+            _ensure_vocal_stem(audio_p)
+            log.info(f"[Vocals] Voice separated in the background for '{os.path.basename(audio_p)}'")
+        finally:
+            _PREPARING.discard(audio_p)
+
+    threading.Thread(target=run, name="prepare-vocals", daemon=True).start()
+    return {"status": "started"}
+
+
 class CapCutLine(BaseModel):
     start: float
     end: float
@@ -392,6 +428,47 @@ def check_paste_api(req: PasteCheckRequest):
     return {"status": "success", "lines_count": len(lines), "missing": groups, "doubled": doubled}
 
 
+def _song_title_artist(audio_p: str):
+    name = os.path.splitext(os.path.basename(audio_p))[0]
+    title, _, artist = name.partition(" - ")
+    return title.strip(), artist.strip()
+
+
+def _remember_pasted_lyrics(audio_p: str, lines: List[str]) -> None:
+    """The user's pasted lyrics are the correct ones: remembered for this song, so it is never pasted twice."""
+    try:
+        from backend.khmer_lyric_matcher import save_to_local_lyrics_db
+        title, artist = _song_title_artist(audio_p)
+        save_to_local_lyrics_db(title, artist, list(lines), verified=True)
+    except Exception as e:
+        log.warning(f"[Lyrics] Could not remember the pasted lyrics: {e}")
+
+
+@router.get("/api/lyrics/draft")
+def lyrics_draft_api(audio_path: Optional[str] = None):
+    """
+    Lyrics to start Paste & Align from: the ones the user pasted for this song before ("yours"),
+    else lyrics VIDA saved from an AI transcription ("saved draft"), else Gemini listening now
+    ("gemini"; about 85% of letters right on Khmer songs, so a draft to check).
+    """
+    audio_p = require_audio_file(audio_path)
+    title, artist = _song_title_artist(audio_p)
+    from backend.khmer_lyric_matcher import lookup_lyrics, transcribe_audio_with_gemini
+    found = lookup_lyrics(title)
+    if found:
+        lines, verified = found
+        return {"status": "success", "source": "yours" if verified else "saved draft", "lines": lines}
+    try:
+        res = transcribe_audio_with_gemini(audio_p, title, artist, 0.0)
+    except Exception as e:
+        log.warning(f"[Lyrics] Gemini draft failed: {e}")
+        res = None
+    lines = [l for l in (res[0] if res else []) if str(l).strip()]
+    if not lines:
+        return {"status": "none", "lines": []}
+    return {"status": "success", "source": "gemini", "lines": lines}
+
+
 @router.post("/api/lyrics/correct-with-reference")
 def correct_lyrics_with_reference_api(req: LyricsCorrectReferenceRequest):
     """
@@ -413,6 +490,7 @@ def correct_lyrics_with_reference_api(req: LyricsCorrectReferenceRequest):
             [{"text": text} for text in lines], audio_p, progress_callback=update_transcribe_progress
         )
         save_aligned_subtitles(aligned, audio_p, force_replace_srt=True)
+        _remember_pasted_lyrics(audio_p, lines)
     except Exception as e:
         update_transcribe_progress(0, f"Error: {getattr(e, 'detail', e)}")
         log.error(f"[Lyrics Align] Failed after {time.time() - started:.1f}s: {getattr(e, 'detail', e)}")

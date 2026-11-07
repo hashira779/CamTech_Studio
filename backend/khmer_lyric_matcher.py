@@ -81,6 +81,15 @@ def extract_lyrics_from_description(description: str) -> Optional[List[str]]:
 
 def search_local_lyrics_db(title: str, artist: str = "") -> Optional[List[str]]:
     """Looks up song in local verified lyrics database."""
+    found = lookup_lyrics(title)
+    return found[0] if found else None
+
+
+def lookup_lyrics(title: str) -> Optional[Tuple[List[str], bool]]:
+    """
+    The remembered lyrics for a song title and whether the user confirmed them (pasted them for
+    Paste & Align) rather than an AI transcription: (lines, verified), or None.
+    """
     if not os.path.exists(DB_PATH):
         return None
         
@@ -90,18 +99,19 @@ def search_local_lyrics_db(title: str, artist: str = "") -> Optional[List[str]]:
             
         norm_query = normalize_title_for_lookup(title)
         
+        if not norm_query:
+            return None
         # 1. Exact match on normalized title
         for key, entry in db.items():
-            if normalize_title_for_lookup(key) == norm_query:
-                return entry.get("lyrics", [])
-            if normalize_title_for_lookup(entry.get("title", "")) == norm_query:
-                return entry.get("lyrics", [])
-                
+            if normalize_title_for_lookup(key) == norm_query or normalize_title_for_lookup(entry.get("title", "")) == norm_query:
+                if entry.get("lyrics"):
+                    return entry["lyrics"], bool(entry.get("verified"))
+
         # 2. Substring match
         for key, entry in db.items():
             norm_key = normalize_title_for_lookup(key)
-            if norm_key and (norm_key in norm_query or norm_query in norm_key):
-                return entry.get("lyrics", [])
+            if norm_key and (norm_key in norm_query or norm_query in norm_key) and entry.get("lyrics"):
+                return entry["lyrics"], bool(entry.get("verified"))
                 
     except Exception as e:
         log.warning(f"[Khmer Lyric Matcher] DB lookup error: {e}")
@@ -109,8 +119,11 @@ def search_local_lyrics_db(title: str, artist: str = "") -> Optional[List[str]]:
     return None
 
 
-def save_to_local_lyrics_db(title: str, artist: str, lyrics: List[str]):
-    """Caches newly verified lyrics into local database."""
+def save_to_local_lyrics_db(title: str, artist: str, lyrics: List[str], verified: bool = False):
+    """
+    Remembers a song's lyrics. verified=True: the user pasted them for Paste & Align, so they replace
+    whatever was there. Otherwise (an AI transcription) they never replace lyrics already saved.
+    """
     if not title or not lyrics:
         return
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -124,13 +137,14 @@ def save_to_local_lyrics_db(title: str, artist: str, lyrics: List[str]):
             
     # Protect existing curated lyrics from being overwritten by raw ASR
     key = title.strip()
-    if key in db and db[key].get("lyrics") and len(db[key].get("lyrics", [])) >= 4:
+    if not verified and key in db and db[key].get("lyrics") and len(db[key].get("lyrics", [])) >= 4:
         return
 
     db[key] = {
         "title": key,
         "artist": artist.strip() if artist else "Unknown",
-        "lyrics": lyrics
+        "lyrics": lyrics,
+        "verified": bool(verified),
     }
     
     try:
