@@ -1560,3 +1560,135 @@ body.daw-theme { grid-template-columns: minmax(0, 1fr); }
 .ui-hint--bad { color: var(--ui-warn); }
 .exp-sec .prop-input { width: 100%; min-height: 34px; box-sizing: border-box; padding: 0 10px; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--border-color); border-radius: var(--ui-r-sm); color: var(--text-main, #e2e8f0); }
 .align-draft-note { display: block; margin-top: 4px; }
+
+/* Real-Time Audio Restoration Processing Animation */
+.clean-processing-card {
+  margin: 10px 0 6px;
+  padding: 10px 12px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: var(--ui-r-sm, 6px);
+  box-shadow: 0 0 15px rgba(56, 189, 248, 0.15);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: cleanCardFadeIn 0.3s ease-out;
+}
+.clean-processing-card[hidden] {
+  display: none !important;
+}
+@keyframes cleanCardFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.clean-processing-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Bouncing EQ Soundwave Bars */
+.clean-wave-anim {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+}
+.clean-wave-anim .bar {
+  width: 3px;
+  height: 100%;
+  background: #38bdf8;
+  border-radius: 2px;
+  animation: cleanWaveJump 1.1s ease-in-out infinite alternate;
+}
+.clean-wave-anim .bar-1 { animation-delay: 0.05s; height: 35%; }
+.clean-wave-anim .bar-2 { animation-delay: 0.25s; height: 80%; }
+.clean-wave-anim .bar-3 { animation-delay: 0.1s;  height: 50%; }
+.clean-wave-anim .bar-4 { animation-delay: 0.35s; height: 95%; background: #818cf8; }
+.clean-wave-anim .bar-5 { animation-delay: 0.15s; height: 60%; }
+.clean-wave-anim .bar-6 { animation-delay: 0.3s;  height: 75%; }
+.clean-wave-anim .bar-7 { animation-delay: 0.2s;  height: 40%; }
+
+@keyframes cleanWaveJump {
+  0% { transform: scaleY(0.2); }
+  100% { transform: scaleY(1.0); }
+}
+
+.clean-timer-badge {
+  font-family: var(--ui-font-mono, monospace);
+  font-size: 11px;
+  font-weight: 700;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  padding: 2px 7px;
+  border-radius: 10px;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  letter-spacing: 0.5px;
+}
+
+/* Glowing Progress Track */
+.clean-progress-track {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+.clean-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #38bdf8, #818cf8, #38bdf8);
+  background-size: 200% 100%;
+  border-radius: 4px;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+  transition: width 0.35s ease;
+  animation: cleanShimmer 1.8s infinite linear;
+}
+@keyframes cleanShimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+.clean-step-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+}
+.clean-current-step {
+  color: #94a3b8;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.clean-percent-text {
+  font-family: var(--ui-font-mono, monospace);
+  color: #38bdf8;
+  font-weight: 700;
+  margin-left: 8px;
+}
+
+/* Button pulse while processing */
+.clean-btn-animated.is-processing {
+  background: linear-gradient(90deg, #0284c7, #4f46e5) !important;
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.4) !important;
+  opacity: 0.95 !important;
+  cursor: wait !important;
+}
+.clean-spinner {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: cleanSpin 0.7s linear infinite;
+  vertical-align: -2px;
+  margin-right: 6px;
+}
+@keyframes cleanSpin {
+  to { transform: rotate(360deg); }
+}

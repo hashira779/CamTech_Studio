@@ -936,7 +936,36 @@
               </div>
               <label class="ui-check"><input type="checkbox" id="clean-voice"><span>Bring voice forward (AI Stems + Stereo Band)</span></label>
               <p id="clean-voice-note" class="ui-hint" hidden>Available once the song's voice is separated (VIDA starts that when the song is loaded).</p>
-              <button id="btn-clean-audio" class="ui-btn ui-btn--primary ui-btn--block">Clean this song</button>
+              <button id="btn-clean-audio" class="ui-btn ui-btn--primary ui-btn--block clean-btn-animated">
+                <span id="clean-btn-spinner" class="clean-spinner" hidden></span>
+                <span id="clean-btn-label">Clean this song</span>
+              </button>
+
+              <!-- Real-Time Restoration Processing Animation Card -->
+              <div id="clean-processing-card" class="clean-processing-card" hidden>
+                <div class="clean-processing-header">
+                  <div class="clean-wave-anim" aria-hidden="true">
+                    <span class="bar bar-1"></span>
+                    <span class="bar bar-2"></span>
+                    <span class="bar bar-3"></span>
+                    <span class="bar bar-4"></span>
+                    <span class="bar bar-5"></span>
+                    <span class="bar bar-6"></span>
+                    <span class="bar bar-7"></span>
+                  </div>
+                  <span id="clean-timer-badge" class="clean-timer-badge">00:00</span>
+                </div>
+                
+                <div class="clean-progress-track">
+                  <div id="clean-progress-bar" class="clean-progress-bar"></div>
+                </div>
+
+                <div class="clean-step-row">
+                  <span id="clean-current-step" class="clean-current-step">Analyzing audio & noise floor…</span>
+                  <span id="clean-percent-text" class="clean-percent-text">0%</span>
+                </div>
+              </div>
+
               <p id="clean-status" class="ui-hint" aria-live="polite"></p>
               <div class="ui-field">
                 <span class="ui-lab">Play and export</span>

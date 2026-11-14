@@ -12,6 +12,87 @@ const song = () => state.audioServerPath || state.audioPath || window.__VIDA_SER
 
 let versions = [];
 let strength = 'medium';
+let animTimer = null;
+
+function startProcessingAnimation(voiceForward) {
+  const card = byId('clean-processing-card');
+  const bar = byId('clean-progress-bar');
+  const stepEl = byId('clean-current-step');
+  const pctEl = byId('clean-percent-text');
+  const timerBadge = byId('clean-timer-badge');
+  const btn = byId('btn-clean-audio');
+  const spinner = byId('clean-btn-spinner');
+  const label = byId('clean-btn-label');
+
+  if (card) card.hidden = false;
+  if (spinner) spinner.hidden = false;
+  if (label) label.textContent = 'Restoring audio…';
+  if (btn) btn.classList.add('is-processing');
+
+  const startMs = Date.now();
+  if (animTimer) clearInterval(animTimer);
+
+  const steps = voiceForward ? [
+    { at: 0, pct: 10, text: 'Stage 1: Measuring loudness & DC offset…' },
+    { at: 3, pct: 25, text: 'Stage 2: Filtering 50/60 Hz hum & subsonic rumble…' },
+    { at: 8, pct: 45, text: 'Stage 3: Demucs AI stem separation (Vocals + Band)…' },
+    { at: 22, pct: 70, text: 'Stage 4: Widening stereo backing band & vocal pocket…' },
+    { at: 38, pct: 90, text: 'Stage 5: Analog tape warmth & broadcast limiter…' },
+  ] : [
+    { at: 0, pct: 12, text: 'Stage 1: Measuring loudness & DC offset…' },
+    { at: 3, pct: 32, text: 'Stage 2: Filtering 50/60 Hz hum & subsonic rumble…' },
+    { at: 8, pct: 58, text: 'Stage 3: Adaptive spectral de-hiss & de-crackle…' },
+    { at: 16, pct: 82, text: 'Stage 4: Golden Era tape warmth & vocal presence…' },
+    { at: 24, pct: 92, text: 'Stage 5: True-peak limiting & audio remaster…' },
+  ];
+
+  animTimer = setInterval(() => {
+    const elapsedSec = (Date.now() - startMs) / 1000;
+    const m = Math.floor(elapsedSec / 60);
+    const s = Math.floor(elapsedSec % 60);
+    if (timerBadge) {
+      timerBadge.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+
+    let cur = steps[0];
+    for (let i = steps.length - 1; i >= 0; i--) {
+      if (elapsedSec >= steps[i].at) {
+        cur = steps[i];
+        break;
+      }
+    }
+
+    const targetPct = Math.min(95, cur.pct + (elapsedSec - cur.at) * 0.7);
+    if (bar) bar.style.width = `${targetPct.toFixed(1)}%`;
+    if (pctEl) pctEl.textContent = `${Math.round(targetPct)}%`;
+    if (stepEl) stepEl.textContent = cur.text;
+  }, 200);
+}
+
+function stopProcessingAnimation(success = true) {
+  if (animTimer) {
+    clearInterval(animTimer);
+    animTimer = null;
+  }
+  const card = byId('clean-processing-card');
+  const bar = byId('clean-progress-bar');
+  const stepEl = byId('clean-current-step');
+  const pctEl = byId('clean-percent-text');
+  const btn = byId('btn-clean-audio');
+  const spinner = byId('clean-btn-spinner');
+  const label = byId('clean-btn-label');
+
+  if (bar) bar.style.width = success ? '100%' : '0%';
+  if (pctEl) pctEl.textContent = success ? '100%' : '0%';
+  if (stepEl) stepEl.textContent = success ? '✨ Audio restored successfully!' : 'Restoration stopped';
+
+  setTimeout(() => {
+    if (card) card.hidden = true;
+    if (spinner) spinner.hidden = true;
+    if (label) label.textContent = 'Clean this song';
+    if (btn) btn.classList.remove('is-processing');
+  }, 2200);
+}
 
 /** The audio file to export / send: the clean copy when chosen, else the song itself. */
 export function activeAudioPath() {
@@ -112,23 +193,28 @@ async function clean() {
     return;
   }
   btn.disabled = true;
-  status('Cleaning… about 20–30 seconds.');
+  const isVoiceForward = Boolean(byId('clean-voice')?.checked);
+  startProcessingAnimation(isVoiceForward);
+  status('');
+  let success = false;
   try {
     const res = await fetch('/api/audio/clean', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ audio_path: current, strength, voice_forward: Boolean(byId('clean-voice')?.checked) }),
+      body: JSON.stringify({ audio_path: current, strength, voice_forward: isVoiceForward }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Could not clean this song');
     if (song() !== current) return;
     versions = versions.filter((v) => v.path !== data.path).concat([data]);
     use('clean');
+    success = true;
     const drop = (data.before && data.after) ? ` (Noise: ${data.before.noise_floor_db} dB ➔ ${data.after.noise_floor_db} dB)` : '';
     status(`Done in ${data.seconds}s${drop}. Switch Original / Clean while it plays to compare by ear.`);
   } catch (err) {
     status(err.message);
     showToast('Clean old recording', err.message, 'warning', 6000);
   } finally {
+    stopProcessingAnimation(success);
     btn.disabled = false;
     updateCleanButton();
   }
