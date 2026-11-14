@@ -123,7 +123,8 @@ async function clean() {
     if (song() !== current) return;
     versions = versions.filter((v) => v.path !== data.path).concat([data]);
     use('clean');
-    status(`Done in ${data.seconds}s. Switch Original / Clean while it plays to compare by ear.`);
+    const drop = (data.before && data.after) ? ` (Noise: ${data.before.noise_floor_db} dB ➔ ${data.after.noise_floor_db} dB)` : '';
+    status(`Done in ${data.seconds}s${drop}. Switch Original / Clean while it plays to compare by ear.`);
   } catch (err) {
     status(err.message);
     showToast('Clean old recording', err.message, 'warning', 6000);

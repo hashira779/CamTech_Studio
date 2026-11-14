@@ -24,11 +24,17 @@ except ImportError:
 
 CLEAN_DIR = os.path.join(UPLOAD_DIR, "clean")
 STRENGTHS = {
-    # Hiss reduction measured on a 60 s excerpt of ផ្ការីកក្នុងចិត្ត (voice 2-5 kHz change in brackets):
-    # nr14/nf-35 -14 dB (-0.3), nr20/nf-28 -20 dB (-0.8), nr30/nf-25 -29 dB (-1.3).
+    # Archival: Subsonic rumble cut, DC offset, 100% dynamics preserved
+    "archival": {"hp": 35, "nr": 6, "nf": -42, "declick": False, "presence": 0.0, "exciter": False},
+    # Gentle: Moderate rumble and gentle hiss cut
     "light": {"hp": 40, "nr": 8, "nf": -40, "declick": False, "presence": 1.5, "exciter": False},
+    "gentle": {"hp": 40, "nr": 8, "nf": -40, "declick": False, "presence": 1.5, "exciter": False},
+    # Vintage: Golden Era studio warmth, tape de-mudding, vocal presence
     "medium": {"hp": 50, "nr": 14, "nf": -35, "declick": True, "presence": 2.5, "exciter": False},
+    "vintage": {"hp": 50, "nr": 14, "nf": -35, "declick": True, "presence": 2.5, "exciter": False},
+    # Broadcast: Strong hiss cut + high-air sparkle
     "strong": {"hp": 60, "nr": 20, "nf": -28, "declick": True, "presence": 3.5, "exciter": True},
+    "broadcast": {"hp": 60, "nr": 20, "nf": -28, "declick": True, "presence": 3.5, "exciter": True},
 }
 VOICE_BOOST_DB = 3.0
 # Streaming loudness (YouTube / Facebook play around -14 LUFS). Measured first, then applied to the
@@ -217,7 +223,7 @@ def existing_clean_versions(audio_path: str) -> List[Dict[str, Any]]:
         return []
     out = []
     for name in sorted(os.listdir(CLEAN_DIR)):
-        m = re.fullmatch(re.escape(base) + r" \[clean (light|medium|strong)( voice)?\]\.mp3", name)
+        m = re.fullmatch(re.escape(base) + r" \[clean (archival|light|gentle|medium|vintage|strong|broadcast)( voice)?\]\.mp3", name)
         if m:
             out.append({"path": os.path.join(CLEAN_DIR, name), "strength": m.group(1), "voice_forward": bool(m.group(2))})
     return out
