@@ -306,6 +306,42 @@ def relisten_api(req: RelistenRequest):
     return {"status": "success", "lines": aligned}
 
 
+class CleanAudioRequest(BaseModel):
+    audio_path: Optional[str] = None
+    strength: str = "medium"
+    voice_forward: bool = False
+
+
+def _clean_entry(v: Dict[str, Any]) -> Dict[str, Any]:
+    from backend.paths import UPLOAD_DIR
+    import urllib.parse
+    rel = os.path.relpath(v["path"], UPLOAD_DIR).replace("\\", "/")
+    return {**v, "url": "/uploads/" + "/".join(urllib.parse.quote(part) for part in rel.split("/"))}
+
+
+@router.get("/api/audio/clean")
+def clean_audio_list_api(audio_path: Optional[str] = None):
+    """The cleaned versions this song already has, and whether the voice can be brought forward."""
+    from backend import audio_restore
+    audio_p = require_audio_file(audio_path)
+    return {"versions": [_clean_entry(v) for v in audio_restore.existing_clean_versions(audio_p)],
+            "voice_forward_available": audio_restore.voice_forward_available(audio_p)}
+
+
+@router.post("/api/audio/clean")
+def clean_audio_api(req: CleanAudioRequest):
+    """A cleaned copy of the song for listening and export (the original is never changed)."""
+    from backend import audio_restore
+    audio_p = require_audio_file(req.audio_path)
+    try:
+        made = audio_restore.clean_song(audio_p, req.strength, req.voice_forward)
+    except audio_restore.CleanError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    log.info(f"[Clean] {os.path.basename(audio_p)}: {req.strength}{' + voice' if made['voice_forward'] else ''} "
+             f"in {made['seconds']}s")
+    return {"status": "success", **_clean_entry(made)}
+
+
 class PrepareVocalsRequest(BaseModel):
     audio_path: Optional[str] = None
 

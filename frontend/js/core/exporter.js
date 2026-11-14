@@ -11,6 +11,7 @@ import { state } from './state.js';
 import { renderScene, resetSceneState, stopVisualizer, startVisualizer } from './visualizer.js';
 import { ensureAudioFeatures, getFeatureDuration } from './audio_features.js';
 import { Muxer, ArrayBufferTarget } from '../../vendor/mp4-muxer.mjs';
+import { activeAudioPath } from '../features/clean_audio.js';
 
 const RES_HEIGHT = { '480p': 480, '720p': 720, '1080p': 1080 };
 
@@ -205,7 +206,8 @@ export async function exportVideoWYSIWYG({ onProgress = () => {} } = {}) {
 
   const fd = new FormData();
   fd.append('video', blob, 'vida_preview_frames.mp4');
-  fd.append('audio_path', state.audioServerPath || '');
+  // The clean copy when the user chose it in the Audio tab, else the song itself.
+  fd.append('audio_path', activeAudioPath() || '');
   const res = await fetch('/api/export/mux', { method: 'POST', body: fd });
   const data = await res.json();
   if (!res.ok) throw new Error(data.detail || 'Audio mux failed');

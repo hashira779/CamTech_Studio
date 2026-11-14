@@ -3,6 +3,7 @@
 // The backend (backend/capcut_export.py) copies the design and never changes existing projects.
 
 import { state } from '../core/state.js';
+import { activeAudioPath } from './clean_audio.js';
 import { showToast } from '../ui/feedback.js';
 import { getOriginalCues, getSecondTrackCues } from '../core/srt_editor.js';
 import { ensureTranslation, hasValidTranslation, sourceIsKhmer } from '../core/translation.js';
@@ -106,7 +107,7 @@ async function send() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        audio_path: song(),
+        audio_path: activeAudioPath(),
         title: byId('capcut-title')?.value || '',
         singer: byId('capcut-singer')?.value || '',
         template: byId('capcut-template')?.value || null,

@@ -16,6 +16,7 @@ import { cacheLyrics, saveLyrics, pickNewer } from './core/lyrics_store.js';
 import { initExportDialog, openExportDialog } from './ui/export_dialog.js';
 import { initSoundDelay } from './features/sound_delay.js';
 import { initSendCapCut } from './features/send_capcut.js';
+import { initCleanAudio } from './features/clean_audio.js';
 import {
   initTranslationTrack,
   loadTranslationForSong,
@@ -2033,6 +2034,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initExportDialog();
   initSoundDelay();
   initSendCapCut();
+  initCleanAudio();
 
   // Clear Lyrics Button
   const btnClearLyrics = document.getElementById('btn-clear-lyrics');

@@ -920,6 +920,32 @@
 
         <!-- TAB 4: Audio DSP -->
         <div id="tab-right-dsp" class="tab-pane hidden">
+          <!-- Clean old recording: a cleaned copy for listening and export; the original is never changed -->
+          <details class="ui-sec" id="sec-clean" open>
+            <summary>Clean old recording</summary>
+            <div class="ui-sec-body">
+              <p class="ui-hint">Less rumble, crackle and tape hiss, a clearer voice and even loudness. Your original file is never changed.</p>
+              <div class="ui-field">
+                <span class="ui-lab">Strength</span>
+                <div class="ui-seg" role="group" aria-label="Cleaning strength" id="clean-strength">
+                  <button class="ui-seg-btn" data-strength="light" aria-pressed="false" title="Rumble cut, a little hiss reduction, even loudness">Light</button>
+                  <button class="ui-seg-btn is-active" data-strength="medium" aria-pressed="true" title="Also removes crackle and clicks; clearly less hiss">Medium</button>
+                  <button class="ui-seg-btn" data-strength="strong" aria-pressed="false" title="Most hiss removed; can sound duller, so compare by ear">Strong</button>
+                </div>
+              </div>
+              <label class="ui-check"><input type="checkbox" id="clean-voice"><span>Bring the voice forward</span></label>
+              <p id="clean-voice-note" class="ui-hint" hidden>Available once the song's voice is separated (VIDA starts that when the song is loaded).</p>
+              <button id="btn-clean-audio" class="ui-btn ui-btn--primary ui-btn--block">Clean this song</button>
+              <p id="clean-status" class="ui-hint" aria-live="polite"></p>
+              <div class="ui-field">
+                <span class="ui-lab">Play and export</span>
+                <div class="ui-seg" role="group" aria-label="Which audio to play and export" id="clean-use">
+                  <button class="ui-seg-btn is-active" data-use="original" aria-pressed="true">Original</button>
+                  <button class="ui-seg-btn is-disabled" data-use="clean" aria-pressed="false" disabled>Clean</button>
+                </div>
+              </div>
+            </div>
+          </details>
           <details class="ui-sec" id="sec-eq" open>
             <summary>3-Band Master Equalizer</summary>
             <div class="ui-sec-body">
