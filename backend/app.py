@@ -69,6 +69,7 @@ setup_logging()
 from backend.progress import update_transcribe_progress
 from backend.services.lyric_alignment import align_lyrics_to_audio, require_audio_file, save_aligned_subtitles
 from backend.routes.lyrics import router as lyrics_router
+from backend.routes.restoration import router as restoration_router
 from kmvm.youtube_downloader import download_youtube_audio, is_youtube_url, extract_youtube_url
 from backend.llm_engine import llm_engine
 
@@ -139,6 +140,7 @@ def extract_audio_from_video(video_path: str, audio_path: str) -> bool:
 
 app = FastAPI(title="VIDA Video Studio API", version="1.0.0")
 app.include_router(lyrics_router)
+app.include_router(restoration_router)
 
 @app.on_event("startup")
 async def _on_startup():
