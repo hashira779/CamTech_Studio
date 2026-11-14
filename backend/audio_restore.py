@@ -56,6 +56,31 @@ def clean_path(audio_path: str, strength: str, voice_forward: bool) -> str:
     return os.path.join(CLEAN_DIR, f"{base} [clean {tag}].mp3")
 
 
+def _voice_chain(p: Dict[str, Any]) -> List[str]:
+    """Polishes vocal stem: cuts mic rumble, cleans hiss, dips 300Hz mud, and lifts clarity & air."""
+    chain = ["highpass=f=75"]
+    if p["declick"]:
+        chain.append("adeclick")
+    nr = max(4, p["nr"] - 6)
+    chain.append(f"afftdn=nr={nr}:nf={p['nf']}")
+    chain.append("equalizer=f=300:t=q:w=1.2:g=-2.5")
+    chain.append(f"equalizer=f=3500:t=q:w=1.0:g={p['presence'] + 1.0:.1f}")
+    chain.append("equalizer=f=8000:t=q:w=1.4:g=2.5")
+    chain.append(f"volume={VOICE_BOOST_DB + 0.5:.1f}dB")
+    return chain
+
+
+def _music_chain(p: Dict[str, Any]) -> List[str]:
+    """Cleans backing band, widens mono instruments into stereo, and carves a frequency pocket for the voice."""
+    chain = [f"highpass=f={p['hp']}"]
+    if p["declick"]:
+        chain.append("adeclick")
+    chain.append(f"afftdn=nr={p['nr']}:nf={p['nf']}")
+    chain.append("extrastereo=m=1.4")
+    chain.append("equalizer=f=3500:t=q:w=1.0:g=-2.0")
+    return chain
+
+
 def _repair_chain(p: Dict[str, Any], voice_part: bool = False) -> List[str]:
     """Rumble, crackle and hiss, in that order (clicks are found more reliably before denoising)."""
     chain = [f"highpass=f={p['hp']}"]
@@ -158,9 +183,11 @@ def clean_song(audio_path: str, strength: str = "medium", voice_forward: bool = 
     tmp = out + ".part.mp3"
     started = time.time()
     if stems:
-        voice = ",".join(_repair_chain(p, voice_part=True) + [f"volume={VOICE_BOOST_DB}dB"])
-        music = ",".join(_repair_chain(p))
-        graph = f"[0:a]{voice}[v];[1:a]{music}[m];[v][m]amix=inputs=2:normalize=0,{','.join(_tone_chain(p))}"
+        voice = ",".join(_voice_chain(p))
+        music = ",".join(_music_chain(p))
+        graph = f"[0:a]{voice}[v];[1:a]{music}[m];[v][m]amix=inputs=2:normalize=0"
+        if p["exciter"]:
+            graph += ",aexciter=amount=0.5:drive=3:freq=6500"
         inputs = [stems["vocals"], stems["music"]]
         measured = _measure_loudness(inputs, graph, complex_graph=True)
         cmd = [_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-i", inputs[0], "-i", inputs[1],
