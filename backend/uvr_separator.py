@@ -107,7 +107,17 @@ def separate_with_uvr(
         output_dir=STEMS_DIR,
         output_format="WAV",
         sample_rate=44100,
+        use_directml=True,
     )
+
+    import onnxruntime as ort
+    avail_providers = ort.get_available_providers()
+    if "DmlExecutionProvider" in avail_providers:
+        log.info("[UVR] DirectML GPU acceleration active (NVIDIA GeForce RTX 3050 Ti)")
+        sep.onnx_execution_provider = ["DmlExecutionProvider", "CPUExecutionProvider"]
+    elif "CUDAExecutionProvider" in avail_providers:
+        log.info("[UVR] CUDA GPU acceleration active")
+        sep.onnx_execution_provider = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
     sep.load_model(model_filename)
     output_files = sep.separate(audio_path)
@@ -168,7 +178,13 @@ def dereverb_vocal_stem(vocals_path: str) -> str:
         output_dir=STEMS_DIR,
         output_format="WAV",
         sample_rate=44100,
+        use_directml=True,
     )
+
+    import onnxruntime as ort
+    avail_providers = ort.get_available_providers()
+    if "DmlExecutionProvider" in avail_providers:
+        sep.onnx_execution_provider = ["DmlExecutionProvider", "CPUExecutionProvider"]
 
     sep.load_model("UVR-De-Echo-De-Reverb.pth")
     output_files = sep.separate(vocals_path)
