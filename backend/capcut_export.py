@@ -14,6 +14,7 @@ the list as soon as CapCut closes (remembered across VIDA restarts until then).
 """
 import copy
 import json
+import logging
 import os
 import re
 import shutil
@@ -23,6 +24,8 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+log = logging.getLogger(__name__)
+
 US = 1_000_000  # CapCut times are microseconds
 # A template part ending this close to the template song's end "runs to the end" and follows the new length.
 RUNS_TO_END_US = 3 * US
@@ -30,7 +33,7 @@ RUNS_TO_END_US = 3 * US
 AUDIO_REFS_DROPPED = ("loudnesses", "vocal_beautifys")
 # Copied with the project but not part of it: locks, CapCut's own backups and temp files.
 NOT_COPIED = shutil.ignore_patterns(".locked", "*.bak", "*.tmp", "*.vida-tmp")
-CREDIT_WORDS = re.compile(r"\b(by|lyric|lyrics|cover|credit)\b", re.I)
+CREDIT_WORDS = re.compile(r"\b(by|lyric|lyrics|cover|credit|watermark|tiktok|fb|facebook|youtube|channel|subscribe|vibetune)\b|Cover Lyric", re.I)
 
 
 class CapCutError(Exception):
@@ -213,13 +216,45 @@ def describe_template(content: Dict[str, Any]) -> Dict[str, Any]:
                                 "x": float(pos.get("x", 0)), "y": float(pos.get("y", 0))})
     song_mat = by_id[audio[1]["material_id"]][1]
     song_name = os.path.splitext(os.path.basename(song_mat.get("path", "")))[0] or song_mat.get("name", "")
-    song_title = _norm(song_name.split(" - ")[0])
-    title = next((s for s in singles if song_title and _norm(s["text"]) and (_norm(s["text"]) in song_title or song_title in _norm(s["text"]))), None)
+    clean_song_name = re.sub(r"\[.*?\]|\(.*?\)", "", song_name).strip()
+    song_title = _norm(clean_song_name.split(" - ")[0])
+    song_artist = _norm(clean_song_name.split(" - ")[1]) if " - " in clean_song_name else ""
+
+    # 1. Primary: match by audio name
+    title = next((s for s in singles if song_title and _norm(s["text"]) and
+                  (_norm(s["text"]) in song_title or song_title in _norm(s["text"]))), None)
     singer = None
-    if title:
-        below = [s for s in singles if s is not title and s["y"] < title["y"] and abs(s["x"] - title["x"]) < 0.35
-                 and not CREDIT_WORDS.search(s["text"])]
-        singer = max(below, key=lambda s: s["y"], default=None)
+    if song_artist:
+        singer = next((s for s in singles if s is not title and _norm(s["text"]) and
+                       (_norm(s["text"]) in song_artist or song_artist in _norm(s["text"]))), None)
+
+    # 2. Fallback: filter candidates for title and singer (exclude credit words, corner watermarks)
+    def is_candidate(s: Dict[str, Any]) -> bool:
+        txt = s.get("text", "").strip()
+        if not txt:
+            return False
+        if CREDIT_WORDS.search(txt):
+            return False
+        # Avoid extreme corner watermarks (e.g. bottom watermark at y < -0.75 or corner badges)
+        if s["y"] < -0.75 or (abs(s["x"]) > 0.65 and abs(s["y"]) > 0.65):
+            return False
+        return True
+
+    valid_candidates = [s for s in singles if is_candidate(s)]
+    valid_candidates.sort(key=lambda s: s["y"], reverse=True)
+
+    if not title and valid_candidates:
+        title = valid_candidates[0]
+
+    if not singer and title:
+        below = [s for s in valid_candidates if s is not title and s["y"] < title["y"] and abs(s["x"] - title["x"]) < 0.45]
+        if below:
+            singer = below[0]
+        else:
+            any_below = [s for s in singles if s is not title and s["y"] < title["y"] and abs(s["x"] - title["x"]) < 0.45
+                         and not CREDIT_WORDS.search(s.get("text", "")) and not s["y"] < -0.75]
+            if any_below:
+                singer = max(any_below, key=lambda s: s["y"])
     return {"audio_track": audio[0], "audio_segment": audio[1], "audio_material": song_mat,
             "captions": captions, "title": title, "singer": singer}
 
@@ -306,6 +341,25 @@ def create_project(template_folder: Optional[str], audio_path: str, duration_s: 
     parts = describe_template(content)
     lines_in = [[l for l in t if str(l.get("text", "")).strip() and float(l["end"]) > float(l["start"])] for t in caption_tracks]
     lines_in = [t for t in lines_in if t]
+
+    # Ensure title and singer fallbacks if empty or concatenated
+    if not title:
+        raw_name = os.path.splitext(os.path.basename(audio_path))[0]
+        raw_name = re.sub(r"\[.*?\]|\(.*?\)", "", raw_name).strip()
+        if " - " in raw_name:
+            t_part, s_part = raw_name.split(" - ", 1)
+            title = t_part.strip()
+            if not singer:
+                singer = s_part.strip()
+        else:
+            title = raw_name
+    elif not singer and " - " in str(title):
+        t_part, s_part = str(title).split(" - ", 1)
+        title = t_part.strip()
+        singer = s_part.strip()
+
+    log.info(f"[CapCut] Template '{tpl['name']}': detected title '{parts['title']['text'] if parts['title'] else None}', singer '{parts['singer']['text'] if parts['singer'] else None}'")
+    log.info(f"[CapCut] Applying Title: '{title}', Singer: '{singer}'")
 
     base = re.sub(r'[\\/:*?"<>|]+', " ", title or os.path.splitext(os.path.basename(audio_path))[0]).strip()[:60] or "VIDA lyrics"
     folder_name, n = f"{base} (VIDA)", 2
@@ -419,10 +473,13 @@ def create_project(template_folder: Optional[str], audio_path: str, duration_s: 
     _copy_project(tpl_folder, folder, content["id"])
     try:
         _write(os.path.join(folder, "draft_content.json"), content)
-        # CapCut 9.7 keeps the same timeline under Timelines/<id>/ too (identical in the template).
-        timeline_copy = os.path.join(folder, "Timelines", content["id"], "draft_content.json")
-        if os.path.isfile(timeline_copy):
-            _write(timeline_copy, content)
+        # CapCut 9.7+ keeps the same timeline under Timelines/<id>/ too; update all timeline copies
+        timelines_dir = os.path.join(folder, "Timelines")
+        if os.path.isdir(timelines_dir):
+            for sub in os.listdir(timelines_dir):
+                tl_copy = os.path.join(timelines_dir, sub, "draft_content.json")
+                if os.path.isfile(tl_copy):
+                    _write(tl_copy, content)
         _write(os.path.join(folder, "draft_meta_info.json"), meta)
         # Other project files may name the template's folder; point them at the new one.
         for here, _, files in os.walk(folder):

@@ -27,13 +27,14 @@ function setStatus(text, bad = false) {
 export function titleAndSinger(songTitle, artistName) {
   let title = String(songTitle || '').trim();
   let singer = String(artistName || '').trim();
-  if (!singer || /^unknown$/i.test(singer)) {
+  const isPlaceholderArtist = !singer || /^(unknown|official audio|local track|vida synth engine|vida audio|artist)$/i.test(singer);
+
+  const cut = title.indexOf(' - ');
+  if (cut > 0 && (isPlaceholderArtist || title.endsWith(singer) || singer.includes(title.slice(cut + 3).trim()))) {
+    singer = title.slice(cut + 3).trim();
+    title = title.slice(0, cut).trim();
+  } else if (isPlaceholderArtist) {
     singer = '';
-    const cut = title.indexOf(' - ');
-    if (cut > 0) {
-      singer = title.slice(cut + 3).trim();
-      title = title.slice(0, cut).trim();
-    }
   }
   return { title, singer };
 }
@@ -43,7 +44,7 @@ function fillFields() {
   const singer = byId('capcut-singer');
   if (!title || !singer) return;
   // Refill for each song; keep what the user typed while the same song is loaded.
-  if (title.dataset.song === song()) return;
+  if (title.dataset.song === song() && (title.value || singer.value)) return;
   const guess = titleAndSinger(state.songTitle, state.artistName);
   title.value = guess.title;
   singer.value = guess.singer;
