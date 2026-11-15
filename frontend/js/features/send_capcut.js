@@ -3,7 +3,7 @@
 // The backend (backend/capcut_export.py) copies the design and never changes existing projects.
 
 import { state } from '../core/state.js';
-import { activeAudioPath } from './clean_audio.js';
+import { activeAudioPath, getCleanAudioInfo } from './clean_audio.js';
 import { showToast } from '../ui/feedback.js';
 import { getOriginalCues, getSecondTrackCues } from '../core/srt_editor.js';
 import { ensureTranslation, hasValidTranslation, sourceIsKhmer } from '../core/translation.js';
@@ -54,8 +54,36 @@ function singerNote() {
   return byId('capcut-singer')?.value.trim() ? '' : "Singer is empty: the design's singer line will be removed.";
 }
 
+let capcutAudioOverride = null; // null = use active selection, 'original' = force original
+
+function updateAudioBadge() {
+  const info = getCleanAudioInfo();
+  const nameEl = byId('capcut-active-audio-name');
+  const tagEl = byId('capcut-audio-tag');
+  const btnSel = byId('capcut-btn-selected-audio');
+  const btnOrig = byId('capcut-btn-orig-audio');
+
+  const usingClean = capcutAudioOverride === 'original' ? false : info.isClean;
+
+  if (nameEl) {
+    nameEl.textContent = info.isClean ? info.label : 'Clean Audio (None)';
+  }
+  if (tagEl) {
+    tagEl.textContent = usingClean ? 'Clean Restored ✨' : 'Original Audio';
+    tagEl.className = usingClean ? 'ui-tag ui-tag--green' : 'ui-tag ui-tag--blue';
+  }
+  if (btnSel && btnOrig) {
+    const isSel = capcutAudioOverride !== 'original';
+    btnSel.classList.toggle('is-active', isSel);
+    btnOrig.classList.toggle('is-active', !isSel);
+    btnSel.disabled = !info.isClean;
+    btnSel.style.opacity = info.isClean ? '1' : '0.5';
+  }
+}
+
 async function refresh() {
   fillFields();
+  updateAudioBadge();
   const select = byId('capcut-template');
   const btn = byId('btn-send-capcut');
   try {
@@ -103,11 +131,14 @@ async function send() {
     }
     const second = asLines(getSecondTrackCues(state.lyrics || []));
     setStatus('Making the CapCut project…');
+    const targetAudio = capcutAudioOverride === 'original' ? song() : activeAudioPath();
+    const info = getCleanAudioInfo();
+    const isUsingClean = targetAudio !== song() && info.isClean;
     const res = await fetch('/api/capcut/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        audio_path: activeAudioPath(),
+        audio_path: targetAudio,
         title: byId('capcut-title')?.value || '',
         singer: byId('capcut-singer')?.value || '',
         template: byId('capcut-template')?.value || null,
@@ -123,8 +154,9 @@ async function send() {
     const where = data.listed === false
       ? 'Close CapCut and open it again: it will be first in your projects (keep VIDA running until you close CapCut).'
       : 'Open CapCut: it is first in your projects.';
-    setStatus(`Made "${data.name}". ${where}${note}`);
-    showToast('Sent to CapCut', `"${data.name}" — ${lines.length} lines${second.length ? ' + translation' : ''}, ${data.length_s}s. ${where}${note}`, 'success', 8000);
+    const audioLabel = isUsingClean ? `Clean (${info.strength || 'Restored'})` : 'Original';
+    setStatus(`Made "${data.name}" with ${audioLabel} audio. ${where}${note}`);
+    showToast('Sent to CapCut', `"${data.name}" [Audio: ${audioLabel}] — ${lines.length} lines${second.length ? ' + translation' : ''}, ${data.length_s}s. ${where}${note}`, 'success', 8000);
   } catch (err) {
     setStatus(err.message, true);
     showToast('CapCut', err.message, 'warning', 6000);
@@ -136,6 +168,12 @@ async function send() {
 export function initSendCapCut() {
   byId('btn-send-capcut')?.addEventListener('click', send);
   byId('capcut-singer')?.addEventListener('input', () => setStatus(singerNote()));
+  byId('capcut-audio-toggle')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-audio-choice]');
+    if (!btn || btn.disabled) return;
+    capcutAudioOverride = btn.dataset.audioChoice === 'original' ? 'original' : null;
+    updateAudioBadge();
+  });
   // Fresh list and CapCut state each time the Export dialog opens.
   byId('btn-open-export')?.addEventListener('click', refresh);
   byId('menu-act-render-video')?.addEventListener('click', refresh);

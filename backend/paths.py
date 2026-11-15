@@ -18,7 +18,10 @@ IMAGES_DIR = os.path.join(UPLOAD_DIR, "images")
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 
-for _dir in (UPLOAD_DIR, AUDIO_DIR, LYRICS_DIR, VIDEO_DIR, IMAGES_DIR, OUTPUT_DIR, FRONTEND_DIR):
+CLEAN_DIR = os.path.join(UPLOAD_DIR, "clean")
+STEMS_DIR = os.path.join(UPLOAD_DIR, "stems")
+
+for _dir in (UPLOAD_DIR, AUDIO_DIR, CLEAN_DIR, STEMS_DIR, LYRICS_DIR, VIDEO_DIR, IMAGES_DIR, OUTPUT_DIR, FRONTEND_DIR):
     os.makedirs(_dir, exist_ok=True)
 
 AUDIO_EXTENSIONS = (".mp3", ".wav", ".flac", ".m4a", ".ogg")
@@ -28,8 +31,16 @@ def _candidates(path: str):
     rel = path.replace("\\", "/").lstrip("/")
     yield path
     yield os.path.abspath(path)
-    yield os.path.join(AUDIO_DIR, os.path.basename(rel))
-    yield os.path.join(UPLOAD_DIR, rel)
+    if rel.startswith("uploads/"):
+        rel_after = rel[len("uploads/"):].lstrip("/")
+        yield os.path.join(BASE_DIR, rel)
+        yield os.path.join(UPLOAD_DIR, rel_after)
+    else:
+        yield os.path.join(UPLOAD_DIR, rel)
+    base = os.path.basename(rel)
+    yield os.path.join(AUDIO_DIR, base)
+    yield os.path.join(CLEAN_DIR, base)
+    yield os.path.join(STEMS_DIR, base)
 
 
 def find_audio_file(audio_path: Optional[str]) -> Optional[str]:

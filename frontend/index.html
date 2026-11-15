@@ -1262,6 +1262,20 @@
             <label class="ui-field"><span class="ui-lab">Title</span><input id="capcut-title" class="prop-input" spellcheck="false"></label>
             <label class="ui-field"><span class="ui-lab">Singer</span><input id="capcut-singer" class="prop-input" spellcheck="false"></label>
           </div>
+          <div class="ui-field" style="margin-bottom: 12px;">
+            <span class="ui-lab" style="display: flex; justify-content: space-between; align-items: center;">
+              <span>Audio Track for CapCut Project</span>
+              <span id="capcut-audio-tag" class="ui-tag ui-tag--blue" style="font-size: 11px;">Original</span>
+            </span>
+            <div class="ui-seg" id="capcut-audio-toggle" style="margin-top: 4px;">
+              <button type="button" class="ui-seg-btn is-active" data-audio-choice="selected" id="capcut-btn-selected-audio">
+                ✨ <span id="capcut-active-audio-name">Clean Audio</span>
+              </button>
+              <button type="button" class="ui-seg-btn" data-audio-choice="original" id="capcut-btn-orig-audio">
+                Original Audio
+              </button>
+            </div>
+          </div>
           <label class="ui-field">
             <span class="ui-lab">Design (a CapCut project to copy)</span>
             <select id="capcut-template" class="prop-select"></select>

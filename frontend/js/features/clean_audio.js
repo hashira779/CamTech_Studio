@@ -99,6 +99,27 @@ export function activeAudioPath() {
   return (state.cleanAudio && state.cleanAudio.song === song() && state.cleanAudio.path) || song();
 }
 
+export function isCleanAudioActive() {
+  return Boolean(state.cleanAudio && state.cleanAudio.song === song() && state.cleanAudio.path);
+}
+
+export function getCleanAudioInfo() {
+  if (isCleanAudioActive()) {
+    return {
+      isClean: true,
+      path: state.cleanAudio.path,
+      strength: state.cleanAudio.strength,
+      voice_forward: state.cleanAudio.voice_forward,
+      label: `Clean (${state.cleanAudio.strength || 'Restored'}${state.cleanAudio.voice_forward ? ' + Stems' : ''})`,
+    };
+  }
+  return {
+    isClean: false,
+    path: song(),
+    label: 'Original Audio',
+  };
+}
+
 function choices() {
   try { return JSON.parse(localStorage.getItem(CHOICE_KEY) || '{}'); } catch (_) { return {}; }
 }
@@ -142,7 +163,9 @@ function swapSource(url) {
 }
 
 function use(which) {
-  const version = which === 'clean' ? wanted() || versions.find((v) => v.path === state.cleanAudio?.path) : null;
+  const version = which === 'clean'
+    ? (wanted() || (state.cleanAudio && versions.find((v) => v.path === state.cleanAudio.path)) || versions[versions.length - 1] || null)
+    : null;
   if (which === 'clean' && !version) return;
   state.cleanAudio = version ? { ...version, song: song() } : null;
   swapSource(version ? version.url : state.audioUrl);
