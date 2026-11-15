@@ -153,10 +153,16 @@ function use(which) {
 
 function updateCleanButton() {
   const btn = byId('clean-use')?.querySelector('[data-use="clean"]');
-  if (!btn) return;
-  const ok = Boolean(wanted() || state.cleanAudio);
-  btn.disabled = !ok;
-  btn.classList.toggle('is-disabled', !ok);
+  if (btn) {
+    const ok = Boolean(wanted() || state.cleanAudio);
+    btn.disabled = !ok;
+    btn.classList.toggle('is-disabled', !ok);
+  }
+  const voice = byId('clean-voice');
+  const engineWrap = byId('clean-engine-wrap');
+  if (engineWrap && voice) {
+    engineWrap.style.display = voice.checked ? 'block' : 'none';
+  }
 }
 
 async function refresh() {
@@ -165,15 +171,16 @@ async function refresh() {
   versions = [];
   setSeg('clean-use', 'use', 'original');
   status('');
+  const voice = byId('clean-voice');
+  const note = byId('clean-voice-note');
+  if (voice) voice.disabled = false;
+  if (note) note.hidden = true;
+  updateCleanButton();
   if (!current) return;
   try {
     const data = await (await fetch(`/api/audio/clean?audio_path=${encodeURIComponent(current)}`)).json();
     if (song() !== current) return;
     versions = data.versions || [];
-    const voice = byId('clean-voice');
-    const note = byId('clean-voice-note');
-    if (voice) voice.disabled = !data.voice_forward_available;
-    if (note) note.hidden = Boolean(data.voice_forward_available);
     const saved = versions.find((v) => v.path === choices()[current]);
     if (saved) {
       strength = saved.strength;
@@ -198,9 +205,10 @@ async function clean() {
   status('');
   let success = false;
   try {
+    const stemEngine = byId('clean-stem-engine')?.value || 'uvr_kim_vocal_2';
     const res = await fetch('/api/audio/clean', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ audio_path: current, strength, voice_forward: isVoiceForward }),
+      body: JSON.stringify({ audio_path: current, strength, voice_forward: isVoiceForward, stem_engine: stemEngine }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Could not clean this song');

@@ -310,6 +310,7 @@ class CleanAudioRequest(BaseModel):
     audio_path: Optional[str] = None
     strength: str = "medium"
     voice_forward: bool = False
+    stem_engine: Optional[str] = "uvr_kim_vocal_2"
 
 
 def _clean_entry(v: Dict[str, Any]) -> Dict[str, Any]:
@@ -334,7 +335,7 @@ def clean_audio_api(req: CleanAudioRequest):
     from backend import audio_restore
     audio_p = require_audio_file(req.audio_path)
     try:
-        made = audio_restore.clean_song(audio_p, req.strength, req.voice_forward)
+        made = audio_restore.clean_song(audio_p, req.strength, req.voice_forward, stem_engine=req.stem_engine or "uvr_kim_vocal_2")
     except audio_restore.CleanError as e:
         raise HTTPException(status_code=409, detail=str(e))
     log.info(f"[Clean] {os.path.basename(audio_p)}: {req.strength}{' + voice' if made['voice_forward'] else ''} "
@@ -344,16 +345,50 @@ def clean_audio_api(req: CleanAudioRequest):
 
 class PrepareVocalsRequest(BaseModel):
     audio_path: Optional[str] = None
+    engine: Optional[str] = "uvr_kim_vocal_2"
 
 
 _PREPARING: set = set()
 
 
+@router.get("/api/stems/engines")
+def list_stem_engines_api():
+    """Lists available AI vocal isolation engines (UVR5 & Demucs)."""
+    from backend import uvr_separator
+    engines = [
+        {
+            "id": "uvr_kim_vocal_2",
+            "name": "UVR MDX-Net (Kim Vocal 2) ⭐",
+            "description": "Recommended for Old Khmer Songs. Cleanest separation, zero brass/guitar bleed.",
+            "is_default": True,
+        },
+        {
+            "id": "uvr_voc_ft",
+            "name": "UVR MDX-Net (Voc FT)",
+            "description": "Fine-tuned high-fidelity vocal extraction.",
+            "is_default": False,
+        },
+        {
+            "id": "uvr_de_reverb",
+            "name": "UVR De-Echo / De-Reverb",
+            "description": "Removes 1960s spring reverb and room echo.",
+            "is_default": False,
+        },
+        {
+            "id": "demucs",
+            "name": "Demucs v4 (HTDemucs)",
+            "description": "Standard 4-stem music demixing model.",
+            "is_default": False,
+        },
+    ]
+    return {"engines": engines}
+
+
 @router.post("/api/vocals/prepare")
 def prepare_vocals_api(req: PrepareVocalsRequest):
     """
-    Starts separating the song's voice from the music in the background, once per song, so Paste &
-    Align finds it done. Returns at once; the alignment waits for it if it is still running.
+    Starts separating the song's voice from the music in the background using UVR5 or Demucs,
+    once per song, so Paste & Align and DSP cleaning find it done.
     """
     import threading
     from backend.vocal_align import _ensure_vocal_stem, get_cached_vocals_path
@@ -369,13 +404,20 @@ def prepare_vocals_api(req: PrepareVocalsRequest):
 
     def run():
         try:
-            _ensure_vocal_stem(audio_p)
-            log.info(f"[Vocals] Voice separated in the background for '{os.path.basename(audio_p)}'")
+            if req.engine and req.engine.startswith("uvr_"):
+                from backend import uvr_separator
+                uvr_separator.separate_with_uvr(audio_p, engine_id=req.engine)
+                log.info(f"[Vocals] UVR voice separated in background for '{os.path.basename(audio_p)}'")
+            else:
+                _ensure_vocal_stem(audio_p)
+                log.info(f"[Vocals] Demucs voice separated in background for '{os.path.basename(audio_p)}'")
+        except Exception as e:
+            log.warning(f"[Vocals] Separation failed in background: {e}")
         finally:
             _PREPARING.discard(audio_p)
 
     threading.Thread(target=run, name="prepare-vocals", daemon=True).start()
-    return {"status": "started"}
+    return {"status": "started", "engine": req.engine}
 
 
 class CapCutLine(BaseModel):

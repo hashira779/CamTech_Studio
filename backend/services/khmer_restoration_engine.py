@@ -320,17 +320,24 @@ def restore_track(
     stems = None
 
     if use_ai:
+        stem_engine = params.get("stem_engine", "uvr_kim_vocal_2")
         try:
-            from backend.vocal_align import get_cached_vocals_path, _ensure_vocal_stem
-            vocals_path = get_cached_vocals_path(audio_path)
-            if not vocals_path:
-                vocals_path = _ensure_vocal_stem(audio_path)
-            if vocals_path:
-                music_path = vocals_path.replace("_vocals.wav", "_accompaniment.wav")
-                if os.path.isfile(music_path):
+            if stem_engine.startswith("uvr_"):
+                from backend import uvr_separator
+                vocals_path, music_path = uvr_separator.separate_with_uvr(audio_path, engine_id=stem_engine)
+                if os.path.isfile(vocals_path) and os.path.isfile(music_path):
                     stems = {"vocals": vocals_path, "music": music_path}
+            else:
+                from backend.vocal_align import get_cached_vocals_path, _ensure_vocal_stem
+                vocals_path = get_cached_vocals_path(audio_path)
+                if not vocals_path:
+                    vocals_path = _ensure_vocal_stem(audio_path)
+                if vocals_path:
+                    music_path = vocals_path.replace("_vocals.wav", "_accompaniment.wav")
+                    if os.path.isfile(music_path):
+                        stems = {"vocals": vocals_path, "music": music_path}
         except Exception as e:
-            log.warning(f"[Restoration] Demucs stems unavailable, falling back to full-mix DSP: {e}")
+            log.warning(f"[Restoration] Stem separation with {stem_engine} failed, falling back: {e}")
             stems = None
 
     if job_id:

@@ -174,7 +174,7 @@ def _levels(path: str) -> Dict[str, float]:
             "level_db": round(float(20 * np.log10(np.sqrt(np.mean(10 ** (loud / 10))))), 1)}
 
 
-def clean_song(audio_path: str, strength: str = "medium", voice_forward: bool = False) -> Dict[str, Any]:
+def clean_song(audio_path: str, strength: str = "medium", voice_forward: bool = False, stem_engine: str = "uvr_kim_vocal_2") -> Dict[str, Any]:
     if strength not in STRENGTHS:
         raise CleanError(f"Unknown strength '{strength}'.")
     if not os.path.isfile(audio_path):
@@ -182,8 +182,24 @@ def clean_song(audio_path: str, strength: str = "medium", voice_forward: bool = 
     p = STRENGTHS[strength]
     stems = _stems(audio_path) if voice_forward else None
     if voice_forward and not stems:
-        raise CleanError("Bring the voice forward needs the song's separated voice; VIDA makes it when the song is "
-                         "loaded (a few minutes the first time). Try again once it is done.")
+        try:
+            if stem_engine and stem_engine.startswith("uvr_"):
+                from backend import uvr_separator
+                voc, mus = uvr_separator.separate_with_uvr(audio_path, engine_id=stem_engine)
+                if os.path.isfile(voc) and os.path.isfile(mus):
+                    stems = {"vocals": voc, "music": mus}
+            else:
+                from backend.vocal_align import _ensure_vocal_stem
+                voc = _ensure_vocal_stem(audio_path)
+                if voc:
+                    mus = voc.replace("_vocals.wav", "_accompaniment.wav")
+                    if os.path.isfile(mus):
+                        stems = {"vocals": voc, "music": mus}
+        except Exception as e:
+            log.warning(f"[Clean] Stem separation error with {stem_engine}: {e}")
+            raise CleanError("Voice separation is still preparing; please try again in a moment.")
+    if voice_forward and not stems:
+        raise CleanError("Bring the voice forward needs the song's separated voice; please try again in a moment.")
     os.makedirs(CLEAN_DIR, exist_ok=True)
     out = clean_path(audio_path, strength, voice_forward)
     tmp = out + ".part.mp3"
