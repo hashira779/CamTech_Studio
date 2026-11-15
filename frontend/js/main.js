@@ -289,20 +289,44 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // ============ EQ Sliders ============
-  const eqSub = document.getElementById('eq-sub');
-  const eqMid = document.getElementById('eq-mid');
-  const eqHigh = document.getElementById('eq-high');
-  
-  if (eqSub) {
-    eqSub.addEventListener('input', (e) => updateEq('sub', parseFloat(e.target.value)));
+  // ============ EQ Sliders with Live Percentage & dB Display ============
+  const eqControls = [
+    { id: 'eq-sub', type: 'sub', pctId: 'eq-sub-pct', dbId: 'eq-sub-db', def: 4 },
+    { id: 'eq-mid', type: 'mid', pctId: 'eq-mid-pct', dbId: 'eq-mid-db', def: 2 },
+    { id: 'eq-high', type: 'high', pctId: 'eq-high-pct', dbId: 'eq-high-db', def: 3 },
+  ];
+
+  function updateEqDisplay(slider, pctEl, dbEl) {
+    if (!slider) return;
+    const min = parseFloat(slider.min);
+    const max = parseFloat(slider.max);
+    const val = parseFloat(slider.value);
+    const pct = Math.round(((val - min) / (max - min)) * 100);
+    const dbStr = (val > 0 ? '+' : '') + Math.round(val) + ' dB';
+    if (pctEl) pctEl.textContent = `${pct}%`;
+    if (dbEl) dbEl.textContent = dbStr;
   }
-  if (eqMid) {
-    eqMid.addEventListener('input', (e) => updateEq('mid', parseFloat(e.target.value)));
-  }
-  if (eqHigh) {
-    eqHigh.addEventListener('input', (e) => updateEq('high', parseFloat(e.target.value)));
-  }
+
+  eqControls.forEach(({ id, type, pctId, dbId, def }) => {
+    const slider = document.getElementById(id);
+    const pctEl = document.getElementById(pctId);
+    const dbEl = document.getElementById(dbId);
+    if (!slider) return;
+
+    updateEqDisplay(slider, pctEl, dbEl);
+
+    slider.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      updateEq(type, val);
+      updateEqDisplay(slider, pctEl, dbEl);
+    });
+
+    slider.addEventListener('dblclick', () => {
+      slider.value = def;
+      updateEq(type, def);
+      updateEqDisplay(slider, pctEl, dbEl);
+    });
+  });
 
 
   // ============ Universal Studio Activity & Progress Bar Helper ============
