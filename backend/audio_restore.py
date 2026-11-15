@@ -32,6 +32,8 @@ STRENGTHS = {
     # Vintage: Golden Era studio warmth, tape de-mudding, vocal presence
     "medium": {"hp": 50, "nr": 14, "nf": -35, "declick": True, "presence": 2.5, "exciter": False},
     "vintage": {"hp": 50, "nr": 14, "nf": -35, "declick": True, "presence": 2.5, "exciter": False},
+    # UVR Stems: Kim Vocal 2 isolation + stereo band widening + vocal pocketing
+    "uvr_stems": {"hp": 55, "nr": 16, "nf": -32, "declick": True, "presence": 3.2, "exciter": True},
     # Broadcast: Strong hiss cut + high-air sparkle
     "strong": {"hp": 60, "nr": 20, "nf": -28, "declick": True, "presence": 3.5, "exciter": True},
     "broadcast": {"hp": 60, "nr": 20, "nf": -28, "declick": True, "presence": 3.5, "exciter": True},
@@ -239,7 +241,7 @@ def existing_clean_versions(audio_path: str) -> List[Dict[str, Any]]:
         return []
     out = []
     for name in sorted(os.listdir(CLEAN_DIR)):
-        m = re.fullmatch(re.escape(base) + r" \[clean (archival|light|gentle|medium|vintage|strong|broadcast)( voice)?\]\.mp3", name)
+        m = re.fullmatch(re.escape(base) + r" \[clean (archival|light|gentle|medium|vintage|uvr_stems|strong|broadcast)( voice)?\]\.mp3", name)
         if m:
             out.append({"path": os.path.join(CLEAN_DIR, name), "strength": m.group(1), "voice_forward": bool(m.group(2))})
     return out

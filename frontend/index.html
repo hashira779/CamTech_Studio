@@ -931,17 +931,21 @@
                   <button class="ui-seg-btn" data-strength="archival" aria-pressed="false" title="Archival: Subsonic cut only, 100% vintage dynamic range">Archival</button>
                   <button class="ui-seg-btn" data-strength="light" aria-pressed="false" title="Gentle: Rumble cut, light hiss reduction, original tone">Gentle</button>
                   <button class="ui-seg-btn is-active" data-strength="medium" aria-pressed="true" title="Vintage Studio: Golden Era warmth & vocal presence">Vintage</button>
+                  <button class="ui-seg-btn" data-strength="uvr_stems" aria-pressed="false" title="UVR Stems: Kim Vocal 2 AI isolation + stereo soundstage">UVR Stems ⭐</button>
                   <button class="ui-seg-btn" data-strength="strong" aria-pressed="false" title="Broadcast: Maximum clarity & high-end air sparkle">Broadcast</button>
                 </div>
               </div>
-              <label class="ui-check"><input type="checkbox" id="clean-voice"><span>Bring voice forward (AI Stems + Stereo Band)</span></label>
-              <div class="ui-field" id="clean-engine-wrap" style="margin: 6px 0 10px 0;">
-                <span class="ui-lab">AI Stem Isolation Engine</span>
+              
+              <div class="ui-field" id="clean-engine-wrap" style="margin: 8px 0 10px 0;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <label class="ui-check" style="margin: 0;"><input type="checkbox" id="clean-voice"><span>AI Stem Separation & Stereo Band</span></label>
+                  <span class="ui-chip ui-chip--ok" style="font-size: 10px; padding: 1px 6px;">UVR5 Active</span>
+                </div>
                 <select id="clean-stem-engine" class="prop-select" style="width: 100%; height: 32px; background: rgba(0,0,0,0.35); border: 1px solid var(--border-color); border-radius: var(--ui-r-sm); color: #38bdf8; font-size: 11px; padding: 0 8px;">
-                  <option value="uvr_kim_vocal_2" selected>UVR MDX-Net: Kim Vocal 2 ⭐ (Oldies)</option>
-                  <option value="uvr_voc_ft">UVR MDX-Net: Voc FT (HQ)</option>
-                  <option value="uvr_de_reverb">UVR De-Reverb: De-Echo (Dry voice)</option>
-                  <option value="demucs">Demucs v4 (HTDemucs)</option>
+                  <option value="uvr_kim_vocal_2" selected>UVR MDX-Net: Kim Vocal 2 ⭐ (Cleanest for Khmer Oldies)</option>
+                  <option value="uvr_voc_ft">UVR MDX-Net: Voc FT (HQ Lead Vocals)</option>
+                  <option value="uvr_de_reverb">UVR De-Reverb: De-Echo (Remove Room Reverb)</option>
+                  <option value="demucs">Demucs v4 (HTDemucs Multi-Stem)</option>
                 </select>
               </div>
               <p id="clean-voice-note" class="ui-hint" hidden>Available once the song's voice is separated (VIDA starts that when the song is loaded).</p>
@@ -982,6 +986,12 @@
                   <button class="ui-seg-btn is-active" data-use="original" aria-pressed="true">Original</button>
                   <button class="ui-seg-btn is-disabled" data-use="clean" aria-pressed="false" disabled>Clean</button>
                 </div>
+              </div>
+              
+              <div id="clean-download-row" style="margin-top: 10px;" hidden>
+                <a id="btn-download-clean" class="ui-btn ui-btn--primary ui-btn--block" style="text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600; font-size: 12px; background: linear-gradient(90deg, #0284c7, #2563eb); border: none; color: #fff;" download>
+                  <span>⬇</span> <span>Download Restored Audio (MP3)</span>
+                </a>
               </div>
             </div>
           </details>

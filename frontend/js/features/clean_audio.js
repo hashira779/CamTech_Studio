@@ -148,6 +148,16 @@ function use(which) {
   swapSource(version ? version.url : state.audioUrl);
   setSeg('clean-use', 'use', version ? 'clean' : 'original');
   remember(version ? version.path : null);
+  const dlRow = byId('clean-download-row');
+  const dlBtn = byId('btn-download-clean');
+  if (dlRow && dlBtn) {
+    if (version && version.url) {
+      dlBtn.href = version.url;
+      dlRow.hidden = false;
+    } else {
+      dlRow.hidden = true;
+    }
+  }
   if (version) status(`Playing and exporting the clean copy (${version.strength}${version.voice_forward ? ', voice forward' : ''}).`);
 }
 
@@ -159,9 +169,10 @@ function updateCleanButton() {
     btn.classList.toggle('is-disabled', !ok);
   }
   const voice = byId('clean-voice');
-  const engineWrap = byId('clean-engine-wrap');
-  if (engineWrap && voice) {
-    engineWrap.style.display = voice.checked ? 'block' : 'none';
+  const engineSelect = byId('clean-stem-engine');
+  if (engineSelect && voice) {
+    engineSelect.disabled = !voice.checked;
+    engineSelect.style.opacity = voice.checked ? '1' : '0.55';
   }
 }
 
@@ -234,6 +245,10 @@ export function initCleanAudio() {
     if (!b) return;
     strength = b.dataset.strength;
     setSeg('clean-strength', 'strength', strength);
+    if (strength === 'uvr_stems') {
+      const v = byId('clean-voice');
+      if (v) v.checked = true;
+    }
     updateCleanButton();
   });
   byId('clean-voice')?.addEventListener('change', updateCleanButton);
