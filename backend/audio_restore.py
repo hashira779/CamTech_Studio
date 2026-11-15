@@ -11,11 +11,14 @@ the CPU. The original file is never changed: the cleaned copy goes to uploads/cl
 for alignment) with the voice 3 dB louder and each part cleaned on its own; old recordings often
 have the singer sitting far behind the band.
 """
+import logging
 import os
 import re
 import subprocess
 import time
 from typing import Any, Dict, List, Optional
+
+log = logging.getLogger(__name__)
 
 try:
     from backend.paths import UPLOAD_DIR
@@ -199,7 +202,17 @@ def clean_song(audio_path: str, strength: str = "medium", voice_forward: bool = 
                         stems = {"vocals": voc, "music": mus}
         except Exception as e:
             log.warning(f"[Clean] Stem separation error with {stem_engine}: {e}")
-            raise CleanError("Voice separation is still preparing; please try again in a moment.")
+            try:
+                from backend.vocal_align import _ensure_vocal_stem
+                voc = _ensure_vocal_stem(audio_path)
+                if voc:
+                    mus = voc.replace("_vocals.wav", "_accompaniment.wav")
+                    if os.path.isfile(mus):
+                        stems = {"vocals": voc, "music": mus}
+            except Exception as fb_err:
+                log.warning(f"[Clean] Fallback stem separation also failed: {fb_err}")
+            if not stems:
+                raise CleanError(f"Voice separation encountered an issue ({e}). Please try again.")
     if voice_forward and not stems:
         raise CleanError("Bring the voice forward needs the song's separated voice; please try again in a moment.")
     os.makedirs(CLEAN_DIR, exist_ok=True)

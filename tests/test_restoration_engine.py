@@ -21,7 +21,9 @@ def test_presets_exist():
 
 
 def test_restoration_db_lifecycle():
-    track_id = "test_track_123"
+    import uuid
+    uid = uuid.uuid4().hex[:8]
+    track_id = f"test_track_{uid}"
     track_data = {
         "id": track_id,
         "filename": "test_song.mp3",
@@ -47,7 +49,7 @@ def test_restoration_db_lifecycle():
     assert fetched["filename"] == "test_song.mp3"
     assert len(fetched["waveform_data"]) == 4
 
-    job_id = "test_job_456"
+    job_id = f"test_job_{uid}"
     created_job_id = restoration_db.create_job(
         job_id, track_id, "vintage_studio", bypass_ai=False, params={"warmth_db": 1.5}
     )

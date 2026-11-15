@@ -120,10 +120,10 @@ def separate_with_uvr(
     for fname in output_files:
         full_p = os.path.join(STEMS_DIR, fname) if not os.path.isabs(fname) else fname
         low = os.path.basename(fname).lower()
-        if "vocal" in low:
-            vocals_found = full_p
-        elif "inst" in low or "no_vocal" in low or "other" in low or "accompaniment" in low:
+        if "instrumental" in low or "inst" in low or "no_vocal" in low or "other" in low or "accompaniment" in low:
             music_found = full_p
+        elif "vocal" in low:
+            vocals_found = full_p
 
     if vocals_found and os.path.isfile(vocals_found):
         if vocals_found != expected_vocals:
