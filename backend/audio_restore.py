@@ -27,19 +27,19 @@ except ImportError:
 
 CLEAN_DIR = os.path.join(UPLOAD_DIR, "clean")
 STRENGTHS = {
-    # Archival: Subsonic rumble cut, DC offset, 100% dynamics preserved
-    "archival": {"hp": 28, "nr": 4, "nf": -45, "declick": False, "presence": 0.0, "exciter": False},
-    # Gentle: Moderate rumble and gentle hiss cut, natural instrument body
-    "light": {"hp": 30, "nr": 6, "nf": -42, "declick": False, "presence": 1.2, "exciter": False},
-    "gentle": {"hp": 30, "nr": 6, "nf": -42, "declick": False, "presence": 1.2, "exciter": False},
-    # Vintage: Golden Era studio warmth, tape de-mudding, vocal presence
-    "medium": {"hp": 32, "nr": 8, "nf": -38, "declick": True, "presence": 2.0, "exciter": False},
-    "vintage": {"hp": 32, "nr": 8, "nf": -38, "declick": True, "presence": 2.0, "exciter": False},
-    # UVR Stems: Kim Vocal 2 isolation + full backing band body, instrument warmth & feeling
-    "uvr_stems": {"hp": 32, "nr": 8, "nf": -36, "declick": False, "presence": 2.0, "exciter": False},
-    # Broadcast: Maximum clarity & high-end air sparkle
-    "strong": {"hp": 35, "nr": 12, "nf": -34, "declick": True, "presence": 2.5, "exciter": True},
-    "broadcast": {"hp": 35, "nr": 12, "nf": -34, "declick": True, "presence": 2.5, "exciter": True},
+    # Archival: Subsonic rumble cut, subtle de-click, 100% dynamics preserved
+    "archival": {"hp": 28, "nr": 8, "nf": -38, "declick": True, "presence": 0.0, "exciter": False},
+    # Gentle: Moderate rumble, light de-hiss, de-crackle, natural tone
+    "light": {"hp": 30, "nr": 10, "nf": -36, "declick": True, "presence": 1.2, "exciter": False},
+    "gentle": {"hp": 30, "nr": 10, "nf": -36, "declick": True, "presence": 1.2, "exciter": False},
+    # Vintage: Golden Era studio warmth, tape de-mudding, vocal presence, de-crackle
+    "medium": {"hp": 32, "nr": 13, "nf": -34, "declick": True, "presence": 2.0, "exciter": False},
+    "vintage": {"hp": 32, "nr": 13, "nf": -34, "declick": True, "presence": 2.0, "exciter": False},
+    # UVR Stems: Kim Vocal 2 AI isolation + full backing band body, deep de-hiss & de-crackle
+    "uvr_stems": {"hp": 32, "nr": 14, "nf": -33, "declick": True, "presence": 2.0, "exciter": False},
+    # Broadcast: Maximum clarity & high-end air, strongest de-hiss & de-crackle
+    "strong": {"hp": 35, "nr": 18, "nf": -30, "declick": True, "presence": 2.5, "exciter": False},
+    "broadcast": {"hp": 35, "nr": 18, "nf": -30, "declick": True, "presence": 2.5, "exciter": False},
 }
 VOICE_BOOST_DB = 1.2
 # Streaming loudness (YouTube / Facebook play around -14 LUFS). Measured first, then applied to the
@@ -72,32 +72,35 @@ def _voice_chain(p: Dict[str, Any]) -> List[str]:
     chain = ["highpass=f=75"]
     if p["declick"]:
         chain.append("adeclick")
-    nr = max(3, p["nr"] - 4)
-    chain.append(f"afftdn=nr={nr}:nf={p['nf']}")
+    chain.append("adeclip")
+    nr = max(6, p["nr"])
+    chain.append(f"afftdn=nr={nr}:nf={p['nf']}:tn=0")
+    chain.append("lowpass=f=16000")
     chain.append("equalizer=f=300:t=q:w=1.2:g=-2.0")
     chain.append(f"equalizer=f=3200:t=q:w=1.0:g={p['presence']:.1f}")
-    chain.append("equalizer=f=8000:t=q:w=1.2:g=1.5")
     chain.append(f"volume={VOICE_BOOST_DB:.1f}dB")
     return chain
 
 
 def _music_chain(p: Dict[str, Any]) -> List[str]:
     """
-    Preserves backing band warmth, bass punch and feeling:
+    Preserves backing band warmth, bass punch and feeling while eliminating vinyl crackle, tape hiss, and static:
     - Gentle 32Hz subsonic protection (preserves electric/upright bass fundamentals & kick drums)
-    - Gentle hiss smoothing (never smears acoustic instrument attacks or room decay)
+    - adeclick & adeclip: eliminates vinyl clicks, crackles, and digital static
+    - afftdn: cleans tape hiss and surface noise without eating into instrument decay
+    - lowpass=f=15500: cuts ultrasonic tape hiss (>15.5kHz) where old tapes have only noise
     - Adds analog body warmth around 100Hz and crisp instrument definition
     - Retains full mono/center punch (no destructive extrastereo phase cancellation)
     """
     chain = ["highpass=f=32"]
-    # Only light noise smoothing on backing music so acoustic nuance and room feel remain intact
-    chain.append(f"afftdn=nr={max(2, min(5, p['nr'] // 2))}:nf={p['nf'] - 4}")
-    # Analog low-end warmth & punch (bass guitar & drums)
+    if p["declick"]:
+        chain.append("adeclick")
+    chain.append("adeclip")
+    mus_nr = max(8, p["nr"] - 2)
+    chain.append(f"afftdn=nr={mus_nr}:nf={p['nf']}:tn=0")
+    chain.append("lowpass=f=15500")
     chain.append("equalizer=f=100:t=q:w=1.0:g=1.8")
-    # Instrument clarity and brilliance without harshness
     chain.append("equalizer=f=2800:t=q:w=1.2:g=1.0")
-    chain.append("equalizer=f=10000:t=q:w=1.0:g=1.2")
-    # Balance backing band presence alongside the vocalist
     chain.append("volume=0.8dB")
     return chain
 
@@ -119,11 +122,10 @@ def _repair_chain(p: Dict[str, Any], voice_part: bool = False) -> List[str]:
     chain = [f"highpass=f={p['hp']}"]
     if p["declick"]:
         chain.append("adeclick")
-    # A separated voice carries less hiss than the full mix: lighter reduction keeps it natural.
-    nr = max(4, p["nr"] - 6) if voice_part else p["nr"]
-    # A fixed noise floor, not noise tracking (tn=1): tracking learns the "noise" from the song's start, a
-    # silent intro taught it silence, and it then removed nothing (ផ្ការីកក្នុងចិត្ត: hiss +0.0 dB vs -13.9).
-    chain.append(f"afftdn=nr={nr}:nf={p['nf']}")
+    chain.append("adeclip")
+    nr = max(6, p["nr"] - 2) if voice_part else p["nr"]
+    chain.append(f"afftdn=nr={nr}:nf={p['nf']}:tn=0")
+    chain.append("lowpass=f=15500")
     return chain
 
 
