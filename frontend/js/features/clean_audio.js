@@ -240,9 +240,20 @@ async function clean() {
   let success = false;
   try {
     const stemEngine = byId('clean-stem-engine')?.value || 'uvr_kim_vocal_2';
+    const eqSub = parseFloat(byId('eq-sub')?.value || 0);
+    const eqMid = parseFloat(byId('eq-mid')?.value || 0);
+    const eqHigh = parseFloat(byId('eq-high')?.value || 0);
     const res = await fetch('/api/audio/clean', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ audio_path: current, strength, voice_forward: isVoiceForward, stem_engine: stemEngine }),
+      body: JSON.stringify({
+        audio_path: current,
+        strength,
+        voice_forward: isVoiceForward,
+        stem_engine: stemEngine,
+        eq_sub: eqSub,
+        eq_mid: eqMid,
+        eq_high: eqHigh,
+      }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Could not clean this song');

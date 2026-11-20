@@ -28,20 +28,20 @@ except ImportError:
 CLEAN_DIR = os.path.join(UPLOAD_DIR, "clean")
 STRENGTHS = {
     # Archival: Subsonic rumble cut, DC offset, 100% dynamics preserved
-    "archival": {"hp": 35, "nr": 6, "nf": -42, "declick": False, "presence": 0.0, "exciter": False},
-    # Gentle: Moderate rumble and gentle hiss cut
-    "light": {"hp": 40, "nr": 8, "nf": -40, "declick": False, "presence": 1.5, "exciter": False},
-    "gentle": {"hp": 40, "nr": 8, "nf": -40, "declick": False, "presence": 1.5, "exciter": False},
+    "archival": {"hp": 28, "nr": 4, "nf": -45, "declick": False, "presence": 0.0, "exciter": False},
+    # Gentle: Moderate rumble and gentle hiss cut, natural instrument body
+    "light": {"hp": 30, "nr": 6, "nf": -42, "declick": False, "presence": 1.2, "exciter": False},
+    "gentle": {"hp": 30, "nr": 6, "nf": -42, "declick": False, "presence": 1.2, "exciter": False},
     # Vintage: Golden Era studio warmth, tape de-mudding, vocal presence
-    "medium": {"hp": 50, "nr": 14, "nf": -35, "declick": True, "presence": 2.5, "exciter": False},
-    "vintage": {"hp": 50, "nr": 14, "nf": -35, "declick": True, "presence": 2.5, "exciter": False},
-    # UVR Stems: Kim Vocal 2 isolation + stereo band widening + vocal pocketing
-    "uvr_stems": {"hp": 55, "nr": 16, "nf": -32, "declick": True, "presence": 3.2, "exciter": True},
-    # Broadcast: Strong hiss cut + high-air sparkle
-    "strong": {"hp": 60, "nr": 20, "nf": -28, "declick": True, "presence": 3.5, "exciter": True},
-    "broadcast": {"hp": 60, "nr": 20, "nf": -28, "declick": True, "presence": 3.5, "exciter": True},
+    "medium": {"hp": 32, "nr": 8, "nf": -38, "declick": True, "presence": 2.0, "exciter": False},
+    "vintage": {"hp": 32, "nr": 8, "nf": -38, "declick": True, "presence": 2.0, "exciter": False},
+    # UVR Stems: Kim Vocal 2 isolation + full backing band body, instrument warmth & feeling
+    "uvr_stems": {"hp": 32, "nr": 8, "nf": -36, "declick": False, "presence": 2.0, "exciter": False},
+    # Broadcast: Maximum clarity & high-end air sparkle
+    "strong": {"hp": 35, "nr": 12, "nf": -34, "declick": True, "presence": 2.5, "exciter": True},
+    "broadcast": {"hp": 35, "nr": 12, "nf": -34, "declick": True, "presence": 2.5, "exciter": True},
 }
-VOICE_BOOST_DB = 3.0
+VOICE_BOOST_DB = 1.2
 # Streaming loudness (YouTube / Facebook play around -14 LUFS). Measured first, then applied to the
 # whole song evenly (loudnorm's linear mode): one-pass loudnorm and a compressor lifted the soft
 # passages and the tape hiss in them, which undid the hiss reduction (ផ្ការីកក្នុងចិត្ត: +2.3 dB).
@@ -72,24 +72,46 @@ def _voice_chain(p: Dict[str, Any]) -> List[str]:
     chain = ["highpass=f=75"]
     if p["declick"]:
         chain.append("adeclick")
-    nr = max(4, p["nr"] - 6)
+    nr = max(3, p["nr"] - 4)
     chain.append(f"afftdn=nr={nr}:nf={p['nf']}")
-    chain.append("equalizer=f=300:t=q:w=1.2:g=-2.5")
-    chain.append(f"equalizer=f=3500:t=q:w=1.0:g={p['presence'] + 1.0:.1f}")
-    chain.append("equalizer=f=8000:t=q:w=1.4:g=2.5")
-    chain.append(f"volume={VOICE_BOOST_DB + 0.5:.1f}dB")
+    chain.append("equalizer=f=300:t=q:w=1.2:g=-2.0")
+    chain.append(f"equalizer=f=3200:t=q:w=1.0:g={p['presence']:.1f}")
+    chain.append("equalizer=f=8000:t=q:w=1.2:g=1.5")
+    chain.append(f"volume={VOICE_BOOST_DB:.1f}dB")
     return chain
 
 
 def _music_chain(p: Dict[str, Any]) -> List[str]:
-    """Cleans backing band, widens mono instruments into stereo, and carves a frequency pocket for the voice."""
-    chain = [f"highpass=f={p['hp']}"]
-    if p["declick"]:
-        chain.append("adeclick")
-    chain.append(f"afftdn=nr={p['nr']}:nf={p['nf']}")
-    chain.append("extrastereo=m=1.4")
-    chain.append("equalizer=f=3500:t=q:w=1.0:g=-2.0")
+    """
+    Preserves backing band warmth, bass punch and feeling:
+    - Gentle 32Hz subsonic protection (preserves electric/upright bass fundamentals & kick drums)
+    - Gentle hiss smoothing (never smears acoustic instrument attacks or room decay)
+    - Adds analog body warmth around 100Hz and crisp instrument definition
+    - Retains full mono/center punch (no destructive extrastereo phase cancellation)
+    """
+    chain = ["highpass=f=32"]
+    # Only light noise smoothing on backing music so acoustic nuance and room feel remain intact
+    chain.append(f"afftdn=nr={max(2, min(5, p['nr'] // 2))}:nf={p['nf'] - 4}")
+    # Analog low-end warmth & punch (bass guitar & drums)
+    chain.append("equalizer=f=100:t=q:w=1.0:g=1.8")
+    # Instrument clarity and brilliance without harshness
+    chain.append("equalizer=f=2800:t=q:w=1.2:g=1.0")
+    chain.append("equalizer=f=10000:t=q:w=1.0:g=1.2")
+    # Balance backing band presence alongside the vocalist
+    chain.append("volume=0.8dB")
     return chain
+
+
+def _master_eq_chain(eq_sub: float = 0.0, eq_mid: float = 0.0, eq_high: float = 0.0) -> List[str]:
+    """Applies master 3-band tone shaping (Sub 60Hz, Mid 2.5kHz, High 10kHz) to the rendered audio."""
+    filters = []
+    if abs(eq_sub) > 0.05:
+        filters.append(f"equalizer=f=60:t=q:w=1.0:g={eq_sub:.1f}")
+    if abs(eq_mid) > 0.05:
+        filters.append(f"equalizer=f=2500:t=q:w=1.0:g={eq_mid:.1f}")
+    if abs(eq_high) > 0.05:
+        filters.append(f"equalizer=f=10000:t=q:w=1.0:g={eq_high:.1f}")
+    return filters
 
 
 def _repair_chain(p: Dict[str, Any], voice_part: bool = False) -> List[str]:
@@ -179,7 +201,15 @@ def _levels(path: str) -> Dict[str, float]:
             "level_db": round(float(20 * np.log10(np.sqrt(np.mean(10 ** (loud / 10))))), 1)}
 
 
-def clean_song(audio_path: str, strength: str = "medium", voice_forward: bool = False, stem_engine: str = "uvr_kim_vocal_2") -> Dict[str, Any]:
+def clean_song(
+    audio_path: str,
+    strength: str = "medium",
+    voice_forward: bool = False,
+    stem_engine: str = "uvr_kim_vocal_2",
+    eq_sub: float = 0.0,
+    eq_mid: float = 0.0,
+    eq_high: float = 0.0,
+) -> Dict[str, Any]:
     if strength not in STRENGTHS:
         raise CleanError(f"Unknown strength '{strength}'.")
     if not os.path.isfile(audio_path):
@@ -219,18 +249,20 @@ def clean_song(audio_path: str, strength: str = "medium", voice_forward: bool = 
     out = clean_path(audio_path, strength, voice_forward)
     tmp = out + ".part.mp3"
     started = time.time()
+    master_eq_parts = _master_eq_chain(eq_sub, eq_mid, eq_high)
+    master_eq_str = ("," + ",".join(master_eq_parts)) if master_eq_parts else ""
     if stems:
         voice = ",".join(_voice_chain(p))
         music = ",".join(_music_chain(p))
-        graph = f"[0:a]{voice}[v];[1:a]{music}[m];[v][m]amix=inputs=2:normalize=0"
+        graph = f"[0:a]{voice}[v];[1:a]{music}[m];[v][m]amix=inputs=2:normalize=0{master_eq_str}"
         if p["exciter"]:
-            graph += ",aexciter=amount=0.5:drive=3:freq=6500"
+            graph += ",aexciter=amount=0.4:drive=2.5:freq=6500"
         inputs = [stems["vocals"], stems["music"]]
         measured = _measure_loudness(inputs, graph, complex_graph=True)
         cmd = [_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-i", inputs[0], "-i", inputs[1],
                "-filter_complex", f"{graph},{_loudness(measured)},{LIMITER}[out]", "-map", "[out]"]
     else:
-        chain = ",".join(_repair_chain(p) + _tone_chain(p))
+        chain = ",".join(_repair_chain(p) + _tone_chain(p) + master_eq_parts)
         measured = _measure_loudness([audio_path], chain, complex_graph=False)
         cmd = [_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y", "-i", audio_path,
                "-af", f"{chain},{_loudness(measured)},{LIMITER}", "-vn"]

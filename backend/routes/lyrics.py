@@ -311,6 +311,9 @@ class CleanAudioRequest(BaseModel):
     strength: str = "medium"
     voice_forward: bool = False
     stem_engine: Optional[str] = "uvr_kim_vocal_2"
+    eq_sub: Optional[float] = 0.0
+    eq_mid: Optional[float] = 0.0
+    eq_high: Optional[float] = 0.0
 
 
 def _clean_entry(v: Dict[str, Any]) -> Dict[str, Any]:
@@ -335,11 +338,19 @@ def clean_audio_api(req: CleanAudioRequest):
     from backend import audio_restore
     audio_p = require_audio_file(req.audio_path)
     try:
-        made = audio_restore.clean_song(audio_p, req.strength, req.voice_forward, stem_engine=req.stem_engine or "uvr_kim_vocal_2")
+        made = audio_restore.clean_song(
+            audio_p,
+            req.strength,
+            req.voice_forward,
+            stem_engine=req.stem_engine or "uvr_kim_vocal_2",
+            eq_sub=req.eq_sub or 0.0,
+            eq_mid=req.eq_mid or 0.0,
+            eq_high=req.eq_high or 0.0,
+        )
     except audio_restore.CleanError as e:
         raise HTTPException(status_code=409, detail=str(e))
     log.info(f"[Clean] {os.path.basename(audio_p)}: {req.strength}{' + voice' if made['voice_forward'] else ''} "
-             f"in {made['seconds']}s")
+             f"(EQ: sub={req.eq_sub:+.1f} mid={req.eq_mid:+.1f} high={req.eq_high:+.1f}) in {made['seconds']}s")
     return {"status": "success", **_clean_entry(made)}
 
 
