@@ -93,11 +93,20 @@ def separate_with_uvr(
     expected_vocals = os.path.join(STEMS_DIR, f"{base_name}_vocals.wav")
     expected_music = os.path.join(STEMS_DIR, f"{base_name}_accompaniment.wav")
 
-    # Fast return if cached
-    if os.path.isfile(expected_vocals) and os.path.isfile(expected_music):
-        if os.path.getsize(expected_vocals) > 1000 and os.path.getsize(expected_music) > 1000:
-            log.info(f"[UVR] Found cached stems for: {base_name}")
-            return expected_vocals, expected_music
+    model_tag = os.path.splitext(model_filename)[0]
+    engine_vocals = os.path.join(STEMS_DIR, f"{base_name}_(Vocals)_{model_tag}.wav")
+    engine_music = os.path.join(STEMS_DIR, f"{base_name}_(Instrumental)_{model_tag}.wav")
+
+    # Fast return if model-specific stems are already cached
+    if os.path.isfile(engine_vocals) and os.path.isfile(engine_music):
+        if os.path.getsize(engine_vocals) > 1000 and os.path.getsize(engine_music) > 1000:
+            log.info(f"[UVR] Found cached {model_tag} stems for: {base_name}")
+            try:
+                shutil.copy2(engine_vocals, expected_vocals)
+                shutil.copy2(engine_music, expected_music)
+            except Exception:
+                pass
+            return engine_vocals, engine_music
 
     started = time.time()
     log.info(f"[UVR] Starting separation with {engine_info['name']} on: {base_name}")
@@ -108,6 +117,13 @@ def separate_with_uvr(
         output_format="WAV",
         sample_rate=44100,
         use_directml=True,
+        mdx_params={
+            "hop_length": 1024,
+            "segment_size": 256,
+            "overlap": 0.5,
+            "batch_size": 1,
+            "enable_denoise": True,
+        },
     )
 
     import onnxruntime as ort

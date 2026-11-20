@@ -215,23 +215,19 @@ def clean_song(
     if not os.path.isfile(audio_path):
         raise CleanError("The song's audio file was not found.")
     p = STRENGTHS[strength]
-    stems = _stems(audio_path) if voice_forward else None
-    if voice_forward and not stems:
-        try:
-            if stem_engine and stem_engine.startswith("uvr_"):
+    stems = None
+    if voice_forward:
+        if stem_engine and stem_engine.startswith("uvr_"):
+            try:
                 from backend import uvr_separator
                 voc, mus = uvr_separator.separate_with_uvr(audio_path, engine_id=stem_engine)
                 if os.path.isfile(voc) and os.path.isfile(mus):
                     stems = {"vocals": voc, "music": mus}
-            else:
-                from backend.vocal_align import _ensure_vocal_stem
-                voc = _ensure_vocal_stem(audio_path)
-                if voc:
-                    mus = voc.replace("_vocals.wav", "_accompaniment.wav")
-                    if os.path.isfile(mus):
-                        stems = {"vocals": voc, "music": mus}
-        except Exception as e:
-            log.warning(f"[Clean] Stem separation error with {stem_engine}: {e}")
+            except Exception as e:
+                log.warning(f"[Clean] UVR stem separation issue with {stem_engine}: {e}")
+        if not stems:
+            stems = _stems(audio_path)
+        if not stems:
             try:
                 from backend.vocal_align import _ensure_vocal_stem
                 voc = _ensure_vocal_stem(audio_path)
@@ -242,7 +238,7 @@ def clean_song(
             except Exception as fb_err:
                 log.warning(f"[Clean] Fallback stem separation also failed: {fb_err}")
             if not stems:
-                raise CleanError(f"Voice separation encountered an issue ({e}). Please try again.")
+                raise CleanError("Voice separation could not be completed. Please try again.")
     if voice_forward and not stems:
         raise CleanError("Bring the voice forward needs the song's separated voice; please try again in a moment.")
     os.makedirs(CLEAN_DIR, exist_ok=True)
