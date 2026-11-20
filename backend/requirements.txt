@@ -27,3 +27,5 @@ torch
 torchaudio
 demucs
 psutil
+numpy
+scipy

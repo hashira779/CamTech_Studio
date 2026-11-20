@@ -201,6 +201,32 @@ def _levels(path: str) -> Dict[str, float]:
             "level_db": round(float(20 * np.log10(np.sqrt(np.mean(10 ** (loud / 10))))), 1)}
 
 
+def _safe_replace(tmp: str, out: str, max_retries: int = 6, delay: float = 0.25) -> str:
+    """Replaces out with tmp on Windows, handling open file locks with retries and timestamp fallback."""
+    for attempt in range(max_retries):
+        try:
+            if os.name == "nt" and os.path.exists(out):
+                try:
+                    os.remove(out)
+                except OSError:
+                    pass
+            os.replace(tmp, out)
+            return out
+        except OSError:
+            if attempt < max_retries - 1:
+                time.sleep(delay)
+            else:
+                dir_name, file_name = os.path.split(out)
+                base, ext = os.path.splitext(file_name)
+                fallback_out = os.path.join(dir_name, f"{base}_{int(time.time())}{ext}")
+                try:
+                    os.replace(tmp, fallback_out)
+                    return fallback_out
+                except Exception as fallback_err:
+                    raise CleanError(f"Audio file is locked by the player. Please pause playback and try again: {fallback_err}")
+    return out
+
+
 def clean_song(
     audio_path: str,
     strength: str = "medium",
@@ -270,9 +296,9 @@ def clean_song(
     if proc.returncode != 0 or not os.path.isfile(tmp):
         last = (proc.stderr or "").strip().splitlines()[-1:] or ["unknown error"]
         raise CleanError(f"ffmpeg could not clean the song: {last[0][:200]}")
-    os.replace(tmp, out)
-    before, after = _levels(audio_path), _levels(out)
-    return {"path": out, "strength": strength, "voice_forward": bool(stems), "seconds": round(time.time() - started, 1),
+    final_out = _safe_replace(tmp, out)
+    before, after = _levels(audio_path), _levels(final_out)
+    return {"path": final_out, "strength": strength, "voice_forward": bool(stems), "seconds": round(time.time() - started, 1),
             "before": before, "after": after}
 
 
@@ -282,7 +308,7 @@ def existing_clean_versions(audio_path: str) -> List[Dict[str, Any]]:
         return []
     out = []
     for name in sorted(os.listdir(CLEAN_DIR)):
-        m = re.fullmatch(re.escape(base) + r" \[clean (archival|light|gentle|medium|vintage|uvr_stems|strong|broadcast)( voice)?\]\.mp3", name)
+        m = re.fullmatch(re.escape(base) + r" \[clean (archival|light|gentle|medium|vintage|uvr_stems|strong|broadcast)( voice)?\](?:_\d+)?\.mp3", name)
         if m:
             out.append({"path": os.path.join(CLEAN_DIR, name), "strength": m.group(1), "voice_forward": bool(m.group(2))})
     return out
