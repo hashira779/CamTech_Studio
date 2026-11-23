@@ -100,7 +100,7 @@ def separate_with_uvr(
     # Fast return if model-specific stems are already cached
     if os.path.isfile(engine_vocals) and os.path.isfile(engine_music):
         if os.path.getsize(engine_vocals) > 1000 and os.path.getsize(engine_music) > 1000:
-            log.info(f"[UVR] Found cached {model_tag} stems for: {base_name}")
+            log.debug(f"[UVR] Found cached {model_tag} stems for: {base_name}")
             try:
                 shutil.copy2(engine_vocals, expected_vocals)
                 shutil.copy2(engine_music, expected_music)
@@ -112,6 +112,7 @@ def separate_with_uvr(
     log.info(f"[UVR] Starting separation with {engine_info['name']} on: {base_name}")
 
     sep = Separator(
+        log_level=logging.WARNING,
         model_file_dir=UVR_MODELS_DIR,
         output_dir=STEMS_DIR,
         output_format="WAV",
@@ -129,15 +130,15 @@ def separate_with_uvr(
     import onnxruntime as ort
     avail_providers = ort.get_available_providers()
     if "DmlExecutionProvider" in avail_providers:
-        log.info("[UVR] DirectML GPU acceleration active (NVIDIA GeForce RTX 3050 Ti)")
+        log.debug("[UVR] Requesting the DirectML ONNX execution provider")
         sep.onnx_execution_provider = ["DmlExecutionProvider", "CPUExecutionProvider"]
     elif "CUDAExecutionProvider" in avail_providers:
-        log.info("[UVR] CUDA GPU acceleration active")
+        log.debug("[UVR] Requesting the CUDA ONNX execution provider")
         sep.onnx_execution_provider = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
     sep.load_model(model_filename)
     output_files = sep.separate(audio_path)
-    log.info(f"[UVR] Output files generated: {output_files}")
+    log.debug(f"[UVR] Output files generated: {output_files}")
 
     # Standardize output filenames to VIDA's _vocals.wav and _accompaniment.wav
     vocals_found = None
@@ -190,6 +191,7 @@ def dereverb_vocal_stem(vocals_path: str) -> str:
         return expected_dry
 
     sep = Separator(
+        log_level=logging.WARNING,
         model_file_dir=UVR_MODELS_DIR,
         output_dir=STEMS_DIR,
         output_format="WAV",
